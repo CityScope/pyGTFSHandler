@@ -18,7 +18,7 @@
 To install `PyGTFSHandler`, use pip:
 
 ```bash
-pip install git+https://github.com/MiguelUrenaPliego/pyGTFSHandler.git
+pip install git+https://github.com/GeomaticsCaminosUPM/pyGTFSHandler.git
 ```
 
 ## Usage
