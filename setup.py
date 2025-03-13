@@ -8,7 +8,7 @@ setup(
     long_description_content_type="text/markdown",
     author="Miguel Ureña Pliego",
     author_email="miguel.urena@upm.es",
-    url="https://codeberg.org/MiguelUrena/PyGTFSHandler/",
+    url="https://github.com/GeomaticsCaminosUPM/pyGTFSHandler/",
     license="Apache-2.0",
     packages=find_packages(),
     install_requires=[
