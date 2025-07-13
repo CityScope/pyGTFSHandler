@@ -95,11 +95,17 @@ class StopTimes:
             "trip_id", "departure_time", "stop_sequence"
         )
 
-    def to_hhmmss(self, df, field):
-        """From seconds to hh:mm::ss"""
-        hours = ("0" + (df[field] // 3600).cast(int).cast(str)).str.slice(-2, 2)
-        minutes = ("0" + ((df[field] % 3600) // 60).cast(int).cast(str)).str.slice(
-            -2, 2
-        )
-        seconds = ("0" + (df[field] % 60).cast(int).cast(str)).str.slice(-2, 2)
-        return hours + ":" + minutes + ":" + seconds
+    def to_hhmmss(self, df: pl.LazyFrame, field: str) -> pl.Expr:
+        """Convert seconds to hh:mm:ss format."""
+        # Access the column as an expression
+        seconds_expr = pl.col(field)
+
+        # Calculate hours, minutes, and seconds using Polars expressions
+        hours = ("0" + (seconds_expr // 3600).cast(pl.Int32).cast(str)).str.slice(-2, 2)
+        minutes = (
+            "0" + ((seconds_expr % 3600) // 60).cast(pl.Int32).cast(str)
+        ).str.slice(-2, 2)
+        seconds = ("0" + (seconds_expr % 60).cast(pl.Int32).cast(str)).str.slice(-2, 2)
+
+        # Combine into hh:mm:ss format and return as an expression
+        return (hours + ":" + minutes + ":" + seconds).alias(field)
