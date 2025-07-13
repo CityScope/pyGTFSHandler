@@ -14,7 +14,58 @@ def load_lazyframe_from_file(dir_path: Path, filename: str) -> pl.LazyFrame:
     return pl.scan_csv(str(file_path))
 
 
-def normalize_string(s: str) -> str:
+def _clean_string(string):
+    # Replace special characters and multiple spaces/underscores with a single underscore
+    string = _normalize_string(string)
+    string = re.sub(
+        r"[^a-zA-Z0-9]", "_", string
+    )  # Replace non-alphanumeric characters with underscores
+    string = re.sub(
+        r"_+", "_", string
+    )  # Replace multiple underscores with a single one
+    string = string.strip("_")  # Remove leading/trailing underscores
+
+    return string
+
+
+def read_csv_lazy(path, schema_overrides: dict = None, columns: list = None):
+    # Use scan_csv for lazy loading
+    lf = pl.scan_csv(path, has_header=True, separator=",")
+
+    # Get column names without triggering expensive computation
+    column_names = lf.collect_schema().names()
+    rename_dict = {name: _clean_string(name) for name in column_names}
+    lf = lf.rename(rename_dict)
+
+    # Get schema to check column types
+    schema = lf.collect_schema()
+
+    # Apply string operations only to string-type columns
+    for col_name in column_names:
+        dtype = schema.get(col_name)
+        if dtype == pl.Utf8:  # Check if the column is of string type
+            lf = lf.with_columns(
+                pl.col(col_name)
+                .str.strip_chars()
+                .str.replace_all(r"[áàãâä]", "a")
+                .str.replace_all(r"[éèêë]", "e")
+                .str.replace_all(r"[íìîï]", "i")
+                .str.replace_all(r"[óòõôö]", "o")
+                .str.replace_all(r"[úùûü]", "u")
+                .str.replace_all(r"[ñ]", "n")
+                .str.replace_all(r"[`’]", "")
+            )
+
+    # Apply schema overrides if provided
+    if schema_overrides:
+        for col, dtype in schema_overrides.items():
+            if col in column_names:
+                lf = lf.with_columns(pl.col(col).cast(dtype))
+
+    return lf
+
+
+def _normalize_string(s: str) -> str:
     """
     Normalize a string by:
     - Converting accented characters to their ASCII equivalents.
@@ -63,7 +114,7 @@ def normalize_df(lf: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame
     column_names = schema.names()
 
     # Normalize all column names
-    normalized_column_names = [normalize_string(col) for col in column_names]
+    normalized_column_names = [_normalize_string(col) for col in column_names]
     rename_map = dict(zip(column_names, normalized_column_names))
     lf = lf.rename(rename_map)
 
