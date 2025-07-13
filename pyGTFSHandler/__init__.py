@@ -1,5 +1,5 @@
 __version__ = '0.1.0'
 
-from .gtfs import GTFS
+from .feed import Feed
 
-__all__ = ['GTFS']
+__all__ = [Feed.__name__]
