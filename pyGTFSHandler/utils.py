@@ -1,71 +1,162 @@
 import polars as pl
-from pathlib import Path
 import unicodedata
 import re
+from typing import List, Optional
+import os
 
 
-def load_lazyframe_from_file(dir_path: Path, filename: str) -> pl.LazyFrame:
+def get_df_schema_dict(path: str) -> dict:
     """
-    Load a LazyFrame from a CSV file on disk.
+    Returns a dictionary specifying the expected data types for mandatory columns
+    in a GTFS (General Transit Feed Specification) file.
+
+    This is useful for consistent schema enforcement when reading GTFS .txt files.
+
+    Parameters:
+    ----------
+    path : str
+        The file path or file name of a GTFS component (e.g., 'stops.txt').
+
+    Returns:
+    -------
+    dict
+        A dictionary mapping mandatory column names to their expected data types.
     """
-    file_path = dir_path / filename
-    if not file_path.exists():
-        raise FileNotFoundError(f"{filename} not found in {dir_path}")
-    return pl.scan_csv(str(file_path))
+    if "stops.txt" in path:
+        schema_dict = {
+            "stop_id": str,
+            "stop_name": str,
+            "stop_lat": float,
+            "stop_lon": float,
+        }
+    elif "trips.txt" in path:
+        schema_dict = {"route_id": str, "service_id": str, "trip_id": str}
+    elif "stop_times.txt" in path:
+        schema_dict = {
+            "trip_id": str,
+            "arrival_time": str,
+            "departure_time": str,
+            "stop_id": str,
+            "stop_sequence": int,
+        }
+    elif "routes.txt" in path:
+        schema_dict = {
+            "route_id": str,
+            "route_short_name": str,
+            "route_long_name": str,
+            "route_type": int,
+        }
+    elif "calendar.txt" in path:
+        schema_dict = {
+            "service_id": str,
+            "monday": int,
+            "tuesday": int,
+            "wednesday": int,
+            "thursday": int,
+            "friday": int,
+            "saturday": int,
+            "sunday": int,
+            "start_date": str,
+            "end_date": str,
+        }
+    else:
+        raise Exception(f"File {path} not implemented.")
+
+    return schema_dict
 
 
-def _clean_string(string):
-    # Replace special characters and multiple spaces/underscores with a single underscore
-    string = _normalize_string(string)
-    string = re.sub(
-        r"[^a-zA-Z0-9]", "_", string
-    )  # Replace non-alphanumeric characters with underscores
-    string = re.sub(
-        r"_+", "_", string
-    )  # Replace multiple underscores with a single one
-    string = string.strip("_")  # Remove leading/trailing underscores
+def read_csv_lazy(
+    path: str, schema_overrides: dict = None, column_names: list[str] = None
+) -> pl.LazyFrame:
+    """
+    Lazily reads a CSV file into a Polars LazyFrame with optional schema overrides and column filtering.
 
-    return string
+    This is designed for reading GTFS files efficiently, allowing for partial schema enforcement
+    and retaining metadata such as the GTFS directory name.
 
+    Parameters:
+    ----------
+    path : str
+        Full path to the GTFS .txt file (CSV format).
+    schema_overrides : dict, optional
+        A dictionary mapping column names to Polars data types to override inferred types.
+        Example: {'stop_lat': pl.Float64, 'stop_lon': pl.Float64}
+    column_names : list of str, optional
+        A list of column names to include. If None, all columns are read.
 
-def read_csv_lazy(path, schema_overrides: dict = None, columns: list = None):
-    # Use scan_csv for lazy loading
-    lf = pl.scan_csv(path, has_header=True, separator=",")
+    Returns:
+    -------
+    pl.LazyFrame
+        A lazily loaded Polars LazyFrame with applied schema overrides and a new column `gtfs_name`
+        containing the GTFS directory name inferred from the path.
+    """
+    # Lazily scan CSV with optional column selection
+    lf: pl.LazyFrame = pl.scan_csv(path, columns=column_names, infer_schema_length=None)
 
-    # Get column names without triggering expensive computation
-    column_names = lf.collect_schema().names()
-    rename_dict = {name: _clean_string(name) for name in column_names}
-    lf = lf.rename(rename_dict)
+    # Apply custom normalization (assuming normalize_df is defined elsewhere)
+    lf = normalize_df(lf)
 
-    # Get schema to check column types
-    schema = lf.collect_schema()
-
-    # Apply string operations only to string-type columns
-    for col_name in column_names:
-        dtype = schema.get(col_name)
-        if dtype == pl.Utf8:  # Check if the column is of string type
-            lf = lf.with_columns(
-                pl.col(col_name)
-                .str.strip_chars()
-                .str.replace_all(r"[áàãâä]", "a")
-                .str.replace_all(r"[éèêë]", "e")
-                .str.replace_all(r"[íìîï]", "i")
-                .str.replace_all(r"[óòõôö]", "o")
-                .str.replace_all(r"[úùûü]", "u")
-                .str.replace_all(r"[ñ]", "n")
-                .str.replace_all(r"[`’]", "")
-            )
-
-    # Apply schema overrides if provided
+    # Apply schema overrides if specified
     if schema_overrides:
+        # Safe fallback in case column_names is None (meaning all columns are read)
+        selected_cols = (
+            column_names
+            if column_names is not None
+            else list(lf.collect_schema().keys())
+        )
+
         for col, dtype in schema_overrides.items():
-            if col in column_names:
+            if col in selected_cols:
                 lf = lf.with_columns(pl.col(col).cast(dtype))
+
+    # Extract GTFS directory name from path (e.g., 'gtfs_file' from '/home/xyz/gtfs_file/stops.txt')
+    gtfs_name = os.path.basename(os.path.dirname(path))
+
+    # Add gtfs_name as a literal column
+    lf = lf.with_columns(pl.lit(gtfs_name).alias("gtfs_name"))
 
     return lf
 
 
-def _normalize_string(s: str) -> str:
+def read_csv_list(
+    path_list: List[str],
+    schema_overrides: Optional[dict] = None,
+    column_names: Optional[List[str]] = None,
+) -> pl.LazyFrame:
+    """
+    Lazily reads a list of CSV (GTFS) files into a single concatenated Polars LazyFrame.
+
+    This function uses `read_csv_lazy()` to read each individual file lazily,
+    optionally applying schema overrides and selecting specific columns, and then
+    concatenates all resulting LazyFrames.
+
+    Parameters:
+    ----------
+    path_list : list of str
+        List of file paths to GTFS CSV (.txt) files.
+    schema_overrides : dict, optional
+        A dictionary mapping column names to Polars data types to override inferred types.
+        Example: {'stop_lat': pl.Float64, 'stop_lon': pl.Float64}
+    column_names : list of str, optional
+        A list of columns to read from each file. If None, all columns are read.
+
+    Returns:
+    -------
+    pl.LazyFrame
+        A concatenated LazyFrame of all input files, using `how='diagonal_relaxed'` to handle differing schemas.
+    """
+    return pl.concat(
+        [
+            read_csv_lazy(
+                path, schema_overrides=schema_overrides, column_names=column_names
+            )
+            for path in path_list
+        ],
+        how="diagonal_relaxed",
+    )
+
+
+def normalize_string(s: str) -> str:
     """
     Normalize a string by:
     - Converting accented characters to their ASCII equivalents.
@@ -114,7 +205,7 @@ def normalize_df(lf: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame
     column_names = schema.names()
 
     # Normalize all column names
-    normalized_column_names = [_normalize_string(col) for col in column_names]
+    normalized_column_names = [normalize_string(col) for col in column_names]
     rename_map = dict(zip(column_names, normalized_column_names))
     lf = lf.rename(rename_map)
 
