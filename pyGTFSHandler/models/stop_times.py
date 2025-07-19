@@ -1,7 +1,7 @@
 import polars as pl
 from pathlib import Path
 from typing import Union, List, Tuple, Optional
-import utils
+from ..utils import read_csv_list, get_df_schema_dict
 from datetime import datetime, time
 from functools import reduce
 import warnings
@@ -13,11 +13,12 @@ class StopTimes:
     Manage GTFS stop_times.txt data using Polars LazyFrames.
 
     Features:
-    - Filter by stop_ids and/or trip_ids
-    - Normalize time strings
-    - Convert time to/from seconds since midnight
-    - Interpolate missing times
-    - Return a fully processed LazyFrame ready for analysis
+        - Filter by stop_ids and/or trip_ids
+        - Normalize time strings
+        - Convert time to/from seconds since midnight
+        - Interpolate missing times
+        - Return a fully processed LazyFrame ready for analysis
+
     """
 
     def __init__(
@@ -76,8 +77,8 @@ class StopTimes:
         if not stop_times_paths:
             raise FileNotFoundError("No stop_times.txt files found in given paths.")
 
-        schema_dict = utils.get_df_schema_dict(stop_times_paths[0])
-        stop_times = utils.read_csv_list(stop_times_paths, schema_overrides=schema_dict)
+        schema_dict = get_df_schema_dict(stop_times_paths[0])
+        stop_times = read_csv_list(stop_times_paths, schema_overrides=schema_dict)
 
         # Filter by stop_ids if provided
         if stop_ids:
@@ -182,10 +183,8 @@ class StopTimes:
             return None
 
         # Read schema and load all frequencies.csv files into one LazyFrame
-        schema_dict = utils.get_df_schema_dict(frequencies_paths[0])
-        frequencies = utils.read_csv_list(
-            frequencies_paths, schema_overrides=schema_dict
-        )
+        schema_dict = get_df_schema_dict(frequencies_paths[0])
+        frequencies = read_csv_list(frequencies_paths, schema_overrides=schema_dict)
 
         # Filter to only specified trip_ids, if provided
         if trip_ids:
@@ -322,10 +321,11 @@ class StopTimes:
             end_time (datetime): End datetime of the filter interval.
 
         Returns:
-            tuple:
-                filtered_stop_times (pl.LazyFrame): Filtered stop_times LazyFrame within the time interval,
-                                                    including trips with valid frequencies overlapping the interval.
-                filtered_frequencies (pl.LazyFrame | None): Frequencies overlapping the time interval or None if frequencies data is missing.
+            tuple: A tuple containing the following elements
+
+            - filtered_stop_times (pl.LazyFrame): Filtered stop_times LazyFrame within the time interval, including trips with valid frequencies overlapping the interval.
+            - filtered_frequencies (pl.LazyFrame or None): Frequencies overlapping the time interval or None if frequencies data is missing.
+
         """
 
         def time_to_seconds(t: time) -> int:

@@ -1,7 +1,12 @@
 from datetime import datetime, timedelta
 
 import polars as pl
-import utils
+from ..utils import (
+    get_df_schema_dict,
+    read_csv_list,
+    datetime_to_days_since_epoch,
+    EPOCH,
+)
 
 from typing import Union, Optional, List
 from pathlib import Path
@@ -81,8 +86,8 @@ class Calendar:
         if not calendar_paths:
             return None
 
-        schema_dict = utils.get_df_schema_dict(calendar_paths[0])  # assume same schema
-        calendar = utils.read_csv_list(calendar_paths, schema_overrides=schema_dict)
+        schema_dict = get_df_schema_dict(calendar_paths[0])  # assume same schema
+        calendar = read_csv_list(calendar_paths, schema_overrides=schema_dict)
 
         if service_ids:
             service_ids_df = pl.DataFrame({"service_id": service_ids})
@@ -146,8 +151,8 @@ class Calendar:
         if not calendar_dates_paths:
             return None
 
-        schema_dict = utils.get_df_schema_dict(calendar_dates_paths[0])
-        calendar_dates = utils.read_csv_list(
+        schema_dict = get_df_schema_dict(calendar_dates_paths[0])
+        calendar_dates = read_csv_list(
             calendar_dates_paths, schema_overrides=schema_dict
         )
 
@@ -193,7 +198,7 @@ class Calendar:
         Returns:
             list[str]: Sorted list of active service IDs on the given date.
         """
-        date_int = utils.datetime_to_days_since_epoch(date)
+        date_int = datetime_to_days_since_epoch(date)
         weekday = date.strftime("%A").lower()  # e.g., 'monday'
 
         # Filter calendar.txt for services active on this weekday and date
@@ -290,8 +295,8 @@ class Calendar:
             raise ValueError("No calendar or calendar_dates data available.")
 
         # Use provided or inferred dates
-        start_date = start_date or (utils.EPOCH + timedelta(days=min(date_bounds)))
-        end_date = end_date or (utils.EPOCH + timedelta(days=max(date_bounds)))
+        start_date = start_date or (EPOCH + timedelta(days=min(date_bounds)))
+        end_date = end_date or (EPOCH + timedelta(days=max(date_bounds)))
 
         # Generate list of dates in range with weekday info
         date_list = [
@@ -318,8 +323,8 @@ class Calendar:
         }
 
         if self.lf is not None:
-            start_int = utils.datetime_to_days_since_epoch(start_date)
-            end_int = utils.datetime_to_days_since_epoch(end_date)
+            start_int = datetime_to_days_since_epoch(start_date)
+            end_int = datetime_to_days_since_epoch(end_date)
 
             calendar_df = (
                 self.lf.select(
@@ -359,8 +364,8 @@ class Calendar:
 
         # Apply exceptions from calendar_dates.txt
         if self.exceptions_lf is not None:
-            start_int = utils.datetime_to_days_since_epoch(start_date)
-            end_int = utils.datetime_to_days_since_epoch(end_date)
+            start_int = datetime_to_days_since_epoch(start_date)
+            end_int = datetime_to_days_since_epoch(end_date)
 
             calendar_dates_df = (
                 self.exceptions_lf.select(["date", "service_id", "exception_type"])
@@ -369,7 +374,7 @@ class Calendar:
             )
 
             for row in calendar_dates_df.iter_rows(named=True):
-                date_str = (utils.EPOCH + timedelta(days=row["date"])).isoformat()
+                date_str = (EPOCH + timedelta(days=row["date"])).isoformat()
                 service_id = row["service_id"]
                 exception = row["exception_type"]
 

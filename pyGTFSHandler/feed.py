@@ -1,7 +1,4 @@
-from models.stop_times import StopTimes
-from models.calendar import Calendar
-from models.trips import Trips
-from models.stops import Stops
+from .models import StopTimes, Stops, Trips, Calendar
 
 from pathlib import Path
 from datetime import datetime
