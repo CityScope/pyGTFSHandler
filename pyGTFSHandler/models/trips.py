@@ -78,15 +78,4 @@ class Trips:
             route_ids_df = pl.DataFrame({"route_id": route_ids})
             trips = trips.join(route_ids_df.lazy(), on="route_id", how="inner")
 
-        # Create night trips with modified trip_id and service_id
-        night_trips = trips.with_columns(
-            [
-                (pl.col("trip_id") + "_night").alias("trip_id"),
-                (pl.col("service_id") + "_night").alias("service_id"),
-            ]
-        )
-
-        # Concatenate original and night trips
-        trips = pl.concat([trips, night_trips])
-
         return trips

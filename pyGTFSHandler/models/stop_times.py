@@ -121,19 +121,19 @@ class StopTimes:
                     pl.col("departure_time").str.slice(0, 2).cast(int) * 3600
                     + pl.col("departure_time").str.slice(3, 2).cast(int) * 60
                     + pl.col("departure_time").str.slice(6, 2).cast(int)
-                ).alias("departure_time_secs"),
+                ).alias("departure_time"),
                 (
                     pl.col("arrival_time").str.slice(0, 2).cast(int) * 3600
                     + pl.col("arrival_time").str.slice(3, 2).cast(int) * 60
                     + pl.col("arrival_time").str.slice(6, 2).cast(int)
-                ).alias("arrival_time_secs"),
+                ).alias("arrival_time"),
             ]
         )
 
         stop_times = stop_times.with_columns(
             pl.when(
-                (pl.col("departure_time_secs") >= 86400)
-                | (pl.col("arrival_time_secs") >= 86400)
+                (pl.col("departure_time") >= 86400)
+                | (pl.col("arrival_time") >= 86400)
             )
             .then(pl.lit(True))
             .otherwise(pl.lit(False))
@@ -142,15 +142,64 @@ class StopTimes:
 
         stop_times = stop_times.with_columns(
             [
-                pl.when(pl.col("departure_time_secs") >= 86400)
-                .then(pl.col("departure_time_secs") - 86400)
-                .otherwise(pl.col("departure_time_secs"))
-                .alias("departure_time_secs"),
-                pl.when(pl.col("arrival_time_secs") >= 86400)
-                .then(pl.col("arrival_time_secs") - 86400)
-                .otherwise(pl.col("arrival_time_secs"))
-                .alias("arrival_time_secs"),
+                pl.when(pl.col("departure_time") >= 86400)
+                .then(pl.col("departure_time") - 86400)
+                .otherwise(pl.col("departure_time"))
+                .alias("departure_time"),
+                pl.when(pl.col("arrival_time") >= 86400)
+                .then(pl.col("arrival_time") - 86400)
+                .otherwise(pl.col("arrival_time"))
+                .alias("arrival_time"),
             ]
+        )
+
+        stop_times = (
+            stop_times
+            .sort(["trip_id", "stop_sequence"])
+            .with_columns([
+                # Shift previous departure_time, forward fill non-nulls within trip
+                pl.col("departure_time")
+                .shift(1)
+                .over("trip_id")
+                .fill_null(strategy="forward")
+                .alias("prev_departure_time")
+            ])
+            .with_columns([
+                # Compute delta safely
+                (pl.col("departure_time") - pl.col("prev_departure_time"))
+                .fill_null(0)
+                .alias("shape_time_delta")
+            ])
+            .with_columns([
+                # Detect midnight crossing (per trip cum_sum)
+                (
+                    ((pl.col("shape_time_delta") < 0).cum_sum().over("trip_id") > 0) |
+                    pl.col("next_day")
+                ).alias("next_day")
+            ])
+            .with_columns([
+                # Fix delta for after midnight
+                pl.when(pl.col("shape_time_delta") < 0)
+                .then(pl.col("shape_time_delta") + 86400) 
+                .otherwise(pl.col("shape_time_delta"))
+                .alias("shape_time_delta")
+            ])
+            .with_columns([
+                # Cumulative travel time
+                pl.col("shape_time_delta").cum_sum().over("trip_id").alias("shape_time_traveled")
+            ])
+            .with_columns([
+                # Nullify shape_time_traveled if departure_time is null
+                pl.when(pl.col("departure_time").is_null())
+                .then(None)
+                .otherwise(pl.col("shape_time_traveled"))
+                .alias("shape_time_traveled")
+            ])
+            .with_columns([
+                # Total trip travel time (same for all stops in trip)
+                pl.col("shape_time_traveled").max().over("trip_id").alias("shape_total_travel_time")
+            ])
+            .drop("prev_departure_time")
         )
 
         return stop_times
@@ -211,12 +260,12 @@ class StopTimes:
                     pl.col("start_time").str.slice(0, 2).cast(int) * 3600
                     + pl.col("start_time").str.slice(3, 2).cast(int) * 60
                     + pl.col("start_time").str.slice(6, 2).cast(int)
-                ).alias("start_time_secs"),
+                ).alias("start_time"),
                 (
                     pl.col("end_time").str.slice(0, 2).cast(int) * 3600
                     + pl.col("end_time").str.slice(3, 2).cast(int) * 60
                     + pl.col("end_time").str.slice(6, 2).cast(int)
-                ).alias("end_time_secs"),
+                ).alias("end_time"),
             ]
         )
 
@@ -246,8 +295,8 @@ class StopTimes:
 
         frequencies = frequencies.with_columns(
             pl.when(
-                (pl.col("start_time_secs") >= 86400)
-                & (pl.col("end_time_secs") >= 86400)
+                (pl.col("start_time") >= 86400)
+                & (pl.col("end_time") >= 86400)
             )
             .then(pl.lit(True))
             .otherwise(pl.lit(False))
@@ -257,42 +306,42 @@ class StopTimes:
         frequencies = frequencies.with_columns(
             [
                 pl.when(
-                    (pl.col("start_time_secs") >= 86400)
-                    & (pl.col("end_time_secs") >= 86400)
+                    (pl.col("start_time") >= 86400)
+                    & (pl.col("end_time") >= 86400)
                 )
-                .then(pl.col("start_time_secs") - 86400)
-                .otherwise(pl.col("start_time_secs"))
-                .alias("start_time_secs"),
+                .then(pl.col("start_time") - 86400)
+                .otherwise(pl.col("start_time"))
+                .alias("start_time"),
                 pl.when(
-                    (pl.col("start_time_secs") >= 86400)
-                    & (pl.col("end_time_secs") >= 86400)
+                    (pl.col("start_time") >= 86400)
+                    & (pl.col("end_time") >= 86400)
                 )
-                .then(pl.col("end_time_secs") - 86400)
-                .otherwise(pl.col("end_time_secs"))
-                .alias("end_time_secs"),
+                .then(pl.col("end_time") - 86400)
+                .otherwise(pl.col("end_time"))
+                .alias("end_time"),
             ]
         )
 
-        # Clamp end_time_secs to 23:59:59 (86399) if it equals 86400 (i.e. 24:00:00)
+        # Clamp end_time to 23:59:59 (86399) if it equals 86400 (i.e. 24:00:00)
         frequencies = frequencies.with_columns(
-            pl.when(pl.col("end_time_secs") == 86400)
+            pl.when(pl.col("end_time") == 86400)
             .then(86399)
-            .otherwise(pl.col("end_time_secs"))
-            .alias("end_time_secs")
+            .otherwise(pl.col("end_time"))
+            .alias("end_time")
         )
 
-        # Identify trips that cross midnight (end_time_secs < start_time_secs or invalid > 86400)
+        # Identify trips that cross midnight (end_time < start_time or invalid > 86400)
         spans_midnight = frequencies.filter(
-            (pl.col("end_time_secs") < pl.col("start_time_secs"))
-            | (pl.col("end_time_secs") >= 86400)
+            (pl.col("end_time") < pl.col("start_time"))
+            | (pl.col("end_time") >= 86400)
         )
 
         # First part: From original start to midnight
-        first_half = spans_midnight.with_columns(pl.lit(86399).alias("end_time_secs"))
+        first_half = spans_midnight.with_columns(pl.lit(86399).alias("end_time"))
 
         # Second part: From midnight to original end
         second_half = spans_midnight.with_columns(
-            pl.lit(0).alias("start_time_secs"), pl.lit(True).alias("next_day")
+            pl.lit(0).alias("start_time"), pl.lit(True).alias("next_day")
         )
 
         # Duplicate and merge the midnight-splitting intervals
@@ -300,12 +349,22 @@ class StopTimes:
 
         # Keep trips that do not cross midnight and are valid
         normal_rows = frequencies.filter(
-            (pl.col("end_time_secs") >= pl.col("start_time_secs"))
-            & (pl.col("end_time_secs") < 86400)
+            (pl.col("end_time") >= pl.col("start_time"))
+            & (pl.col("end_time") < 86400)
         )
 
         # Final cleaned LazyFrame
         frequencies = pl.concat([normal_rows, duplicated_rows], how="vertical_relaxed")
+
+        frequencies = frequencies.with_columns(
+                (
+                    (pl.col("end_time") - pl.col("start_time"))
+                    / pl.col("headway_secs")
+                )
+                .floor()
+                .cast(pl.UInt32)
+                .alias("n_trips")
+            )
 
         return frequencies
 
@@ -334,12 +393,12 @@ class StopTimes:
         start_secs = time_to_seconds(start_time.time())
         end_secs = time_to_seconds(end_time.time())
 
-        # If frequencies is None, return stop_times filtered only by arrival_time_secs
+        # If frequencies is None, return stop_times filtered only by arrival_time
         if self.frequencies is None:
             if start_time.date() == end_time.date():
                 filtered_stop_times = self.lf.filter(
-                    (pl.col("arrival_time_secs") >= start_secs)
-                    & (pl.col("arrival_time_secs") <= end_secs)
+                    (pl.col("arrival_time") >= start_secs)
+                    & (pl.col("arrival_time") <= end_secs)
                 )
             else:
                 raise ValueError("Start and end datetime must be on the same date")
@@ -349,20 +408,20 @@ class StopTimes:
         # Frequencies is available: proceed
         if start_time.date() == end_time.date():
             filtered_frequencies = self.frequencies.filter(
-                (pl.col("start_time_secs") <= end_secs)
-                & (pl.col("end_time_secs") >= start_secs)
+                (pl.col("start_time") <= end_secs)
+                & (pl.col("end_time") >= start_secs)
             )
 
             filtered_frequencies = filtered_frequencies.with_columns(
                 [
-                    pl.when(pl.col("end_time_secs") > end_secs)
+                    pl.when(pl.col("end_time") > end_secs)
                     .then(end_secs)
-                    .otherwise(pl.col("end_time_secs"))
-                    .alias("end_time_secs"),
-                    pl.when(pl.col("start_time_secs") < start_secs)
+                    .otherwise(pl.col("end_time"))
+                    .alias("end_time"),
+                    pl.when(pl.col("start_time") < start_secs)
                     .then(start_secs)
-                    .otherwise(pl.col("start_time_secs"))
-                    .alias("start_time_secs"),
+                    .otherwise(pl.col("start_time"))
+                    .alias("start_time"),
                 ]
             )
 
@@ -370,8 +429,8 @@ class StopTimes:
 
             filtered_stop_times = self.lf.filter(
                 (
-                    (pl.col("arrival_time_secs") >= start_secs)
-                    & (pl.col("arrival_time_secs") <= end_secs)
+                    (pl.col("arrival_time") >= start_secs)
+                    & (pl.col("arrival_time") <= end_secs)
                 )
                 | (pl.col("trip_id").is_in(valid_trip_ids))
             )
@@ -409,12 +468,12 @@ class StopTimes:
             )
 
         if self.frequencies is None:
-            # No frequencies: only filter stop_times arrival_time_secs for any interval
+            # No frequencies: only filter stop_times arrival_time for any interval
 
             # Build a single filter expression for stop_times combining all intervals with OR
             arrival_filters = [
-                (pl.col("arrival_time_secs") >= start_secs)
-                & (pl.col("arrival_time_secs") <= end_secs)
+                (pl.col("arrival_time") >= start_secs)
+                & (pl.col("arrival_time") <= end_secs)
                 for start_secs, end_secs in intervals
             ]
             combined_arrival_filter = reduce(operator.or_, arrival_filters)
@@ -425,22 +484,22 @@ class StopTimes:
         # Frequencies exist: build combined filter for frequencies with OR
 
         freq_filters = [
-            (pl.col("start_time_secs") <= end_secs)
-            & (pl.col("end_time_secs") >= start_secs)
+            (pl.col("start_time") <= end_secs)
+            & (pl.col("end_time") >= start_secs)
             for start_secs, end_secs in intervals
         ]
         combined_freq_filter = reduce(operator.or_, freq_filters)
 
         filtered_frequencies = self.frequencies.filter(combined_freq_filter)
 
-        # For clipping frequencies start_time_secs and end_time_secs, create expressions that clamp
+        # For clipping frequencies start_time and end_time, create expressions that clamp
         # each frequency interval by the min start_secs and max end_secs it overlaps with.
 
         # For each interval, create expressions for clipped start and end times:
         start_clips = [
-            pl.when(pl.col("start_time_secs") < start_secs)
+            pl.when(pl.col("start_time") < start_secs)
             .then(start_secs)
-            .otherwise(pl.col("start_time_secs"))
+            .otherwise(pl.col("start_time"))
             for start_secs, _ in intervals
         ]
         # Min of all start_clips (the maximum among all start_secs)
@@ -451,9 +510,9 @@ class StopTimes:
         )
 
         end_clips = [
-            pl.when(pl.col("end_time_secs") > end_secs)
+            pl.when(pl.col("end_time") > end_secs)
             .then(end_secs)
-            .otherwise(pl.col("end_time_secs"))
+            .otherwise(pl.col("end_time"))
             for _, end_secs in intervals
         ]
         # Max of all end_clips (the minimum among all end_secs)
@@ -466,18 +525,18 @@ class StopTimes:
         # Apply clipping columns
         filtered_frequencies = filtered_frequencies.with_columns(
             [
-                clipped_start.alias("start_time_secs"),
-                clipped_end.alias("end_time_secs"),
+                clipped_start.alias("start_time"),
+                clipped_end.alias("end_time"),
             ]
         )
 
         # Get unique trip_ids from filtered frequencies
         valid_trip_ids = filtered_frequencies.select("trip_id").unique()
 
-        # Build combined stop_times arrival_time_secs filter (OR all intervals)
+        # Build combined stop_times arrival_time filter (OR all intervals)
         arrival_filters = [
-            (pl.col("arrival_time_secs") >= start_secs)
-            & (pl.col("arrival_time_secs") <= end_secs)
+            (pl.col("arrival_time") >= start_secs)
+            & (pl.col("arrival_time") <= end_secs)
             for start_secs, end_secs in intervals
         ]
         combined_arrival_filter = reduce(operator.or_, arrival_filters)
@@ -498,16 +557,16 @@ class StopTimes:
             stop_times (pl.LazyFrame): Input LazyFrame with stop times and shape_dist_traveled.
 
         Returns:
-            pl.LazyFrame: LazyFrame with interpolated departure_time_secs and arrival_time_secs.
+            pl.LazyFrame: LazyFrame with interpolated departure_time and arrival_time.
         """
         # Sort by trip_id and shape_dist_traveled
         stop_times = stop_times.sort(["trip_id", "shape_dist_traveled"])
 
         # Forward and backward fills for times and shape distances over trip_id groups
-        dep_ffill = pl.col("departure_time_secs").forward_fill().over("trip_id")
-        dep_bfill = pl.col("departure_time_secs").backward_fill().over("trip_id")
-        arr_ffill = pl.col("arrival_time_secs").forward_fill().over("trip_id")
-        arr_bfill = pl.col("arrival_time_secs").backward_fill().over("trip_id")
+        dep_ffill = pl.col("departure_time").forward_fill().over("trip_id")
+        dep_bfill = pl.col("departure_time").backward_fill().over("trip_id")
+        arr_ffill = pl.col("arrival_time").forward_fill().over("trip_id")
+        arr_bfill = pl.col("arrival_time").backward_fill().over("trip_id")
 
         dist_ffill = pl.col("shape_dist_traveled").forward_fill().over("trip_id")
         dist_bfill = pl.col("shape_dist_traveled").backward_fill().over("trip_id")
@@ -523,14 +582,14 @@ class StopTimes:
         # Replace null times with interpolated values
         stop_times = stop_times.with_columns(
             [
-                pl.when(pl.col("departure_time_secs").is_null())
+                pl.when(pl.col("departure_time").is_null())
                 .then(dep_interp)
-                .otherwise(pl.col("departure_time_secs"))
-                .alias("departure_time_secs"),
-                pl.when(pl.col("arrival_time_secs").is_null())
+                .otherwise(pl.col("departure_time"))
+                .alias("departure_time"),
+                pl.when(pl.col("arrival_time").is_null())
                 .then(arr_interp)
-                .otherwise(pl.col("arrival_time_secs"))
-                .alias("arrival_time_secs"),
+                .otherwise(pl.col("arrival_time"))
+                .alias("arrival_time"),
             ]
         )
 
@@ -545,20 +604,20 @@ class StopTimes:
             stop_times (pl.LazyFrame): Input LazyFrame with stop times.
 
         Returns:
-            pl.LazyFrame: LazyFrame with interpolated departure_time_secs and arrival_time_secs.
+            pl.LazyFrame: LazyFrame with interpolated departure_time and arrival_time.
         """
         return stop_times.with_columns(
             [
-                pl.col("departure_time_secs")
+                pl.col("departure_time")
                 .fill_null(strategy="linear")
                 .over("trip_id")
                 .sort_by("stop_sequence")
-                .alias("departure_time_secs"),
-                pl.col("arrival_time_secs")
+                .alias("departure_time"),
+                pl.col("arrival_time")
                 .fill_null(strategy="linear")
                 .over("trip_id")
                 .sort_by("stop_sequence")
-                .alias("arrival_time_secs"),
+                .alias("arrival_time"),
             ]
         )
 
@@ -591,17 +650,17 @@ class StopTimes:
         # Convert seconds back to HH:MM:SS strings
         stop_times = stop_times.with_columns(
             [
-                self.to_hhmmss("departure_time_secs", "departure_time"),
-                self.to_hhmmss("arrival_time_secs", "arrival_time"),
+                self.to_hhmmss("departure_time", "departure_time"),
+                self.to_hhmmss("arrival_time", "arrival_time"),
             ]
         )
 
         # Handle times greater than 24 hours by wrapping around
         stop_times = stop_times.with_columns(
-            pl.when(pl.col("departure_time_secs") >= 24 * 3600)
-            .then(pl.col("departure_time_secs") - 24 * 3600)
-            .otherwise(pl.col("departure_time_secs"))
-            .alias("departure_time_secs_24")
+            pl.when(pl.col("departure_time") >= 24 * 3600)
+            .then(pl.col("departure_time") - 24 * 3600)
+            .otherwise(pl.col("departure_time"))
+            .alias("departure_time_24")
         )
 
         return stop_times

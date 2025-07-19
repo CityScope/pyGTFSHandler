@@ -2,6 +2,7 @@ from models.stop_times import StopTimes
 from models.calendar import Calendar
 from models.trips import Trips
 from models.stops import Stops
+from models.routes import Routes
 
 from pathlib import Path
 from datetime import datetime
@@ -53,16 +54,73 @@ class Feed:
                 raise ValueError(f"{p} is not a valid directory.")
 
         self.calendar = Calendar(self.gtfs_dir, service_ids=service_ids)
+        self.routes = Routes(self.gtfs_dir,route_ids=route_ids)
         self.trips = Trips(
             self.gtfs_dir,
             service_ids=self.calendar.service_ids,
             trip_ids=trip_ids,
-            route_ids=route_ids,
+            route_ids=self.routes.route_ids,
         )
         self.stops = Stops(self.gtfs_dir, aoi=aoi, stop_ids=stop_ids)
         self.stop_times = StopTimes(
             self.gtfs_dir, stop_ids=self.stops.stop_ids, trip_ids=self.trips.trip_ids
         )
+
+        # Select relevant columns from stop_times
+        self.lf = self.stop_times.lf.select([
+            'trip_id', 'stop_id', 'departure_time', 'arrival_time', 'stop_sequence', 
+            'shape_dist_traveled', 'shape_time_traveled', 'shape_total_travel_time', 'next_day'
+        ])
+
+        if self.stop_times.frequencies is not None:
+            # Join frequencies
+            self.lf = self.lf.join(
+                self.stop_times.frequencies.select([
+                    'trip_id', 'start_time', 'end_time', 'headway_secs', 'next_day', 'n_trips'
+                ]),
+                on='trip_id',
+                how='left'
+            ).with_columns([
+                # Combine both `next_day` columns into one
+                (pl.col('next_day') | pl.col('next_day_right').fill_null(False)).alias('next_day'),
+                # Set n_trips = 1 where it's null (assuming n_trips may already exist)
+                pl.when(pl.col('n_trips').is_null()).then(pl.lit(1)).otherwise(pl.col('n_trips')).alias('n_trips')
+            ]).drop(['next_day_right'])
+
+        else:
+            # No frequencies: create n_trips = 1
+            self.lf = self.lf.with_columns(
+                pl.lit(1).alias('n_trips')
+            )
+
+        # Merge with trips
+        self.lf = self.lf.join(
+            self.trips.lf.select(['trip_id', 'service_id', 'route_id', 'shape_id']),
+            on='trip_id',
+            how='left'
+        )
+
+        # Merge with stops
+        self.lf = self.lf.join(
+            self.stops.lf.select(['stop_id', 'parent_station']),
+            on='stop_id',
+            how='left'
+        )
+
+        # Merge with routes
+        self.lf = self.lf.join(
+            self.routes.lf.select(['route_id', 'route_type']),
+            on='route_id',
+            how='left'
+        )
+
+        # Apply next_day transformation to service_id
+        self.lf = self.lf.with_columns([
+            pl.when(pl.col('next_day') == True)
+            .then(pl.col('service_id') + "_night")
+            .otherwise(pl.col('service_id'))
+            .alias('service_id')
+        ])
 
     def get_service_intensity_in_date_range(
         self, start_date: Optional[datetime] = None, end_date: Optional[datetime] = None
@@ -79,39 +137,11 @@ class Feed:
         """
         date_df = self.calendar.get_services_in_date_range(start_date, end_date)
 
-        stop_times = self.stop_times.lf.select("trip_id")
-        trips = self.trips.lf.select(["trip_id", "service_id"])
-
-        if self.stop_times.frequencies is not None:
-            frequencies = self.stop_times.frequencies
-
-            # Join frequencies with service_id
-            frequencies = frequencies.join(trips, on="trip_id", how="left")
-
-            # Compute number of trips per frequency block
-            frequencies = frequencies.with_columns(
-                (
-                    (pl.col("end_time_secs") - pl.col("start_time_secs"))
-                    / pl.col("headway_secs")
-                )
-                .floor()
-                .cast(pl.UInt32)
-                .alias("n_trips")
-            )
-
-            # Sum n_trips per trip_id (if multiple frequency blocks per trip)
-            trip_n_trips = frequencies.group_by("trip_id").agg(
-                pl.col("service_id").first(), pl.col("n_trips").sum()
-            )
-
-            stop_times = stop_times.join(trip_n_trips, on="trip_id", how="left")
-        else:
-            stop_times = stop_times.join(trips, on="trip_id", how="left")
-            stop_times = stop_times.with_columns(pl.lit(1).alias("n_trips"))
+        gtfs_lf = self.lf.select("trip_id", "service_id", "n_trips")
 
         # Compute stop time counts per service
         stop_time_counts_df = (
-            stop_times.group_by("service_id")
+            gtfs_lf.group_by("service_id")
             .agg(pl.col("n_trips").sum().alias("num_stop_times"))
             .collect()
         )
