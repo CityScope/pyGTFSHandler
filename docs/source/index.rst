@@ -16,5 +16,5 @@ documentation for details.
    :caption: Contents:
 
    guides/Example_metro_madrid
-   sudo apt-get install pandoc
+   modules
 
