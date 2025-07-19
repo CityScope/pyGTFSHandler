@@ -3,9 +3,21 @@ import unicodedata
 import re
 from typing import List, Optional
 import os
+from datetime import datetime, date
 
 
-def get_df_schema_dict(path: str) -> dict:
+EPOCH = date(1970, 1, 1)
+
+
+def datetime_to_days_since_epoch(dt: datetime | date) -> int:
+    if type(dt) is datetime:
+        dt = dt.date()
+
+    delta = dt - EPOCH
+    return delta.days
+
+
+def get_df_schema_dict(path) -> dict:
     """
     Returns a dictionary specifying the expected data types for mandatory columns
     in a GTFS (General Transit Feed Specification) file.
@@ -22,16 +34,16 @@ def get_df_schema_dict(path: str) -> dict:
     dict
         A dictionary mapping mandatory column names to their expected data types.
     """
-    if "stops.txt" in path:
+    if "stops.txt" in str(path):
         schema_dict = {
             "stop_id": str,
             "stop_name": str,
             "stop_lat": float,
             "stop_lon": float,
         }
-    elif "trips.txt" in path:
+    elif "trips.txt" in str(path):
         schema_dict = {"route_id": str, "service_id": str, "trip_id": str}
-    elif "stop_times.txt" in path:
+    elif "stop_times.txt" in str(path):
         schema_dict = {
             "trip_id": str,
             "arrival_time": str,
@@ -39,14 +51,14 @@ def get_df_schema_dict(path: str) -> dict:
             "stop_id": str,
             "stop_sequence": int,
         }
-    elif "routes.txt" in path:
+    elif "routes.txt" in str(path):
         schema_dict = {
             "route_id": str,
             "route_short_name": str,
             "route_long_name": str,
             "route_type": int,
         }
-    elif "calendar.txt" in path:
+    elif "calendar.txt" in str(path):
         schema_dict = {
             "service_id": str,
             "monday": int,
@@ -56,18 +68,26 @@ def get_df_schema_dict(path: str) -> dict:
             "friday": int,
             "saturday": int,
             "sunday": int,
-            "start_date": str,
-            "end_date": str,
+            "start_date": int,
+            "end_date": int,
         }
+    elif "calendar_dates.txt" in str(path):
+        schema_dict = {"service_id": str, "date": int, "exception_type": int}
+    elif "frequencies.txt" in str(path):
+        schema_dict = {
+            "trip_id": str,
+            "start_time": str,
+            "end_time": str,
+            "headway_secs": int,
+        }
+
     else:
         raise Exception(f"File {path} not implemented.")
 
     return schema_dict
 
 
-def read_csv_lazy(
-    path: str, schema_overrides: dict = None, column_names: list[str] = None
-) -> pl.LazyFrame:
+def read_csv_lazy(path: str, schema_overrides: dict = None) -> pl.LazyFrame:
     """
     Lazily reads a CSV file into a Polars LazyFrame with optional schema overrides and column filtering.
 
@@ -91,22 +111,15 @@ def read_csv_lazy(
         containing the GTFS directory name inferred from the path.
     """
     # Lazily scan CSV with optional column selection
-    lf: pl.LazyFrame = pl.scan_csv(path, columns=column_names, infer_schema_length=None)
+    lf = pl.scan_csv(path, infer_schema=False)
 
     # Apply custom normalization (assuming normalize_df is defined elsewhere)
     lf = normalize_df(lf)
 
     # Apply schema overrides if specified
     if schema_overrides:
-        # Safe fallback in case column_names is None (meaning all columns are read)
-        selected_cols = (
-            column_names
-            if column_names is not None
-            else list(lf.collect_schema().keys())
-        )
-
         for col, dtype in schema_overrides.items():
-            if col in selected_cols:
+            if col in lf.collect_schema().names():
                 lf = lf.with_columns(pl.col(col).cast(dtype))
 
     # Extract GTFS directory name from path (e.g., 'gtfs_file' from '/home/xyz/gtfs_file/stops.txt')
@@ -119,9 +132,7 @@ def read_csv_lazy(
 
 
 def read_csv_list(
-    path_list: List[str],
-    schema_overrides: Optional[dict] = None,
-    column_names: Optional[List[str]] = None,
+    path_list: List[str], schema_overrides: Optional[dict] = None
 ) -> pl.LazyFrame:
     """
     Lazily reads a list of CSV (GTFS) files into a single concatenated Polars LazyFrame.
@@ -146,12 +157,7 @@ def read_csv_list(
         A concatenated LazyFrame of all input files, using `how='diagonal_relaxed'` to handle differing schemas.
     """
     return pl.concat(
-        [
-            read_csv_lazy(
-                path, schema_overrides=schema_overrides, column_names=column_names
-            )
-            for path in path_list
-        ],
+        [read_csv_lazy(path, schema_overrides=schema_overrides) for path in path_list],
         how="diagonal_relaxed",
     )
 

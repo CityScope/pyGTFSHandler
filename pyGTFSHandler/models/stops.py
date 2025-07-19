@@ -1,6 +1,7 @@
 import polars as pl
 import geopandas as gpd
 from pathlib import Path
+from typing import Union, List
 import utils
 
 
@@ -9,7 +10,7 @@ class Stops:
     A class to manage GTFS stops using Polars LazyFrames and GeoPandas GeoDataFrames.
 
     Provides functionality to:
-    - Read and optionally filter GTFS stops
+    - Read and optionally filter GTFS stops from one or more directories
     - Filter stops by area of interest (AOI)
     - Group stops spatially and assign `parent_station` values
 
@@ -17,27 +18,31 @@ class Stops:
         lf (pl.LazyFrame): LazyFrame containing GTFS stops.
         gdf (gpd.GeoDataFrame): GeoDataFrame of stop_id and geometry.
         stop_ids (list[str]): List of stop IDs currently loaded.
-        path (Path): Path to GTFS 'stops.txt' file.
+        paths (List[Path]): List of GTFS paths (directories).
     """
 
     def __init__(
         self,
-        path: str | Path,
-        aoi: gpd.GeoDataFrame | gpd.GeoSeries = None,
-        stop_ids: list[str] = None,
+        path: Union[str, Path, List[Union[str, Path]]],
+        aoi: Union[gpd.GeoDataFrame, gpd.GeoSeries, None] = None,
+        stop_ids: Union[List[str], None] = None,
     ):
         """
-        Initialize Stops instance and load GTFS stops.
+        Initialize Stops instance and load GTFS stops from one or more files.
 
         Args:
-            path (str | Path): Path to the GTFS directory.
+            path (str | Path | list): One or more paths to GTFS directories.
             aoi (GeoDataFrame | GeoSeries, optional): Area of interest for spatial filtering.
             stop_ids (list[str], optional): List of stop IDs to include.
         """
-        self.path = Path(path) / "stops.txt"
+        if isinstance(path, (str, Path)):
+            self.paths = [Path(path)]
+        else:
+            self.paths = [Path(p) for p in path]
+
         self.lf = self.__read_stops(stop_ids)
 
-        if aoi:
+        if aoi is not None:
             self.lf, self.gdf = self.__filter_by_aoi(aoi)
         else:
             df = self.lf.select(["stop_id", "stop_lat", "stop_lon"]).collect()
@@ -49,11 +54,11 @@ class Stops:
 
         self.stop_ids = self.lf.select("stop_id").collect()["stop_id"].to_list()
 
-    def __read_stops(self, stop_ids: list[str] = None) -> pl.LazyFrame:
+    def __read_stops(self, stop_ids: Union[List[str], None] = None) -> pl.LazyFrame:
         """
-        Read GTFS stops.txt and filter by stop IDs if provided.
+        Read GTFS stops.txt files and filter by stop IDs if provided.
 
-        Ensures 'parent_station' column exists.
+        Ensures 'parent_station' column exists across all files.
 
         Args:
             stop_ids (list[str], optional): Stop IDs to filter by.
@@ -61,15 +66,18 @@ class Stops:
         Returns:
             pl.LazyFrame: Filtered and normalized stops LazyFrame.
         """
-        schema_dict = utils.get_df_schema_dict(self.path)
+        stop_paths = [p / "stops.txt" for p in self.paths if (p / "stops.txt").exists()]
+        if not stop_paths:
+            raise FileNotFoundError("No stops.txt files found in the provided path(s).")
 
-        lf = utils.read_csv_list(self.path, schema_overrides=schema_dict)
+        schema_dict = utils.get_df_schema_dict(stop_paths[0])
+        lf = utils.read_csv_list(stop_paths, schema_overrides=schema_dict)
 
         if stop_ids:
             stop_ids_df = pl.DataFrame({"stop_id": stop_ids})
             lf = lf.join(stop_ids_df.lazy(), on="stop_id", how="inner")
 
-        if "parent_station" not in lf.schema:
+        if "parent_station" not in lf.collect_schema().names():
             lf = lf.with_columns(pl.lit(None).alias("parent_station"))
 
         return lf
