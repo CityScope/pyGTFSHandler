@@ -29,12 +29,12 @@ def get_df_schema_dict(path) -> dict:
     This is useful for consistent schema enforcement when reading GTFS .txt files.
 
     Parameters:
-    ----------
+    -----------
     path : str
         The file path or file name of a GTFS component (e.g., 'stops.txt').
 
     Returns:
-    -------
+    --------
     dict
         A dictionary mapping mandatory column names to their expected data types.
     """
@@ -99,20 +99,18 @@ def read_csv_lazy(path: str, schema_overrides: dict = None) -> pl.LazyFrame:
     and retaining metadata such as the GTFS directory name.
 
     Parameters:
-    ----------
-    path : str
-        Full path to the GTFS .txt file (CSV format).
-    schema_overrides : dict, optional
-        A dictionary mapping column names to Polars data types to override inferred types.
-        Example: {'stop_lat': pl.Float64, 'stop_lon': pl.Float64}
-    column_names : list of str, optional
-        A list of column names to include. If None, all columns are read.
+        path : str
+            Full path to the GTFS .txt file (CSV format).
+        schema_overrides : dict, optional
+            A dictionary mapping column names to Polars data types to override inferred types.
+            Example: {'stop_lat': pl.Float64, 'stop_lon': pl.Float64}
+        column_names : list of str, optional
+            A list of column names to include. If None, all columns are read.
 
     Returns:
-    -------
-    pl.LazyFrame
-        A lazily loaded Polars LazyFrame with applied schema overrides and a new column `gtfs_name`
-        containing the GTFS directory name inferred from the path.
+        pl.LazyFrame
+            A lazily loaded Polars LazyFrame with applied schema overrides and a new column `gtfs_name`
+            containing the GTFS directory name inferred from the path.
     """
     # Lazily scan CSV with optional column selection
     lf = pl.scan_csv(path, infer_schema=False)
@@ -146,19 +144,17 @@ def read_csv_list(
     concatenates all resulting LazyFrames.
 
     Parameters:
-    ----------
-    path_list : list of str
-        List of file paths to GTFS CSV (.txt) files.
-    schema_overrides : dict, optional
-        A dictionary mapping column names to Polars data types to override inferred types.
-        Example: {'stop_lat': pl.Float64, 'stop_lon': pl.Float64}
-    column_names : list of str, optional
-        A list of columns to read from each file. If None, all columns are read.
+        path_list : list of str
+            List of file paths to GTFS CSV (.txt) files.
+        schema_overrides : dict, optional
+            A dictionary mapping column names to Polars data types to override inferred types.
+            Example: {'stop_lat': pl.Float64, 'stop_lon': pl.Float64}
+        column_names : list of str, optional
+            A list of columns to read from each file. If None, all columns are read.
 
     Returns:
-    -------
-    pl.LazyFrame
-        A concatenated LazyFrame of all input files, using `how='diagonal_relaxed'` to handle differing schemas.
+        pl.LazyFrame
+            A concatenated LazyFrame of all input files, using `how='diagonal_relaxed'` to handle differing schemas.
     """
     return pl.concat(
         [read_csv_lazy(path, schema_overrides=schema_overrides) for path in path_list],

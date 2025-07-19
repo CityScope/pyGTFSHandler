@@ -2,7 +2,7 @@ import polars as pl
 import geopandas as gpd
 from pathlib import Path
 from typing import Union, List
-import utils
+from ..utils import read_csv_list, get_df_schema_dict
 
 
 class Stops:
@@ -70,8 +70,8 @@ class Stops:
         if not stop_paths:
             raise FileNotFoundError("No stops.txt files found in the provided path(s).")
 
-        schema_dict = utils.get_df_schema_dict(stop_paths[0])
-        lf = utils.read_csv_list(stop_paths, schema_overrides=schema_dict)
+        schema_dict = get_df_schema_dict(stop_paths[0])
+        lf = read_csv_list(stop_paths, schema_overrides=schema_dict)
 
         if stop_ids:
             stop_ids_df = pl.DataFrame({"stop_id": stop_ids})
