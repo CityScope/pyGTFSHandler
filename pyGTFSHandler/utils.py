@@ -249,19 +249,10 @@ def normalize_df(lf: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame
     return lf
 
 
-
 def get_country_region(lat, lon):
     url = "https://nominatim.openstreetmap.org/reverse"
-    headers = {
-        "User-Agent": "pyGTFSHandler/0.1.0 (https://blogs.upm.es/aga/en/)"
-    }
-    params = {
-        "lat": lat,
-        "lon": lon,
-        "format": "json",
-        "zoom": 10,
-        "addressdetails": 1
-    }
+    headers = {"User-Agent": "pyGTFSHandler/0.1.0 (https://blogs.upm.es/aga/en/)"}
+    params = {"lat": lat, "lon": lon, "format": "json", "zoom": 10, "addressdetails": 1}
 
     resp = requests.get(url, headers=headers, params=params)
     resp.raise_for_status()
@@ -270,7 +261,6 @@ def get_country_region(lat, lon):
     country_code = data.get("country_code", "").upper()
     region_name = data.get("state") or data.get("region")
     subdivision_code = None
-    matched_exactly = False
 
     if country_code and region_name:
         try:
@@ -281,12 +271,13 @@ def get_country_region(lat, lon):
             for subdiv in subdivisions:
                 if subdiv.name.lower() == region_name.lower():
                     subdivision_code = subdiv.code
-                    matched_exactly = True
                     break
 
             # If no exact match, try fuzzy matching on subdivision names
             if subdivision_code is None:
-                close_matches = get_close_matches(region_name, subdivision_names, n=3, cutoff=0.6)
+                close_matches = get_close_matches(
+                    region_name, subdivision_names, n=3, cutoff=0.6
+                )
                 if close_matches:
                     for match_name in close_matches:
                         for subdiv in subdivisions:
@@ -298,7 +289,7 @@ def get_country_region(lat, lon):
                     if subdivision_code:
                         warnings.warn(
                             f"Fuzzy match used for region '{region_name}'. Matched with '{match_name}'.",
-                            UserWarning
+                            UserWarning,
                         )
 
             # fallback: pycountry's search_fuzzy
@@ -309,7 +300,7 @@ def get_country_region(lat, lon):
                         subdivision_code = match.code
                         warnings.warn(
                             f"Fuzzy match used via pycountry.search_fuzzy for region '{region_name}'. Matched with '{match.name}'.",
-                            UserWarning
+                            UserWarning,
                         )
                         break
 
@@ -323,13 +314,15 @@ def get_holidays(year, country_code, subdivision_code=None):
     url = f"https://date.nager.at/api/v3/PublicHolidays/{year}/{country_code}"
     holidays = requests.get(url).json()
     if subdivision_code:
-        df = pl.DataFrame([
-            h for h in holidays
-            if h["counties"] is None or subdivision_code in h["counties"]
-        ])
+        df = pl.DataFrame(
+            [
+                h
+                for h in holidays
+                if h["counties"] is None or subdivision_code in h["counties"]
+            ]
+        )
     else:
         df = pl.DataFrame(holidays)
-
 
     df = df.with_columns(
         [

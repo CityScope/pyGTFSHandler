@@ -51,9 +51,13 @@ class Routes:
         Returns:
             pl.LazyFrame: Filtered routes data as a LazyFrame.
         """
-        route_paths = [p / "routes.txt" for p in self.paths if (p / "routes.txt").exists()]
+        route_paths = [
+            p / "routes.txt" for p in self.paths if (p / "routes.txt").exists()
+        ]
         if not route_paths:
-            raise FileNotFoundError("No routes.txt files found in the provided path(s).")
+            raise FileNotFoundError(
+                "No routes.txt files found in the provided path(s)."
+            )
 
         schema_dict = utils.get_df_schema_dict(route_paths[0])
         routes = utils.read_csv_list(route_paths, schema_overrides=schema_dict)

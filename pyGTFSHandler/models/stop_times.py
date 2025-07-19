@@ -132,8 +132,7 @@ class StopTimes:
 
         stop_times = stop_times.with_columns(
             pl.when(
-                (pl.col("departure_time") >= 86400)
-                | (pl.col("arrival_time") >= 86400)
+                (pl.col("departure_time") >= 86400) | (pl.col("arrival_time") >= 86400)
             )
             .then(pl.lit(True))
             .otherwise(pl.lit(False))
@@ -154,51 +153,70 @@ class StopTimes:
         )
 
         stop_times = (
-            stop_times
-            .sort(["trip_id", "stop_sequence"])
-            .with_columns([
-                # Shift previous departure_time, forward fill non-nulls within trip
-                pl.col("departure_time")
-                .shift(1)
-                .over("trip_id")
-                .fill_null(strategy="forward")
-                .alias("prev_departure_time")
-            ])
-            .with_columns([
-                # Compute delta safely
-                (pl.col("departure_time") - pl.col("prev_departure_time"))
-                .fill_null(0)
-                .alias("shape_time_delta")
-            ])
-            .with_columns([
-                # Detect midnight crossing (per trip cum_sum)
-                (
-                    ((pl.col("shape_time_delta") < 0).cum_sum().over("trip_id") > 0) |
-                    pl.col("next_day")
-                ).alias("next_day")
-            ])
-            .with_columns([
-                # Fix delta for after midnight
-                pl.when(pl.col("shape_time_delta") < 0)
-                .then(pl.col("shape_time_delta") + 86400) 
-                .otherwise(pl.col("shape_time_delta"))
-                .alias("shape_time_delta")
-            ])
-            .with_columns([
-                # Cumulative travel time
-                pl.col("shape_time_delta").cum_sum().over("trip_id").alias("shape_time_traveled")
-            ])
-            .with_columns([
-                # Nullify shape_time_traveled if departure_time is null
-                pl.when(pl.col("departure_time").is_null())
-                .then(None)
-                .otherwise(pl.col("shape_time_traveled"))
-                .alias("shape_time_traveled")
-            ])
-            .with_columns([
-                # Total trip travel time (same for all stops in trip)
-                pl.col("shape_time_traveled").max().over("trip_id").alias("shape_total_travel_time")
-            ])
+            stop_times.sort(["trip_id", "stop_sequence"])
+            .with_columns(
+                [
+                    # Shift previous departure_time, forward fill non-nulls within trip
+                    pl.col("departure_time")
+                    .shift(1)
+                    .over("trip_id")
+                    .fill_null(strategy="forward")
+                    .alias("prev_departure_time")
+                ]
+            )
+            .with_columns(
+                [
+                    # Compute delta safely
+                    (pl.col("departure_time") - pl.col("prev_departure_time"))
+                    .fill_null(0)
+                    .alias("shape_time_delta")
+                ]
+            )
+            .with_columns(
+                [
+                    # Detect midnight crossing (per trip cum_sum)
+                    (
+                        ((pl.col("shape_time_delta") < 0).cum_sum().over("trip_id") > 0)
+                        | pl.col("next_day")
+                    ).alias("next_day")
+                ]
+            )
+            .with_columns(
+                [
+                    # Fix delta for after midnight
+                    pl.when(pl.col("shape_time_delta") < 0)
+                    .then(pl.col("shape_time_delta") + 86400)
+                    .otherwise(pl.col("shape_time_delta"))
+                    .alias("shape_time_delta")
+                ]
+            )
+            .with_columns(
+                [
+                    # Cumulative travel time
+                    pl.col("shape_time_delta")
+                    .cum_sum()
+                    .over("trip_id")
+                    .alias("shape_time_traveled")
+                ]
+            )
+            .with_columns(
+                [
+                    # Nullify shape_time_traveled if departure_time is null
+                    pl.when(pl.col("departure_time").is_null())
+                    .then(None)
+                    .otherwise(pl.col("shape_time_traveled"))
+                    .alias("shape_time_traveled")
+                ]
+            )
+            .with_columns(
+                [
+                    # Total trip travel time (same for all stops in trip)
+                    pl.col("shape_time_traveled")
+                    .max()
+                    .over("trip_id")
+                    .alias("shape_total_travel_time")
+                ]
+            )
             .drop("prev_departure_time")
         )
 
@@ -294,10 +312,7 @@ class StopTimes:
         )
 
         frequencies = frequencies.with_columns(
-            pl.when(
-                (pl.col("start_time") >= 86400)
-                & (pl.col("end_time") >= 86400)
-            )
+            pl.when((pl.col("start_time") >= 86400) & (pl.col("end_time") >= 86400))
             .then(pl.lit(True))
             .otherwise(pl.lit(False))
             .alias("next_day")
@@ -305,17 +320,11 @@ class StopTimes:
 
         frequencies = frequencies.with_columns(
             [
-                pl.when(
-                    (pl.col("start_time") >= 86400)
-                    & (pl.col("end_time") >= 86400)
-                )
+                pl.when((pl.col("start_time") >= 86400) & (pl.col("end_time") >= 86400))
                 .then(pl.col("start_time") - 86400)
                 .otherwise(pl.col("start_time"))
                 .alias("start_time"),
-                pl.when(
-                    (pl.col("start_time") >= 86400)
-                    & (pl.col("end_time") >= 86400)
-                )
+                pl.when((pl.col("start_time") >= 86400) & (pl.col("end_time") >= 86400))
                 .then(pl.col("end_time") - 86400)
                 .otherwise(pl.col("end_time"))
                 .alias("end_time"),
@@ -332,8 +341,7 @@ class StopTimes:
 
         # Identify trips that cross midnight (end_time < start_time or invalid > 86400)
         spans_midnight = frequencies.filter(
-            (pl.col("end_time") < pl.col("start_time"))
-            | (pl.col("end_time") >= 86400)
+            (pl.col("end_time") < pl.col("start_time")) | (pl.col("end_time") >= 86400)
         )
 
         # First part: From original start to midnight
@@ -349,22 +357,18 @@ class StopTimes:
 
         # Keep trips that do not cross midnight and are valid
         normal_rows = frequencies.filter(
-            (pl.col("end_time") >= pl.col("start_time"))
-            & (pl.col("end_time") < 86400)
+            (pl.col("end_time") >= pl.col("start_time")) & (pl.col("end_time") < 86400)
         )
 
         # Final cleaned LazyFrame
         frequencies = pl.concat([normal_rows, duplicated_rows], how="vertical_relaxed")
 
         frequencies = frequencies.with_columns(
-                (
-                    (pl.col("end_time") - pl.col("start_time"))
-                    / pl.col("headway_secs")
-                )
-                .floor()
-                .cast(pl.UInt32)
-                .alias("n_trips")
-            )
+            ((pl.col("end_time") - pl.col("start_time")) / pl.col("headway_secs"))
+            .floor()
+            .cast(pl.UInt32)
+            .alias("n_trips")
+        )
 
         return frequencies
 
@@ -408,8 +412,7 @@ class StopTimes:
         # Frequencies is available: proceed
         if start_time.date() == end_time.date():
             filtered_frequencies = self.frequencies.filter(
-                (pl.col("start_time") <= end_secs)
-                & (pl.col("end_time") >= start_secs)
+                (pl.col("start_time") <= end_secs) & (pl.col("end_time") >= start_secs)
             )
 
             filtered_frequencies = filtered_frequencies.with_columns(
@@ -484,8 +487,7 @@ class StopTimes:
         # Frequencies exist: build combined filter for frequencies with OR
 
         freq_filters = [
-            (pl.col("start_time") <= end_secs)
-            & (pl.col("end_time") >= start_secs)
+            (pl.col("start_time") <= end_secs) & (pl.col("end_time") >= start_secs)
             for start_secs, end_secs in intervals
         ]
         combined_freq_filter = reduce(operator.or_, freq_filters)
