@@ -1,7 +1,7 @@
 from pathlib import Path
 import polars as pl
 from typing import Optional, List, Union
-import utils
+from ..utils import read_csv_list, get_df_schema_dict
 
 
 class Routes:
@@ -59,8 +59,8 @@ class Routes:
                 "No routes.txt files found in the provided path(s)."
             )
 
-        schema_dict = utils.get_df_schema_dict(route_paths[0])
-        routes = utils.read_csv_list(route_paths, schema_overrides=schema_dict)
+        schema_dict = get_df_schema_dict(route_paths[0])
+        routes = read_csv_list(route_paths, schema_overrides=schema_dict)
 
         if route_ids:
             route_ids_df = pl.DataFrame({"route_id": route_ids})
