@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 
 import polars as pl
-from ..utils import (
+from utils import (
     get_df_schema_dict,
     read_csv_list,
     datetime_to_days_since_epoch,

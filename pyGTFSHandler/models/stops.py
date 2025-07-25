@@ -2,7 +2,7 @@ import polars as pl
 import geopandas as gpd
 from pathlib import Path
 from typing import Union, List
-from ..utils import read_csv_list, get_df_schema_dict
+from utils import read_csv_list, get_df_schema_dict
 
 
 class Stops:

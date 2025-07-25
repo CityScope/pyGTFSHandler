@@ -1,7 +1,7 @@
 from pathlib import Path
 import polars as pl
 from typing import Optional, List, Union
-from ..utils import read_csv_list, get_df_schema_dict
+from utils import read_csv_list, get_df_schema_dict
 
 
 class Routes:
@@ -17,6 +17,7 @@ class Routes:
         self,
         path: Union[str, Path, List[Union[str, Path]]],
         route_ids: Optional[List[str]] = None,
+        route_types: Optional[List[int]] = None,
     ):
         """
         Initializes the Routes class by reading and filtering the routes data.
@@ -30,8 +31,8 @@ class Routes:
         else:
             self.paths = [Path(p) for p in path]
 
-        self.lf = self.__read_routes(route_ids)
-        if route_ids:
+        self.lf = self.__read_routes(route_ids, route_types)
+        if route_ids or route_types:
             self.route_ids = (
                 self.lf.select("route_id").unique().collect()["route_id"].to_list()
             )
@@ -39,8 +40,7 @@ class Routes:
             self.route_ids = None
 
     def __read_routes(
-        self,
-        route_ids: Optional[List[str]],
+        self, route_ids: Optional[List[str]], route_types: Optional[List[int]]
     ) -> pl.LazyFrame:
         """
         Reads the routes data from one or more `routes.txt` files and applies optional filters.
@@ -65,5 +65,9 @@ class Routes:
         if route_ids:
             route_ids_df = pl.DataFrame({"route_id": route_ids})
             routes = routes.join(route_ids_df.lazy(), on="route_id", how="inner")
+
+        if route_types:
+            route_types_df = pl.DataFrame({"route_type": route_types})
+            routes = routes.join(route_types_df.lazy(), on="route_type", how="inner")
 
         return routes
