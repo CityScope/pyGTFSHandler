@@ -245,8 +245,8 @@ class Calendar:
         max_day_offset = max(date_bounds_as_days)
 
         # Convert the integer day offsets back into standard datetime.date objects.
-        min_date = self.EPOCH + timedelta(days=min_day_offset)
-        max_date = self.EPOCH + timedelta(days=max_day_offset)
+        min_date = EPOCH + timedelta(days=min_day_offset)
+        max_date = EPOCH + timedelta(days=max_day_offset)
 
         return min_date, max_date
 
@@ -348,6 +348,12 @@ class Calendar:
         start_date = start_date or (self.min_date)
         end_date = end_date or (self.max_date)
 
+        if isinstance(start_date, datetime):
+            start_date = start_date.date()
+
+        if isinstance(end_date, datetime):
+            end_date = end_date.date()
+
         # Generate list of dates in range with weekday info
         date_list = [
             start_date + timedelta(days=i)
@@ -446,6 +452,11 @@ class Calendar:
                 }
                 for date, data in sorted(date_service_map.items())
             ]
+        ).with_columns(
+            pl.col("date")
+            .str.strptime(pl.Datetime, "%Y-%m-%d")
+            .cast(pl.Date)
+            .alias("date")
         )
 
         return result

@@ -601,7 +601,7 @@ class StopTimes:
             .floor()
             .cast(pl.UInt32)
             .alias("n_trips")
-        )
+        ).filter(pl.col("n_trips") > 0)
 
         return frequencies
 
@@ -677,7 +677,7 @@ class StopTimes:
                         (
                             (pl.col("new_end_time") - pl.col("departure_time"))
                             / pl.col("headway_secs")
-                        ).ceil()
+                        ).floor()
                         * pl.col("headway_secs")
                         + pl.col("departure_time")
                     ).alias("aligned_start")
