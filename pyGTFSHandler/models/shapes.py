@@ -34,7 +34,113 @@ class Shapes:
 
         self.lf = self.__generate_shapes_file(stops_lf, trip_shape_ids_lf)
         self.lf = self.lf.collect().lazy()
+        self.stop_shapes = self.lf.filter(pl.col("stop_id").is_not_null())
+        self.stop_shapes = self.__generate_shape_direction_column(self.stop_shapes)
+        self.stop_shapes = self.stop_shapes.collect().lazy()
         self.gdf = self.__get_shapes_gdf(self.lf)
+
+    def __generate_shape_direction_column(self, stop_shapes, round=10):
+        """
+        Generate a new column 'shape_direction' in the stop_shapes LazyFrame,
+        representing the approximate direction of shape segments in degrees,
+        rounded to the nearest multiple of `round` degrees (default 10º).
+
+        The direction is calculated based on the angle between the current
+        stop point and the mean position of all other stops on the same shape,
+        effectively estimating the direction of travel at each stop.
+
+        Args:
+            stop_shapes (pl.LazyFrame): A Polars LazyFrame containing shape points with
+                columns including 'shape_id', 'stop_sequence', 'shape_pt_lat', 'shape_pt_lon'.
+            round (int, optional): The degree rounding factor to quantize directions.
+                Defaults to 10.
+
+        Returns:
+            pl.LazyFrame: The input LazyFrame with an additional column 'shape_direction',
+            which is the rounded direction in degrees [0, 360).
+        """
+        deg2rad = math.pi / 180  # conversion factor degrees to radians
+        rad2deg = 180 / math.pi  # conversion factor radians to degrees
+
+        # Sort stops by shape_id and stop_sequence to ensure correct order
+        stop_shapes = stop_shapes.sort(["shape_id", "stop_sequence"])
+
+        # Calculate the total number of stops per shape,
+        # where n_stops = reversed stop_sequence index + 1
+        # This helps in computing cumulative means excluding current stop later.
+        stop_shapes = stop_shapes.with_columns(
+            [
+                (pl.col("stop_sequence").reverse().over("shape_id") + 1).alias(
+                    "n_stops"
+                ),
+            ]
+        )
+
+        # Calculate cumulative mean latitude and longitude including the current stop.
+        # cum_sum / n_stops gives running average for each shape_id group.
+        stop_shapes = stop_shapes.with_columns(
+            [
+                (
+                    pl.col("shape_pt_lat").cum_sum().over("shape_id")
+                    / pl.col("n_stops")
+                ).alias("mean_lat"),
+                (
+                    pl.col("shape_pt_lon").cum_sum().over("shape_id")
+                    / pl.col("n_stops")
+                ).alias("mean_lon"),
+            ]
+        )
+
+        # Recalculate mean_lat and mean_lon to exclude the current point.
+        # Formula: ((n * mean) - current_value) / (n - 1)
+        stop_shapes = stop_shapes.with_columns(
+            [
+                (
+                    (pl.col("n_stops") * pl.col("mean_lat") - pl.col("shape_pt_lat"))
+                    / (pl.col("n_stops") - 1)
+                ).alias("mean_lat"),
+                (
+                    (pl.col("n_stops") * pl.col("mean_lon") - pl.col("shape_pt_lon"))
+                    / (pl.col("n_stops") - 1)
+                ).alias("mean_lon"),
+            ]
+        ).drop("n_stops")
+
+        # Calculate the angle in degrees between the vector from current point to the mean of others.
+        # Using spherical trigonometry (arctan2 formula adapted for lat/lon).
+        # The angle is normalized to [0, 360) degrees and rounded to nearest multiple of `round`.
+        stop_shapes = stop_shapes.with_columns(
+            (
+                (
+                    (
+                        (
+                            rad2deg
+                            * pl.arctan2(
+                                (
+                                    (pl.col("mean_lon") - pl.col("shape_pt_lon"))
+                                    * deg2rad
+                                ).sin()
+                                * (pl.col("mean_lat") * deg2rad).cos(),
+                                (pl.col("shape_pt_lat") * deg2rad).cos()
+                                * (pl.col("mean_lat") * deg2rad).sin()
+                                - (pl.col("shape_pt_lat") * deg2rad).sin()
+                                * (pl.col("mean_lat") * deg2rad).cos()
+                                * (
+                                    (pl.col("mean_lon") - pl.col("shape_pt_lon"))
+                                    * deg2rad
+                                ).cos(),
+                            )
+                            + 360  # Add 360 to avoid negative angles
+                        )
+                        % 360  # Normalize angle between 0 and 360
+                    )
+                    / round  # Scale by rounding factor
+                ).round(0)
+                * round  # Round to nearest multiple of `round`
+            ).alias("shape_direction")
+        ).drop("mean_lat", "mean_lon")
+
+        return stop_shapes
 
     def __generate_shapes_file(self, stops_lf, trip_shape_ids_lf):
         trip_shape_ids_lf = (
@@ -52,6 +158,7 @@ class Shapes:
             trip_shape_ids_lf.select(
                 [
                     "shape_id",
+                    "stop_id",
                     "stop_sequence",
                     "stop_lat",
                     "stop_lon",

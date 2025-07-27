@@ -1,4 +1,5 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
+from typing import Tuple
 
 import polars as pl
 from utils import (
@@ -41,8 +42,11 @@ class Calendar:
         else:
             self.paths = [Path(p) for p in path]
 
-        self.lf = self._read_calendar(service_ids)
-        self.exceptions_lf = self._read_calendar_dates(service_ids)
+        self.lf = self.__read_calendar(service_ids)
+        self.exceptions_lf = self.__read_calendar_dates(service_ids)
+        self.min_date, self.max_date = self.__get_min_max_dates(
+            self.lf, self.exceptions_lf
+        )
         if start_date and end_date:
             if start_date.date == end_date.date:
                 self.service_ids = self.get_services_in_date(start_date)
@@ -68,7 +72,7 @@ class Calendar:
         else:
             self.service_ids = service_ids
 
-    def _read_calendar(
+    def __read_calendar(
         self, service_ids: Optional[List[str]]
     ) -> Optional[pl.LazyFrame]:
         """
@@ -131,7 +135,7 @@ class Calendar:
 
         return calendar
 
-    def _read_calendar_dates(
+    def __read_calendar_dates(
         self, service_ids: Optional[List[str]]
     ) -> Optional[pl.LazyFrame]:
         """
@@ -184,6 +188,67 @@ class Calendar:
         calendar_dates = pl.concat([calendar_dates, night_services])
 
         return calendar_dates
+
+    def __get_min_max_dates(
+        self, lf: pl.LazyFrame, exceptions_lf: pl.LazyFrame
+    ) -> Tuple[date, date]:
+        """
+        Determines the overall date range of the GTFS feed.
+
+        This internal helper method inspects the calendar and calendar_dates
+        dataframes to find the earliest start date and the latest end date
+        across all services defined in the feed.
+
+        Args:
+            lf: A LazyFrame representing the GTFS `calendar.txt` file.
+                It must contain 'start_date' and 'end_date' columns.
+            exceptions_lf: A LazyFrame representing the GTFS `calendar_dates.txt`
+                           file. It must contain a 'date' column.
+
+        Returns:
+            A tuple containing two `datetime.date` objects: the absolute minimum
+            and maximum service dates found in the feed.
+
+        Raises:
+            ValueError: If neither `lf` nor `exceptions_lf` contains any
+                        date information from which to infer a range.
+        """
+        # A list to collect all start/end date values (as days since epoch).
+        date_bounds_as_days: list[int] = []
+
+        # Extract min/max dates from the calendar data (calendar.txt) if available.
+        if lf is not None:
+            # Collect is necessary to compute min/max on the date columns.
+            # This is efficient as calendar.txt is typically very small.
+            cal_dates = lf.select(["start_date", "end_date"]).collect()
+            if not cal_dates.is_empty():
+                date_bounds_as_days.append(cal_dates["start_date"].min())
+                date_bounds_as_days.append(cal_dates["end_date"].max())
+
+        # Extract min/max dates from the calendar exceptions (calendar_dates.txt).
+        if exceptions_lf is not None:
+            # Collect is used here as well for the small exceptions file.
+            exception_dates = exceptions_lf.select(["date"]).collect()
+            if not exception_dates.is_empty():
+                date_bounds_as_days.append(exception_dates["date"].min())
+                date_bounds_as_days.append(exception_dates["date"].max())
+
+        # If no dates were found in either file, the feed is invalid.
+        if not date_bounds_as_days:
+            raise ValueError(
+                "Cannot determine date range. No data in 'calendar.txt' or "
+                "'calendar_dates.txt'."
+            )
+
+        # Find the overall minimum and maximum from the collected date boundaries.
+        min_day_offset = min(date_bounds_as_days)
+        max_day_offset = max(date_bounds_as_days)
+
+        # Convert the integer day offsets back into standard datetime.date objects.
+        min_date = self.EPOCH + timedelta(days=min_day_offset)
+        max_date = self.EPOCH + timedelta(days=max_day_offset)
+
+        return min_date, max_date
 
     def get_services_in_date(self, date: datetime) -> List[str]:
         """
@@ -278,25 +343,10 @@ class Calendar:
         Returns:
             pl.DataFrame: DataFrame with active services per date.
         """
-        # Determine the overall date range from available data
-        date_bounds = []
-
-        if self.lf is not None:
-            cal_dates = self.lf.select(["start_date", "end_date"]).collect()
-            date_bounds.append(cal_dates["start_date"].min())
-            date_bounds.append(cal_dates["end_date"].max())
-
-        if self.exceptions_lf is not None:
-            exception_dates = self.exceptions_lf.select(["date"]).collect()
-            date_bounds.append(exception_dates["date"].min())
-            date_bounds.append(exception_dates["date"].max())
-
-        if not date_bounds:
-            raise ValueError("No calendar or calendar_dates data available.")
 
         # Use provided or inferred dates
-        start_date = start_date or (EPOCH + timedelta(days=min(date_bounds)))
-        end_date = end_date or (EPOCH + timedelta(days=max(date_bounds)))
+        start_date = start_date or (self.min_date)
+        end_date = end_date or (self.max_date)
 
         # Generate list of dates in range with weekday info
         date_list = [
