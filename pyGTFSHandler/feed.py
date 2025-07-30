@@ -81,6 +81,13 @@ class Feed:
         self,
         gtfs_dirs: Union[List[Union[str, Path]], str, Path],
         aoi: Optional[Union[gpd.GeoDataFrame, gpd.GeoSeries]] = None,
+        stop_group_distance: float = 0,
+        start_date: Optional[datetime | date] = None,
+        end_date: Optional[datetime | date] = None,
+        date_type: Optional[list[str] | str] = None,
+        start_time: Optional[datetime | time] = None,
+        end_time: Optional[datetime | time] = None,
+        route_types: Optional[list[int] | list[str] | int | str] = None,
         service_ids: Optional[List[str]] = None,
         trip_ids: Optional[List[str]] = None,
         stop_ids: Optional[List[str]] = None,
@@ -124,18 +131,47 @@ class Feed:
         # --- 2. Load Individual GTFS Components with Filtering ---
         # The loading is done in a logical order to allow for cascading filters.
         # e.g., Calendar is loaded first, and its service_ids are used to filter Trips.
-        self.calendar: Calendar = Calendar(self.gtfs_dir, service_ids=service_ids)
-        self.routes: Routes = Routes(self.gtfs_dir, route_ids=route_ids)
-        self.trips: Trips = Trips(
+
+        self.stops = Stops(
+            self.gtfs_dir,
+            aoi=aoi,
+            stop_group_distance=stop_group_distance,
+            stop_ids=stop_ids,
+        )
+
+        self.calendar = Calendar(
+            self.gtfs_dir,
+            start_date=start_date,
+            end_date=end_date,
+            date_type=date_type,
+            service_ids=service_ids,
+            lon=self.stops.mean_lon,
+            lat=self.stops.mean_lat,
+        )
+
+        if route_types is not None:
+            if route_types is list:
+                route_types = [utils.normalize_route_type(i) for i in route_types]
+            else:
+                route_types = [utils.normalize_route_type(route_types)]
+
+        self.routes = Routes(
+            self.gtfs_dir, route_ids=route_ids, route_types=route_types
+        )
+
+        self.trips = Trips(
             self.gtfs_dir,
             service_ids=self.calendar.service_ids,
             trip_ids=trip_ids,
             route_ids=self.routes.route_ids,
         )
-        self.stops: Stops = Stops(self.gtfs_dir, aoi=aoi, stop_ids=stop_ids)
 
-        self.stop_times: StopTimes = StopTimes(
-            self.gtfs_dir, stop_ids=self.stops.stop_ids, trip_ids=self.trips.trip_ids
+        self.stop_times = StopTimes(
+            self.gtfs_dir,
+            start_time=start_time,
+            end_time=end_time,
+            stop_ids=self.stops.stop_ids,
+            trip_ids=self.trips.trip_ids,
         )
 
         # --- 3. Integrate Generated Trips from Frequencies ---
@@ -162,11 +198,13 @@ class Feed:
                 .drop("new_trip_id", "orig_trip_id")
             )
 
+            self.lf = self.lf.drop("orig_trip_id")
+
         # --- 4. Load Shapes and Perform Advanced Time Interpolation ---
-        self.trip_shape_ids_lf: pl.LazyFrame = self.stop_times.generate_shape_ids()
-        self.shapes: Shapes = Shapes(
-            self.gtfs_dir, self.trip_shape_ids_lf, self.stops.lf
+        self.trip_shape_ids_lf: pl.LazyFrame = (
+            self.stop_times.generate_shape_ids().collect().lazy()
         )
+        self.shapes = Shapes(self.gtfs_dir, self.trip_shape_ids_lf, self.stops.lf)
 
         # --- 5. Build the Main Integrated LazyFrame (`lf`) ---
         # Start with the core stop_times data.
@@ -219,28 +257,39 @@ class Feed:
 
         # Merge with trips, stops, routes, and shapes data to create the full view.
         self.lf = self.lf.join(
-            self.trips.lf.select(["trip_id", "service_id", "route_id", "shape_id"]),
+            self.trips.lf.select(["trip_id", "service_id", "route_id"]),
             on="trip_id",
             how="left",
         )
+        self.lf = self.lf.join(
+            self.trip_shape_ids_lf.select(["trip_ids", "shape_id"]).explode("trip_ids"),
+            left_on="trip_id",
+            right_on="trip_ids",
+            how="left",
+        )
+
         self.lf = self.lf.join(
             self.stops.lf.select(["stop_id", "parent_station"]),
             on="stop_id",
             how="left",
         )
+
         self.lf = self.lf.join(
             self.routes.lf.select(["route_id", "route_type"]), on="route_id", how="left"
         )
+
         self.lf = self.lf.join(
-            self.shapes.lf.filter(pl.col("stop_sequence").is_not_null()).select(
+            self.shapes.stop_shapes.select(
                 [
                     "shape_id",
+                    "stop_id",
                     "stop_sequence",
                     "shape_dist_traveled",
                     "shape_total_distance",
+                    "shape_direction",
                 ]
             ),
-            on=["shape_id", "stop_sequence"],
+            on=["stop_id", "shape_id", "stop_sequence"],
             how="left",
         )
 
@@ -250,16 +299,18 @@ class Feed:
         if self.stop_times.fixed_times:
             self.lf = self.__fix_null_times(self.lf)
 
+        self.lf = self.lf.drop("fixed_time")
+
         # For services running past midnight, create a unique "night" service_id
         # to distinguish them from the same service on the previous day.
         self.lf = self.lf.with_columns(
             [
                 pl.when(pl.col("next_day"))
-                .then(pl.col("service_id") + "_night")
+                .then(pl.concat_str(pl.col("service_id"), pl.lit("_night")))
                 .otherwise(pl.col("service_id"))
                 .alias("service_id")
             ]
-        )
+        ).drop("next_day")
 
     def __fix_null_times(self, stop_times: pl.LazyFrame) -> pl.LazyFrame:
         """
@@ -314,7 +365,10 @@ class Feed:
         # Apply linear interpolation for rows where departure_time is null.
         stop_times = stop_times.with_columns(
             [
-                pl.when(pl.col("departure_time").is_null())
+                pl.when(
+                    pl.col("departure_time").is_null()
+                    | pl.col("departure_time").is_nan()
+                )
                 .then(
                     # Handle midnight crossing case (backward time is smaller than forward time)
                     pl.when(pl.col("dep_time_bwd") < pl.col("dep_time_fwd"))
@@ -355,7 +409,11 @@ class Feed:
         return stop_times
 
     def filter_by_date_range(
-        self, data: pl.LazyFrame, start_date: datetime = None, end_date: datetime = None
+        self,
+        data: pl.LazyFrame,
+        start_date: datetime | date = None,
+        end_date: datetime | date = None,
+        date_type: str | list[str] = None,
     ) -> pl.LazyFrame:
         """
         Filters a LazyFrame based on a date range.
@@ -373,7 +431,11 @@ class Feed:
             pl.LazyFrame: The filtered LazyFrame.
         """
         date_df: pl.DataFrame = self.calendar.get_services_in_date_range(
-            start_date, end_date
+            start_date,
+            end_date,
+            date_type=date_type,
+            lon=self.stops.mean_lon,
+            lat=self.stops.mean_lat,
         )
         date_df = date_df.explode("service_ids").rename({"service_ids": "service_id"})
         data = data.join(
@@ -384,7 +446,7 @@ class Feed:
     def filter_by_date(
         self,
         data: pl.LazyFrame,
-        date: datetime,
+        date: datetime | date,
     ) -> pl.LazyFrame:
         """
         Filters a LazyFrame based on a date.
@@ -401,18 +463,21 @@ class Feed:
             pl.LazyFrame: The filtered LazyFrame.
         """
 
-        service_ids: pl.DataFrame = self.calendar.get_services_in_date(date)
-        service_ids_df = pl.DataFrame({"service_id": service_ids})
+        service_ids = self.calendar.get_services_in_date(date)
+        if len(service_ids) == 0:
+            raise Exception(f"No services in date {date}")
+
+        service_ids_df = pl.LazyFrame({"service_id": service_ids})
         data = data.join(
-            service_ids_df.select("service_id").lazy(), on="service_id", how="inner"
+            service_ids_df.select("service_id"), on="service_id", how="inner"
         )
         return data
 
     def filter_by_time_range(
         self,
         data: pl.LazyFrame,
-        start_time: datetime = datetime.min,
-        end_time: datetime = datetime.max,
+        start_time: datetime | time = datetime.min,
+        end_time: datetime | time = datetime.max,
     ) -> pl.LazyFrame:
         """
         Filters a LazyFrame based on a time-of-day range.
@@ -428,14 +493,15 @@ class Feed:
         Returns:
             pl.LazyFrame: The filtered LazyFrame.
         """
-        start_time: int = utils.time_to_seconds(start_time.time())
-        end_time: int = utils.time_to_seconds(end_time.time())
+        start_time: int = utils.time_to_seconds(start_time)
+        end_time: int = utils.time_to_seconds(end_time)
 
         # If frequencies are present, filter based on both frequency windows and explicit times.
         if self.stop_times.frequencies is not None:
             # Keep rows if their frequency window overlaps the filter time.
             data = data.filter(
                 pl.col("start_time").is_null()
+                | pl.col("start_time").is_nan()
                 | (
                     (pl.col("start_time") >= start_time)
                     & (pl.col("end_time") <= end_time)
@@ -454,7 +520,10 @@ class Feed:
                 data.with_columns(
                     [
                         # Clip start_time to be no earlier than global start_time
-                        pl.when(pl.col("start_time").is_null())
+                        pl.when(
+                            pl.col("start_time").is_null()
+                            | pl.col("start_time").is_nan()
+                        )
                         .then(pl.col("start_time"))
                         .otherwise(
                             pl.when(pl.col("start_time") < start_time)
@@ -463,7 +532,9 @@ class Feed:
                         )
                         .alias("start_time"),
                         # Clip end_time to be no later than global end_time
-                        pl.when(pl.col("end_time").is_null())
+                        pl.when(
+                            pl.col("end_time").is_null() | pl.col("end_time").is_nan()
+                        )
                         .then(pl.col("end_time"))
                         .otherwise(
                             pl.when(pl.col("end_time") > end_time)
@@ -476,7 +547,10 @@ class Feed:
                 .with_columns(
                     [
                         # Compute number of trips
-                        pl.when(pl.col("start_time").is_null())
+                        pl.when(
+                            pl.col("start_time").is_null()
+                            | pl.col("start_time").is_nan()
+                        )
                         .then(pl.lit(1))
                         .otherwise(
                             (
@@ -501,7 +575,10 @@ class Feed:
         return data
 
     def get_service_intensity_in_date_range(
-        self, start_date: Optional[datetime] = None, end_date: Optional[datetime] = None
+        self,
+        start_date: Optional[datetime | date] = None,
+        end_date: Optional[datetime | date] = None,
+        date_type: Optional[str | list[str]] = None,
     ) -> pl.DataFrame:
         """
         Calculates the number of scheduled stop times per date within a given date range.
@@ -520,9 +597,20 @@ class Feed:
         """
         # Get all active services for each day in the date range.
         date_df: pl.DataFrame = self.calendar.get_services_in_date_range(
-            start_date, end_date
+            start_date,
+            end_date,
+            date_type=date_type,
+            lon=self.stops.mean_lon,
+            lat=self.stops.mean_lat,
         )
-        gtfs_lf: pl.LazyFrame = self.lf.select("trip_id", "service_id", "n_trips")
+        if self.stop_times.frequencies is None:
+            gtfs_lf: pl.LazyFrame = self.lf.unique(
+                ["service_id", "stop_id", "departure_time"]
+            ).select("trip_id", "service_id", "n_trips")
+        else:
+            gtfs_lf: pl.LazyFrame = self.lf.unique(
+                ["service_id", "stop_id", "departure_time", "start_time", "end_time"]
+            ).select("trip_id", "service_id", "n_trips")
 
         # Count the number of trips associated with each service_id.
         stop_time_counts_df: pl.DataFrame = (
@@ -548,60 +636,11 @@ class Feed:
             pl.col("num_stop_times").sum().alias("service_intensity"),
         )
 
-        total_by_date = self._add_holidays_and_weekend(total_by_date)
+        total_by_date = self.calendar.add_holidays_and_weekends(
+            total_by_date, lon=self.stops.mean_lon, lat=self.stops.mean_lat
+        )
 
         return total_by_date.sort("date")
-
-    def _add_holidays_and_weekend(self, data):
-        # If LazyFrame, collect to DataFrame
-        if isinstance(data, pl.LazyFrame):
-            data = data.collect()
-
-        # Compute mean coordinates of stops (assumed self.stops.lf is LazyFrame)
-        mean_coords = self.stops.lf.select(
-            [
-                pl.col("stop_lon").mean().alias("mean_lon"),
-                pl.col("stop_lat").mean().alias("mean_lat"),
-            ]
-        ).collect()
-
-        stop_lon = mean_coords["mean_lon"][0]
-        stop_lat = mean_coords["mean_lat"][0]
-
-        # Determine country and subdivision (your utils function)
-        country_code, subdivision_code = utils.get_country_region(stop_lat, stop_lon)
-
-        # Extract unique years as list of ints
-        years = data.select(pl.col("date").dt.year()).unique().to_series().to_list()
-
-        # Collect holidays for each year
-        holidays_df = [
-            utils.get_holidays(year, country_code, subdivision_code) for year in years
-        ]
-        holidays_df = pl.concat(holidays_df)
-
-        # Get min and max dates in data
-        # min_date = data.select(pl.col("date").min()).item()
-        # max_date = data.select(pl.col("date").max()).item()
-
-        # Convert holidays_df 'date' column (assumed days since epoch) to datetime (Polars Date)
-        holidays_df = holidays_df.with_columns(
-            (
-                pl.lit(utils.EPOCH).cast(pl.Date) + pl.duration(days=pl.col("date"))
-            ).alias("date")
-        )
-
-        # Add weekend and holiday flags
-        data = data.with_columns(
-            [
-                # Weekend: check if weekday is Saturday or Sunday
-                pl.col("weekday").is_in(["saturday", "sunday"]).alias("weekend"),
-                # Holiday: if 'date' is in holidays_df
-                pl.col("date").is_in(holidays_df.get_column("date")).alias("holiday"),
-            ]
-        )
-
-        return data
 
     def _frequencies_to_stop_times(self, gtfs_lf):
         gtfs_lf = gtfs_lf.collect()
@@ -612,36 +651,28 @@ class Feed:
 
         if frequencies_exist:
             delta_times = (
-                gtfs_lf.filter(
-                    (pl.col("n_trips") > 1) and (pl.col("stop_sequence") == 0)
-                )
+                gtfs_lf.filter((pl.col("n_trips") > 1) & (pl.col("stop_sequence") == 0))
                 .with_columns(
                     (
                         (
-                            (pl.col("end_time") - pl.col("departure_time"))
+                            (pl.col("start_time") - pl.col("departure_time"))
                             / pl.col("headway_secs")
-                        ).floor()
+                        ).ceil()
                         * pl.col("headway_secs")
                         + pl.col("departure_time")
                     ).alias("aligned_start")
                 )
                 .with_columns(
                     [
-                        (
-                            pl.concat_list(
-                                [
-                                    pl.lit([0]),
-                                    pl.int_ranges(
-                                        pl.col("aligned_start"),
-                                        pl.col("end_time") + 1,
-                                        pl.col("headway_secs"),
-                                    ),
-                                ]
-                            )
+                        pl.int_ranges(
+                            pl.col("aligned_start"),
+                            pl.col("end_time") + 1 + pl.col("shape_time_traveled"),
+                            pl.col("headway_secs"),
                         ).alias("delta_time")
                     ]
                 )
                 .explode("delta_time")
+                .filter(pl.col("departure_time") != pl.col("delta_time"))
             )
 
             gtfs_lf = (
@@ -650,27 +681,32 @@ class Feed:
                     on="trip_id",
                     how="left",
                 )
-                .with_columns(pl.col("delta_time").fill_null(pl.lit(0)))
+                .with_columns(pl.col("delta_time").fill_null(pl.col("departure_time")))
                 .with_columns(
-                    (pl.col("arrival_time") + pl.col("delta_time")).alias(
-                        "arrival_time"
-                    ),
-                    (pl.col("departure_time") + pl.col("delta_time")).alias(
-                        "departure_time"
-                    ),
+                    (
+                        pl.col("arrival_time")
+                        - pl.col("departure_time")
+                        + pl.col("delta_time")
+                    ).alias("arrival_time"),
+                    (pl.col("delta_time")).alias("departure_time"),
                 )
                 .drop("delta_time")
             )
 
-            gtfs_lf = gtfs_lf.collect().lazy()
+            gtfs_lf = gtfs_lf.with_columns(
+                pl.lit(None).alias("start_time"),
+                pl.lit(None).alias("end_time"),
+                pl.lit(None).alias("headway_secs"),
+                pl.lit(1).alias("n_trips"),
+            )
 
         return gtfs_lf
 
     def get_mean_intervall_at_stops(
         self,
-        date: Optional[date],
-        start_time: time = time.min,
-        end_time: time = time.max,
+        date: Optional[datetime | date],
+        start_time: datetime | time = time.min,
+        end_time: datetime | time = time.max,
         method: str = "route",
         n_divisions: int = 1,
     ) -> pl.LazyFrame:
@@ -724,13 +760,21 @@ class Feed:
 
         # Filter the GTFS data by the specified date and time window.
         gtfs_lf: pl.LazyFrame = self.filter_by_date(self.lf, date)
+
         gtfs_lf = self.filter_by_time_range(gtfs_lf, start_time, end_time)
+
         gtfs_lf = self._frequencies_to_stop_times(gtfs_lf)
+
+        gtfs_lf = self.filter_by_time_range(gtfs_lf, start_time, end_time)
 
         # Convert time objects to total seconds from midnight for interval calculations.
         start_time_sec = utils.time_to_seconds(start_time)
         end_time_sec = utils.time_to_seconds(end_time)
 
+        gtfs_lf = gtfs_lf.filter(
+            pl.col("shape_time_traveled") != pl.col("shape_total_travel_time")
+        )
+        gtfs_lf = gtfs_lf.collect().lazy()
         # Per-Route Interval Calculation ('route' and 'max' methods)
 
         if method in ("max", "route"):
@@ -742,24 +786,13 @@ class Feed:
                 .agg(
                     [
                         # Collect all departure times into a list for each service group.
-                        pl.col("departure_time").alias("departure_times"),
+                        pl.col("departure_time").sort().alias("departure_times"),
                         # Get a representative direction (in degrees) for the service.
                         pl.col("shape_direction").mean().alias("shape_direction"),
-                        # Construct a list of all intervals within the time window.
                         (
-                            # 1. Interval from the window start to the first departure.
-                            (pl.col("departure_times").list.get(0) - start_time_sec)
-                            .list
-                            # 2. Intervals between each consecutive departure.
-                            .concat(pl.col("departure_times").list.diff().drop_nans())
-                            # 3. Interval from the last departure to the window end.
-                            .concat(
-                                (
-                                    end_time_sec
-                                    - pl.col("departure_times").list.get(-1)
-                                ).list
-                            )
-                        ).alias("intervals"),
+                            (pl.col("departure_time").min() - start_time_sec)
+                            + (end_time_sec - pl.col("departure_time").max())
+                        ).alias("initial_interval"),
                     ]
                 )
                 .with_columns(
@@ -767,10 +800,16 @@ class Feed:
                     # Harmonic Mean = N / sum(1/x_i), where x_i are the intervals.
                     # This is the correct way to average rates (like service frequency).
                     (
-                        pl.col("intervals").list.len()
-                        / pl.col("intervals").list.eval(1 / pl.element()).list.sum()
-                    ).alias("mean_interval")
+                        (
+                            (pl.col("departure_times").list.diff(null_behavior="drop"))
+                            .list.eval(pl.element().pow(2))
+                            .list.sum()
+                            + pl.col("initial_interval") ** 2
+                        )
+                        / (end_time_sec - start_time_sec)
+                    ).alias("mean_interval"),
                 )
+                .drop("initial_interval")
                 # Another optimization fence after the first major aggregation.
                 .collect()
                 .lazy()
@@ -784,18 +823,19 @@ class Feed:
             gtfs_lf = gtfs_lf.group_by("stop_id").agg(
                 [
                     # Find the minimum interval at the stop.
-                    pl.col("mean_interval").min().alias("mean_interval"),
-                    # Use take() with arg_min() to get the attributes of the row
-                    # with the minimum interval.
                     pl.col("route_id")
-                    .take(pl.col("mean_interval").arg_min())
+                    .sort_by("mean_interval")
+                    .first()
                     .alias("route_id"),
                     pl.col("direction_id")
-                    .take(pl.col("mean_interval").arg_min())
+                    .sort_by("mean_interval")
+                    .first()
                     .alias("direction_id"),
                     pl.col("departure_times")
-                    .take(pl.col("mean_interval").arg_min())
+                    .sort_by("mean_interval")
+                    .first()
                     .alias("departure_times"),
+                    pl.col("mean_interval").min().alias("mean_interval"),
                 ]
             )
 
@@ -820,33 +860,36 @@ class Feed:
 
             # Assign each service to a directional sector ID (0 to n_sectors-1)
             # based on its angle relative to the stop's mean direction.
-            gtfs_lf = gtfs_lf.with_columns(
-                [
-                    pl.when(
-                        (
-                            pl.col("shape_direction")
-                            > (
-                                (pl.col("mean_shape_direction") + i * 360 / n_sectors)
-                                % 360
-                            )
-                        )
-                        & (
-                            pl.col("shape_direction")
-                            < (
-                                (
-                                    pl.col("mean_shape_direction")
-                                    + (i + 1) * 360 / n_sectors
-                                )
-                                % 360
-                            )
-                        )
+            # Build chained when/then expression
+            expr = None
+
+            for i in range(n_sectors):
+                start = (pl.col("mean_shape_direction") + i * 360 / n_sectors) % 360
+                end = (pl.col("mean_shape_direction") + (i + 1) * 360 / n_sectors) % 360
+
+                # Handle angular wrap-around (e.g., sector from 350° to 10°)
+                condition = (
+                    pl.when(start < end)
+                    .then(
+                        (pl.col("shape_direction") > start)
+                        & (pl.col("shape_direction") < end)
                     )
-                    .then(i)
-                    .otherwise(None)
-                    .alias("shape_direction_id")
-                    for i in range(n_sectors)
-                ]
-            )
+                    .otherwise(
+                        (pl.col("shape_direction") > start)
+                        | (pl.col("shape_direction") < end)
+                    )
+                )
+
+                if expr is None:
+                    expr = pl.when(condition).then(i)
+                else:
+                    expr = expr.when(condition).then(i)
+
+            # Add default (None) and alias only once
+            expr = expr.otherwise(None).alias("shape_direction_id")
+
+            # Apply with_columns using a list (even if it's just one)
+            gtfs_lf = gtfs_lf.with_columns([expr])
 
             # Calculate headway for each directional bin.
             gtfs_lf = (
@@ -854,43 +897,32 @@ class Feed:
                 .group_by(["stop_id", "shape_direction_id"])
                 .agg(
                     [
-                        pl.col("departure_time").alias("departure_times"),
+                        pl.col("departure_time").sort().alias("departure_times"),
                         pl.col("shape_direction").mean().alias("shape_direction"),
                         pl.col("route_id").unique().alias("route_ids"),
                         pl.col("shape_id").unique().alias("shape_ids"),
-                        # Group opposing directions. e.g., for 4 sectors (0,1,2,3),
-                        # this groups (0,2) and (1,3) into group_ids (0,1).
-                        (pl.col("shape_direction_id") % n_divisions).alias(
-                            "shape_direction_group_id"
-                        ),
-                    ]
-                )
-                .with_columns(
-                    [
-                        # Calculate intervals for all departures within this bin.
                         (
-                            (pl.col("departure_times").list.get(0) - start_time_sec)
-                            .list.concat(
-                                pl.col("departure_times").list.diff().drop_nans()
-                            )
-                            .concat(
-                                (
-                                    end_time_sec
-                                    - pl.col("departure_times").list.get(-1)
-                                ).list
-                            )
-                        ).alias("intervals"),
+                            (pl.col("departure_time").min() - start_time_sec)
+                            + (end_time_sec - pl.col("departure_time").max())
+                        ).alias("initial_interval"),
                     ]
                 )
-                .with_columns(
-                    [
-                        # Calculate harmonic mean interval for this directional bin.
+            )
+            gtfs_lf = gtfs_lf.with_columns(
+                [
+                    (
                         (
-                            pl.col("intervals").list.len()
-                            / pl.col("intervals").list.eval(1 / pl.element()).list.sum()
-                        ).alias("mean_interval")
-                    ]
-                )
+                            (pl.col("departure_times").list.diff(null_behavior="drop"))
+                            .list.eval(pl.element().pow(2))
+                            .list.sum()
+                            + pl.col("initial_interval") ** 2
+                        )
+                        / (end_time_sec - start_time_sec)
+                    ).alias("mean_interval"),
+                    (pl.col("shape_direction_id") % n_divisions).alias(
+                        "shape_direction_group_id"
+                    ),
+                ]
             )
 
             # For each direction *group* (e.g., N/S), find the best headway.
@@ -899,14 +931,21 @@ class Feed:
                 [
                     # Keep the details of the service with the minimum interval.
                     pl.col("shape_direction")
-                    .take(pl.col("mean_interval").arg_min())
+                    .sort_by("mean_interval")
+                    .first()
                     .alias("shape_direction"),
                     pl.col("shape_ids")
-                    .take(pl.col("mean_interval").arg_min())
+                    .sort_by("mean_interval")
+                    .first()
                     .alias("shape_ids"),
                     pl.col("route_ids")
-                    .take(pl.col("mean_interval").arg_min())
+                    .sort_by("mean_interval")
+                    .first()
                     .alias("route_ids"),
+                    pl.col("departure_times")
+                    .sort_by("mean_interval")
+                    .first()
+                    .alias("departure_times"),
                     # The minimum interval for this direction group.
                     pl.col("mean_interval").min().alias("mean_interval"),
                 ]
@@ -920,9 +959,13 @@ class Feed:
                     (1 / (1 / pl.col("mean_interval")).sum()).alias("mean_interval"),
                     # Collect metadata from all contributing direction groups.
                     pl.col("shape_direction").alias("shape_directions"),
-                    pl.col("shape_ids").list.concat().unique().alias("shape_ids"),
-                    pl.col("route_ids").list.concat().unique().alias("route_ids"),
+                    # Flatten list[list[str]] -> list[str]
+                    (pl.col("shape_ids").flatten().unique()).alias("shape_ids"),
+                    (pl.col("departure_times").flatten().unique().sort()).alias(
+                        "departure_times"
+                    ),
+                    (pl.col("route_ids").flatten().unique()).alias("route_ids"),
                 ]
             )
 
-        return gtfs_lf
+        return gtfs_lf.collect()

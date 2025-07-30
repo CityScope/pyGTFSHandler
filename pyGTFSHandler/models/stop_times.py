@@ -1,4 +1,13 @@
 # -*- coding: utf-8 -*-
+import polars as pl
+from pathlib import Path
+from typing import Union, List, Tuple, Optional, Dict
+from utils import read_csv_list, get_df_schema_dict
+from datetime import datetime, time
+from functools import reduce
+import warnings
+import operator
+
 """
 GTFS StopTimes Data Processing Module
 
@@ -16,7 +25,7 @@ using the high-performance Polars library for lazy evaluation. Its primary capab
 
 2.  **Filtering**: The data can be filtered at initialization by `stop_ids`, `trip_ids`, or
     a specific time window (`start_time`, `end_time`). More complex time-window filtering can
-    also be applied after initialization using the `filter_by_time_bounds` and
+    also be applied after initialization using the `filter_by_time_range` and
     `filter_by_multi_time_bounds` methods.
 
 3.  **Data Cleaning and Correction**:
@@ -57,18 +66,13 @@ The final output of the class is a clean, comprehensive Polars LazyFrame (`self.
 all stop times, including those generated from frequencies, ready for advanced analysis.
 """
 
-import polars as pl
-from pathlib import Path
-from typing import Union, List, Tuple, Optional, Dict
-from utils import read_csv_list, get_df_schema_dict
-from datetime import datetime, time
-from functools import reduce
-import warnings
-import operator
+"TODO: Check if stop_times already has n_trips in the time bounds delete the frequency and warn. "
+"Check that n_trips in frequency has in stop times no other trip_ids from the same route"
 
 # A constant used for rounding trip travel times when generating shape_ids.
-# It groups trips with travel times within a 2-minute (120s) window.
-TRIP_ROUND_TIME: int = 120
+# It groups trips with travel times within a 5-minute (300s) window.
+TRIP_ROUND_TIME: int = 300
+SECS_PER_DAY: int = 86400
 
 
 class StopTimes:
@@ -130,46 +134,61 @@ class StopTimes:
         """
         # Standardize input path(s) to a list of Path objects
         if isinstance(path, (str, Path)):
-            self.paths: List[Path] = [Path(path)]
+            paths: List[Path] = [Path(path)]
         else:
-            self.paths: List[Path] = [Path(p) for p in path]
+            paths: List[Path] = [Path(p) for p in path]
 
         # --- Main Processing Pipeline ---
-        self.lf: pl.LazyFrame = self.__read_stop_times(stop_ids, trip_ids)
+        self.lf: pl.LazyFrame = self.__read_stop_times(paths, trip_ids)
         self.lf = self.__correct_sequence(self.lf)
         self.lf, self.fixed_times = self.__fix_nulls_easy(self.lf)
+        if stop_ids:
+            self.lf = self.__filter_by_stop_id(self.lf, stop_ids)
+            self.lf = self.__correct_sequence(self.lf)
 
         if self.fixed_times:
             warnings.warn("Some departure times are null and have been interpolated")
 
+        self.frequencies: Optional[pl.LazyFrame] = self.__read_frequencies(
+            paths, trip_ids
+        )
+
+        if self.frequencies is not None:
+            self.frequencies, self.lf = self._frequencies_midnight_crossing(
+                self.frequencies, self.lf
+            )
+
         self.lf = self._add_shape_time_and_midnight_crossing(self.lf)
+
+        if start_time and end_time:
+            self.lf, self.frequencies = self.filter_by_time_range(
+                start_time, end_time, strict=False
+            )
+
         # Eagerly evaluate to checkpoint the result and optimize subsequent queries
         self.lf = self.lf.collect().lazy()
 
-        self.frequencies: Optional[pl.LazyFrame] = self.__read_frequencies(trip_ids)
         if self.frequencies is not None:
             self.frequencies = self.__fix_headway(self.frequencies)
-            self.frequencies = self._frequencies_midnight_crossing(self.frequencies)
             self.frequencies = self._add_departure_time_to_frequencies(
                 self.lf, self.frequencies
             )
+
             self.lf, self.frequencies = self._midnight_frequencies_to_stop_times(
                 self.lf, self.frequencies
             )
 
             # Eagerly evaluate frequencies to checkpoint results
             self.frequencies = self.frequencies.collect().lazy()
+
             self.frequencies = self._add_frequencies_n_trips(self.frequencies)
 
             # Recalculate travel times as new trips may have been added
             self.lf = self._add_shape_time_and_midnight_crossing(self.lf)
             self.lf = self.lf.collect().lazy()
 
-        if start_time and end_time:
-            self.lf, self.frequencies = self.filter_by_time_bounds(start_time, end_time)
-
     def __read_stop_times(
-        self, stop_ids: Optional[List[str]] = None, trip_ids: Optional[List[str]] = None
+        self, paths, trip_ids: Optional[List[str]] = None
     ) -> pl.LazyFrame:
         """
         Reads and preprocesses `stop_times.txt` files into a Polars LazyFrame.
@@ -193,7 +212,7 @@ class StopTimes:
             FileNotFoundError: If no `stop_times.txt` files are found in the given paths.
         """
         stop_times_paths: List[Path] = [
-            p / "stop_times.txt" for p in self.paths if (p / "stop_times.txt").exists()
+            p / "stop_times.txt" for p in paths if (p / "stop_times.txt").exists()
         ]
         if not stop_times_paths:
             raise FileNotFoundError("No stop_times.txt files found in given paths.")
@@ -203,13 +222,9 @@ class StopTimes:
             stop_times_paths, schema_overrides=schema_dict
         )
 
-        if stop_ids:
-            stop_ids_df = pl.DataFrame({"stop_id": stop_ids})
-            stop_times = stop_times.join(stop_ids_df.lazy(), on="stop_id", how="inner")
-
         if trip_ids:
-            trip_ids_df = pl.DataFrame({"trip_id": trip_ids})
-            stop_times = stop_times.join(trip_ids_df.lazy(), on="trip_id", how="inner")
+            trip_ids_df = pl.LazyFrame({"trip_id": trip_ids})
+            stop_times = stop_times.join(trip_ids_df, on="trip_id", how="inner")
 
         stop_times = stop_times.with_columns(
             [
@@ -247,6 +262,7 @@ class StopTimes:
                     + pl.col("arrival_time").str.slice(3, 2).cast(int) * 60
                     + pl.col("arrival_time").str.slice(6, 2).cast(int)
                 ).alias("arrival_time"),
+                pl.lit(False).alias("next_day"),
             ]
         )
         return stop_times
@@ -279,6 +295,13 @@ class StopTimes:
                 .otherwise(pl.col("stop_sequence"))
                 .alias("stop_sequence")
             ]
+        ).with_columns(
+            [
+                pl.when(pl.col("stop_sequence").is_nan().any().over("trip_id"))
+                .then(None)
+                .otherwise(pl.col("stop_sequence"))
+                .alias("stop_sequence")
+            ]
         )
 
         stop_times = (
@@ -291,9 +314,42 @@ class StopTimes:
 
         return stop_times
 
+    def __filter_by_stop_id(
+        self, stop_times: pl.LazyFrame, stop_ids: list[str]
+    ) -> pl.LazyFrame:
+        # Create stop_ids as a lazy frame
+        stop_ids_lf = pl.LazyFrame({"stop_id": stop_ids})
+
+        # Select matching stop_times with just needed columns
+        stop_times_next = stop_times.select(
+            ["trip_id", "stop_id", "stop_sequence"]
+        ).join(stop_ids_lf, on="stop_id", how="inner")
+
+        # Use a window function to compute max(stop_sequence) per trip,
+        # then increment it and keep only one row per trip
+        next_stop = (
+            stop_times_next.with_columns(
+                [pl.max("stop_sequence").over("trip_id").alias("max_seq")]
+            )
+            .filter(pl.col("stop_sequence") == pl.col("max_seq"))
+            .with_columns([(pl.col("stop_sequence") + 1).alias("stop_sequence")])
+            .select(["trip_id", "stop_sequence"])
+        )
+
+        # Append the new stop row to stop_times
+        stop_times_next = pl.concat(
+            [stop_times_next.select(["trip_id", "stop_sequence"]), next_stop]
+        )
+
+        # Filter stop_times by matching trip_id and stop_sequence
+        stop_times = stop_times.join(
+            stop_times, on=["trip_id", "stop_sequence"], how="inner"
+        )
+        return stop_times
+
     def __fix_nulls_easy(self, stop_times: pl.LazyFrame) -> Tuple[pl.LazyFrame, bool]:
         """
-        Interpolates null departure and arrival times using a forward-fill strategy.
+        Interpolates null departure and arrival times using linear interpolation.
 
         This method handles cases where intermediate stops in a trip have null times.
         It flags rows where times were interpolated.
@@ -306,21 +362,31 @@ class StopTimes:
                 - The LazyFrame with times interpolated.
                 - A boolean, `True` if any times were fixed, `False` otherwise.
         """
-        has_nulls_expr = pl.col("departure_time").is_null().any()
+        has_nulls_expr = (
+            pl.col("departure_time").is_null().any()
+            | pl.col("departure_time").is_nan().any()
+        )
         has_nulls: bool = stop_times.select(has_nulls_expr).collect().item()
 
         if has_nulls:
             stop_times = stop_times.sort(["trip_id", "stop_sequence"]).with_columns(
-                (pl.col("departure_time").is_null()).alias("fixed_time"),
+                (
+                    pl.col("departure_time").is_null()
+                    | pl.col("departure_time").is_nan()
+                ).alias("fixed_time"),
+                # Linear interpolation per trip
                 pl.col("departure_time")
-                .forward_fill()
+                .interpolate(method="linear")
                 .over("trip_id")
                 .alias("departure_time"),
             )
 
             stop_times = stop_times.with_columns(
                 [
-                    pl.when(pl.col("arrival_time").is_null())
+                    pl.when(
+                        pl.col("arrival_time").is_null()
+                        | pl.col("arrival_time").is_nan()
+                    )
                     .then(pl.col("departure_time"))
                     .otherwise(pl.col("arrival_time"))
                     .alias("arrival_time"),
@@ -329,7 +395,6 @@ class StopTimes:
             return stop_times, True
         else:
             stop_times = stop_times.with_columns(pl.lit(False).alias("fixed_time"))
-
             return stop_times, False
 
     def _add_shape_time_and_midnight_crossing(
@@ -355,24 +420,17 @@ class StopTimes:
         """
         stop_times = stop_times.with_columns(
             pl.when(
-                (pl.col("departure_time") >= 86400) | (pl.col("arrival_time") >= 86400)
+                (pl.col("departure_time") >= SECS_PER_DAY)
+                | (pl.col("arrival_time") >= SECS_PER_DAY)
             )
             .then(pl.lit(True))
-            .otherwise(pl.lit(False))
+            .otherwise(pl.col("next_day"))
             .alias("next_day")
         )
 
         stop_times = stop_times.with_columns(
-            [
-                pl.when(pl.col("departure_time") >= 86400)
-                .then(pl.col("departure_time") - 86400)
-                .otherwise(pl.col("departure_time"))
-                .alias("departure_time"),
-                pl.when(pl.col("arrival_time") >= 86400)
-                .then(pl.col("arrival_time") - 86400)
-                .otherwise(pl.col("arrival_time"))
-                .alias("arrival_time"),
-            ]
+            (pl.col("departure_time") % SECS_PER_DAY).alias("departure_time"),
+            (pl.col("arrival_time") % SECS_PER_DAY).alias("arrival_time"),
         )
 
         stop_times = (
@@ -382,7 +440,6 @@ class StopTimes:
                     pl.col("departure_time")
                     .shift(1)
                     .over("trip_id")
-                    .fill_null(strategy="forward")
                     .alias("prev_departure_time")
                 ]
             )
@@ -404,7 +461,7 @@ class StopTimes:
             .with_columns(
                 [
                     pl.when(pl.col("shape_time_delta") < 0)
-                    .then(pl.col("shape_time_delta") + 86400)
+                    .then(pl.col("shape_time_delta") + SECS_PER_DAY)
                     .otherwise(pl.col("shape_time_delta"))
                     .alias("shape_time_delta")
                 ]
@@ -417,7 +474,7 @@ class StopTimes:
                     .alias("shape_time_traveled")
                 ]
             )
-            .drop("prev_departure_time")
+            # .drop("prev_departure_time")#,"shape_time_delta")
         )
 
         total_travel_times = stop_times.group_by("trip_id").agg(
@@ -429,7 +486,7 @@ class StopTimes:
         return stop_times
 
     def __read_frequencies(
-        self, trip_ids: Optional[List[str]] = None
+        self, paths, trip_ids: Optional[List[str]] = None
     ) -> Optional[pl.LazyFrame]:
         """
         Reads and processes GTFS `frequencies.txt` files from all available paths.
@@ -446,9 +503,7 @@ class StopTimes:
                                     or None if no `frequencies.txt` file is found.
         """
         frequencies_paths: List[Path] = [
-            p / "frequencies.txt"
-            for p in self.paths
-            if (p / "frequencies.txt").exists()
+            p / "frequencies.txt" for p in paths if (p / "frequencies.txt").exists()
         ]
         if not frequencies_paths:
             return None
@@ -459,10 +514,8 @@ class StopTimes:
         )
 
         if trip_ids:
-            trip_ids_df = pl.DataFrame({"trip_id": trip_ids})
-            frequencies = frequencies.join(
-                trip_ids_df.lazy(), on="trip_id", how="inner"
-            )
+            trip_ids_df = pl.LazyFrame({"trip_id": trip_ids})
+            frequencies = frequencies.join(trip_ids_df, on="trip_id", how="inner")
 
         frequencies = frequencies.with_columns(
             [
@@ -485,6 +538,8 @@ class StopTimes:
                     + pl.col("end_time").str.slice(3, 2).cast(int) * 60
                     + pl.col("end_time").str.slice(6, 2).cast(int)
                 ).alias("end_time"),
+                pl.lit(False).alias("next_day"),
+                pl.col("trip_id").alias("orig_trip_id"),
             ]
         )
 
@@ -527,7 +582,9 @@ class StopTimes:
 
         return frequencies
 
-    def _frequencies_midnight_crossing(self, frequencies: pl.LazyFrame) -> pl.LazyFrame:
+    def _frequencies_midnight_crossing(
+        self, frequencies: pl.LazyFrame, stop_times: pl.LazyFrame
+    ) -> pl.LazyFrame:
         """
         Handles frequency entries that span midnight.
 
@@ -542,49 +599,90 @@ class StopTimes:
             pl.LazyFrame: A LazyFrame with midnight-spanning frequencies properly split.
         """
         frequencies = frequencies.with_columns(
-            pl.when((pl.col("start_time") >= 86400) & (pl.col("end_time") >= 86400))
+            pl.when(
+                (pl.col("start_time") >= SECS_PER_DAY)
+                & (pl.col("end_time") >= SECS_PER_DAY)
+            )
             .then(pl.lit(True))
-            .otherwise(pl.lit(False))
+            .otherwise(pl.col("next_day"))
             .alias("next_day")
         )
 
         frequencies = frequencies.with_columns(
             [
-                pl.when((pl.col("start_time") >= 86400) & (pl.col("end_time") >= 86400))
-                .then(pl.col("start_time") - 86400)
+                pl.when(
+                    (pl.col("start_time") >= SECS_PER_DAY)
+                    & (pl.col("end_time") >= SECS_PER_DAY)
+                )
+                .then(pl.col("start_time") % SECS_PER_DAY)
                 .otherwise(pl.col("start_time"))
                 .alias("start_time"),
-                pl.when((pl.col("start_time") >= 86400) & (pl.col("end_time") >= 86400))
-                .then(pl.col("end_time") - 86400)
+                pl.when(
+                    (pl.col("start_time") >= SECS_PER_DAY)
+                    & (pl.col("end_time") >= SECS_PER_DAY)
+                )
+                .then(pl.col("end_time") % SECS_PER_DAY)
                 .otherwise(pl.col("end_time"))
                 .alias("end_time"),
             ]
         )
 
         frequencies = frequencies.with_columns(
-            pl.when(pl.col("end_time") == 86400)
-            .then(86399)
+            pl.when(pl.col("end_time") == SECS_PER_DAY)
+            .then(SECS_PER_DAY - 1)
             .otherwise(pl.col("end_time"))
             .alias("end_time")
         )
 
         spans_midnight = frequencies.filter(
-            (pl.col("end_time") < pl.col("start_time")) | (pl.col("end_time") >= 86400)
+            (pl.col("end_time") < pl.col("start_time"))
+            | (pl.col("end_time") >= SECS_PER_DAY)
         )
 
-        first_half = spans_midnight.with_columns(pl.lit(86399).alias("end_time"))
+        first_half = spans_midnight.with_columns(pl.lit(SECS_PER_DAY).alias("end_time"))
         second_half = spans_midnight.with_columns(
-            pl.lit(0).alias("start_time"), pl.lit(True).alias("next_day")
+            pl.lit(0).alias("start_time"),
+            (pl.col("end_time") % SECS_PER_DAY).alias("end_time"),
+            pl.lit(True).alias("next_day"),
+            (
+                pl.concat_str(
+                    pl.col("trip_id"),
+                    pl.lit("_night"),
+                )
+            ).alias("trip_id"),
         )
 
         duplicated_rows = pl.concat([first_half, second_half], how="vertical_relaxed")
         normal_rows = frequencies.filter(
-            (pl.col("end_time") >= pl.col("start_time")) & (pl.col("end_time") < 86400)
+            (pl.col("end_time") >= pl.col("start_time"))
+            & (pl.col("end_time") < SECS_PER_DAY)
         )
 
         frequencies = pl.concat([normal_rows, duplicated_rows], how="vertical_relaxed")
 
-        return frequencies
+        if spans_midnight.fetch(1).height > 0:
+            # Get the mapping of new trip_ids to original template trip_ids.
+            unique_trip_ids: pl.LazyFrame = pl.concat(
+                [
+                    frequencies.select(["trip_id", "orig_trip_id"]),
+                    stop_times.select("trip_id")
+                    .unique()
+                    .with_columns(pl.col("trip_id").alias("orig_trip_id")),
+                ]
+            ).unique()
+
+            # Join the trips table with this mapping. This duplicates the original
+            # trip's data (route_id, service_id, etc.) for each new generated trip_id.
+            stop_times = stop_times.rename(
+                {"trip_id": "orig_trip_id"}
+            ).join(
+                unique_trip_ids,
+                left_on="orig_trip_id",
+                right_on="orig_trip_id",
+                how="right",  # Right join ensures all new trip_ids from stop_times are included.
+            )
+
+        return frequencies, stop_times
 
     def _add_frequencies_n_trips(self, frequencies: pl.LazyFrame) -> pl.LazyFrame:
         """
@@ -665,10 +763,20 @@ class StopTimes:
                 - The updated frequencies LazyFrame with adjusted time windows.
         """
         midnight_frequencies = frequencies.filter(
-            pl.col("end_time") + pl.col("shape_total_travel_time") >= 86400
+            pl.col("end_time") + pl.col("shape_total_travel_time") >= SECS_PER_DAY
         ).with_columns(
-            [((86400 - pl.col("shape_total_travel_time")) - 1).alias("new_end_time")]
+            [
+                ((SECS_PER_DAY - pl.col("shape_total_travel_time")) - 1).alias(
+                    "new_end_time"
+                )
+            ]
         )
+
+        if midnight_frequencies.fetch(1).height > 0:
+            if "orig_trip_id" not in stop_times.collect_schema().names():
+                stop_times = stop_times.with_columns(
+                    pl.col("trip_id").alias("orig_trip_id")
+                )
 
         delta_times = (
             midnight_frequencies.with_columns(
@@ -677,7 +785,7 @@ class StopTimes:
                         (
                             (pl.col("new_end_time") - pl.col("departure_time"))
                             / pl.col("headway_secs")
-                        ).floor()
+                        ).ceil()
                         * pl.col("headway_secs")
                         + pl.col("departure_time")
                     ).alias("aligned_start")
@@ -685,42 +793,36 @@ class StopTimes:
             )
             .with_columns(
                 [
-                    (
-                        pl.concat_list(
-                            [
-                                pl.lit([0]),
-                                pl.int_ranges(
-                                    pl.col("aligned_start"),
-                                    pl.col("end_time") + 1,
-                                    pl.col("headway_secs"),
-                                ),
-                            ]
-                        )
+                    pl.int_ranges(
+                        pl.col("aligned_start") - pl.col("departure_time"),
+                        pl.col("end_time") + 1 - pl.col("departure_time"),
+                        pl.col("headway_secs"),
                     ).alias("delta_time")
                 ]
             )
             .explode("delta_time")
+            .filter(pl.col("delta_time") != 0)
         )
 
-        updated_stop_times = (
+        stop_times = (
             stop_times.join(
                 delta_times.select(["trip_id", "delta_time"]), on="trip_id", how="left"
             )
-            .with_columns(pl.col("delta_time").fill_null(pl.lit(0)))
+            .with_columns(pl.col("delta_time").fill_null(0).alias("delta_time"))
             .with_columns(
                 (pl.col("arrival_time") + pl.col("delta_time")).alias("arrival_time"),
                 (pl.col("departure_time") + pl.col("delta_time")).alias(
                     "departure_time"
                 ),
-                pl.when(pl.col("delta_time") > 0)
-                .then(
-                    pl.col("trip_id").cast(pl.Utf8)
-                    + "_"
-                    + pl.col("delta_time").cast(pl.Utf8)
-                )
-                .otherwise(pl.col("trip_id"))
-                .alias("trip_id"),
-                pl.col("trip_id").alias("orig_trip_id"),
+                (
+                    pl.when(pl.col("delta_time") != 0)
+                    .then(
+                        pl.concat_str(
+                            pl.col("trip_id"), pl.lit("_"), pl.col("delta_time")
+                        )
+                    )
+                    .otherwise(pl.col("trip_id"))
+                ).alias("trip_id"),
             )
             .with_columns(
                 pl.when(pl.col("delta_time") > 0)
@@ -731,7 +833,7 @@ class StopTimes:
             .drop("delta_time")
         )
 
-        updated_frequencies = (
+        frequencies = (
             frequencies.join(
                 midnight_frequencies.select(["trip_id", "new_end_time"]).unique(
                     "trip_id"
@@ -748,10 +850,12 @@ class StopTimes:
                 ]
             )
             .drop("new_end_time")
-            .filter(pl.col("start_time") + pl.col("headway_secs") < pl.col("end_time"))
+            .filter(
+                (pl.col("start_time") + pl.col("headway_secs")) < pl.col("end_time")
+            )
         )
 
-        return updated_stop_times, updated_frequencies
+        return stop_times, frequencies
 
     def generate_shape_ids(self) -> pl.LazyFrame:
         """
@@ -802,8 +906,11 @@ class StopTimes:
 
         return grouped
 
-    def filter_by_time_bounds(
-        self, start_time: datetime, end_time: datetime
+    def filter_by_time_range(
+        self,
+        start_time: datetime | time,
+        end_time: datetime | time,
+        strict: bool = True,
     ) -> Tuple[pl.LazyFrame, Optional[pl.LazyFrame]]:
         """
         Filters stop_times and frequencies by a single time interval.
@@ -813,8 +920,8 @@ class StopTimes:
         are kept, even if not all their stops fall within the time bounds.
 
         Args:
-            start_time (datetime): Start datetime of the filter interval.
-            end_time (datetime): End datetime of the filter interval.
+            start_time (datetime|time): Start datetime of the filter interval.
+            end_time (datetime|time): End datetime of the filter interval.
 
         Returns:
             Tuple[pl.LazyFrame, Optional[pl.LazyFrame]]: A tuple containing:
@@ -829,47 +936,88 @@ class StopTimes:
         def time_to_seconds(t: time) -> int:
             return t.hour * 3600 + t.minute * 60 + t.second
 
-        start_secs = time_to_seconds(start_time.time())
-        end_secs = time_to_seconds(end_time.time())
+        if isinstance(start_time, datetime):
+            start_time = start_time.time()
+
+        if isinstance(end_time, datetime):
+            end_time = end_time.time()
+
+        start_secs = time_to_seconds(start_time)
+        end_secs = time_to_seconds(end_time)
 
         if self.frequencies is None:
             if start_time.date() != end_time.date():
                 raise ValueError("Start and end datetime must be on the same date")
 
-            filtered_stop_times = self.lf.filter(
-                (pl.col("arrival_time") >= start_secs)
-                & (pl.col("arrival_time") <= end_secs)
-            )
+            if strict:
+                filtered_stop_times = self.lf.filter(
+                    (pl.col("arrival_time") >= start_secs)
+                    & (pl.col("arrival_time") <= end_secs)
+                )
+            else:
+                filtered_stop_times = self.lf.join(
+                    self.lf.filter(
+                        (pl.col("arrival_time") >= start_secs)
+                        & (pl.col("arrival_time") <= end_secs)
+                    )
+                    .select("trip_id")
+                    .unique(),
+                    on="trip_id",
+                    how="left",
+                )
+
             return filtered_stop_times, None
 
-        if start_time.date() != end_time.date():
-            raise ValueError("Start and end datetime must be on the same date")
+        if strict:
+            filtered_frequencies = self.frequencies.filter(
+                (pl.col("start_time") <= end_secs) & (pl.col("end_time") >= start_secs)
+            )
 
-        filtered_frequencies = self.frequencies.filter(
-            (pl.col("start_time") <= end_secs) & (pl.col("end_time") >= start_secs)
-        )
-
-        filtered_frequencies = filtered_frequencies.with_columns(
-            [
-                pl.when(pl.col("end_time") > end_secs)
-                .then(end_secs)
-                .otherwise(pl.col("end_time"))
-                .alias("end_time"),
-                pl.when(pl.col("start_time") < start_secs)
-                .then(start_secs)
-                .otherwise(pl.col("start_time"))
-                .alias("start_time"),
-            ]
-        )
+            filtered_frequencies = filtered_frequencies.with_columns(
+                [
+                    pl.when(pl.col("end_time") > end_secs)
+                    .then(end_secs)
+                    .otherwise(pl.col("end_time"))
+                    .alias("end_time"),
+                    pl.when(pl.col("start_time") < start_secs)
+                    .then(start_secs)
+                    .otherwise(pl.col("start_time"))
+                    .alias("start_time"),
+                ]
+            )
+        else:
+            filtered_frequencies = self.frequencies.filter(
+                (pl.col("start_time") <= end_secs) | (pl.col("end_time") >= start_secs)
+            )
 
         valid_trip_ids = filtered_frequencies.select("trip_id")
 
-        filtered_stop_times = self.lf.filter(
-            (
-                (pl.col("arrival_time") >= start_secs)
-                & (pl.col("arrival_time") <= end_secs)
+        if strict:
+            filtered_stop_times = self.lf.filter(
+                (
+                    (pl.col("arrival_time") >= start_secs)
+                    & (pl.col("arrival_time") <= end_secs)
+                )
+                | (pl.col("trip_id").is_in(valid_trip_ids))
             )
-            | (pl.col("trip_id").is_in(valid_trip_ids))
+        else:
+            filtered_stop_times = self.lf.join(
+                self.lf.filter(
+                    (
+                        (pl.col("arrival_time") >= start_secs)
+                        & (pl.col("arrival_time") <= end_secs)
+                    )
+                    | (pl.col("trip_id").is_in(valid_trip_ids))
+                )
+                .select("trip_id")
+                .unique(),
+                on="trip_id",
+                how="left",
+            )
+
+        filtered_stop_times = self.__correct_sequence(filtered_stop_times)
+        filtered_stop_times = self._add_shape_time_and_midnight_crossing(
+            filtered_stop_times
         )
 
         return filtered_stop_times, filtered_frequencies
@@ -947,7 +1095,7 @@ class StopTimes:
         clipped_end = reduce(
             lambda acc, expr: pl.when(expr < acc).then(expr).otherwise(acc),
             end_clips,
-            pl.lit(86399),
+            pl.lit(SECS_PER_DAY - 1),
         )
 
         filtered_frequencies = filtered_frequencies.with_columns(

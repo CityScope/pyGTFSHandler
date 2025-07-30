@@ -374,3 +374,48 @@ def geohash(
         .alias("geohash")
     )
     return df
+
+
+def normalize_route_type(route_type):
+    if isinstance(route_type, int):
+        return route_type
+    elif isinstance(route_type, str):
+        if route_type == "tram":
+            route_type = 0
+
+        elif route_type == "subway":
+            route_type = 1
+
+        elif route_type == "rail":
+            route_type = 2
+
+        elif route_type == "bus":
+            route_type = 3
+
+        elif route_type == "ferry":
+            route_type = 4
+
+        elif (
+            (route_type == "cable car")
+            or (route_type == "cable_car")
+            or (route_type == "cable-car")
+            or (route_type == "cablecar")
+        ):
+            route_type = 5
+
+        elif route_type == "gondola":
+            route_type = 6
+
+        elif route_type == "funicular":
+            route_type = 7
+        else:
+            raise Exception(
+                f"Got route_type {route_type} but accepted values are tram, subway, rail, bus, ferry, cable car, gondola and funicular"
+            )
+
+    else:
+        raise Exception(
+            f"Route type {route_type} with dtype {type(route_type)} not implemented"
+        )
+
+    return route_type

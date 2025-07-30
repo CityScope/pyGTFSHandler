@@ -3,6 +3,12 @@ import polars as pl
 from typing import Optional, List, Union
 from utils import read_csv_list, get_df_schema_dict
 
+"""
+TODO: LLM prompt like this for route type 3
+Look in the internet if the city has a Bus with High Level of Service and respond to this question: Does the city council or the public transit administrator consider the following row route_id,agency_id,route_short_name,route_long_name,route_desc,route_type,route_url,route_color,route_text_color,route_sort_order,continuous_pickup,continuous_drop_off
+1,c-6392dd86,1,Circular,1 - Circular,3,,ffdd00,000000,21,, of a gtfs routes.txt file called transportes_urbanos_de_vitoria_tuvisa from the city Vitoria-Gasteiz in Euskadi Spain a Bus with High Level of Service or a Bus Rapid Transit? True or False.
+"""
+
 
 class Routes:
     """
@@ -27,11 +33,11 @@ class Routes:
             route_ids (list[str], optional): List of route IDs to filter by.
         """
         if isinstance(path, (str, Path)):
-            self.paths = [Path(path)]
+            paths = [Path(path)]
         else:
-            self.paths = [Path(p) for p in path]
+            paths = [Path(p) for p in path]
 
-        self.lf = self.__read_routes(route_ids, route_types)
+        self.lf = self.__read_routes(paths, route_ids, route_types)
         if route_ids or route_types:
             self.route_ids = (
                 self.lf.select("route_id").unique().collect()["route_id"].to_list()
@@ -40,7 +46,7 @@ class Routes:
             self.route_ids = None
 
     def __read_routes(
-        self, route_ids: Optional[List[str]], route_types: Optional[List[int]]
+        self, paths, route_ids: Optional[List[str]], route_types: Optional[List[int]]
     ) -> pl.LazyFrame:
         """
         Reads the routes data from one or more `routes.txt` files and applies optional filters.
@@ -51,9 +57,7 @@ class Routes:
         Returns:
             pl.LazyFrame: Filtered routes data as a LazyFrame.
         """
-        route_paths = [
-            p / "routes.txt" for p in self.paths if (p / "routes.txt").exists()
-        ]
+        route_paths = [p / "routes.txt" for p in paths if (p / "routes.txt").exists()]
         if not route_paths:
             raise FileNotFoundError(
                 "No routes.txt files found in the provided path(s)."

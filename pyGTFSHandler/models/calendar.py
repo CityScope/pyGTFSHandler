@@ -2,12 +2,7 @@ from datetime import datetime, timedelta, date
 from typing import Tuple
 
 import polars as pl
-from utils import (
-    get_df_schema_dict,
-    read_csv_list,
-    datetime_to_days_since_epoch,
-    EPOCH,
-)
+import utils
 
 from typing import Union, Optional, List
 from pathlib import Path
@@ -17,8 +12,11 @@ class Calendar:
     def __init__(
         self,
         path: Union[str, Path, List[str], List[Path]],
-        start_date: datetime = None,
-        end_date: datetime = None,
+        start_date: datetime | date = None,
+        end_date: datetime | date = None,
+        date_type: list[str] | str = None,
+        lon: float = None,
+        lat: float = None,
         service_ids: Optional[List[str]] = None,
     ):
         """
@@ -38,12 +36,12 @@ class Calendar:
         """
         # Normalize to list of Path
         if isinstance(path, (str, Path)):
-            self.paths = [Path(path)]
+            paths = [Path(path)]
         else:
-            self.paths = [Path(p) for p in path]
+            paths = [Path(p) for p in path]
 
-        self.lf = self.__read_calendar(service_ids)
-        self.exceptions_lf = self.__read_calendar_dates(service_ids)
+        self.lf = self.__read_calendar(paths, service_ids)
+        self.exceptions_lf = self.__read_calendar_dates(paths, service_ids)
         self.min_date, self.max_date = self.__get_min_max_dates(
             self.lf, self.exceptions_lf
         )
@@ -53,10 +51,17 @@ class Calendar:
             elif start_date.date > end_date.date:
                 raise Exception("Start date happens after end date")
             else:
-                service_df = self.get_services_in_date_range(start_date, end_date)
                 self.service_ids = (
-                    service_df.explode("service_ids").agg("service_ids").to_list()
+                    self.get_services_in_date_range(
+                        start_date, end_date, date_type=date_type, lon=lon, lat=lat
+                    )
+                    .select("service_ids")
+                    .explode("service_ids")
+                    .collect()["service_ids"]
+                    .to_list()
                 )
+
+            self.service_ids = [i + "_night" for i in self.service_ids]
 
             service_ids_df = pl.DataFrame({"service_id": self.service_ids})
             if self.lf:
@@ -73,7 +78,7 @@ class Calendar:
             self.service_ids = service_ids
 
     def __read_calendar(
-        self, service_ids: Optional[List[str]]
+        self, paths, service_ids: Optional[List[str]]
     ) -> Optional[pl.LazyFrame]:
         """
         Reads the calendar.txt files from all paths using utils.read_csv_list.
@@ -85,13 +90,13 @@ class Calendar:
             Optional[pl.LazyFrame]: Filtered calendar data or None if no files found.
         """
         calendar_paths = [
-            p / "calendar.txt" for p in self.paths if (p / "calendar.txt").exists()
+            p / "calendar.txt" for p in paths if (p / "calendar.txt").exists()
         ]
         if not calendar_paths:
             return None
 
-        schema_dict = get_df_schema_dict(calendar_paths[0])  # assume same schema
-        calendar = read_csv_list(calendar_paths, schema_overrides=schema_dict)
+        schema_dict = utils.get_df_schema_dict(calendar_paths[0])  # assume same schema
+        calendar = utils.read_csv_list(calendar_paths, schema_overrides=schema_dict)
 
         if service_ids:
             service_ids_df = pl.DataFrame({"service_id": service_ids})
@@ -136,7 +141,7 @@ class Calendar:
         return calendar
 
     def __read_calendar_dates(
-        self, service_ids: Optional[List[str]]
+        self, paths, service_ids: Optional[List[str]]
     ) -> Optional[pl.LazyFrame]:
         """
         Reads the calendar_dates.txt files from all paths using utils.read_csv_list.
@@ -149,14 +154,14 @@ class Calendar:
         """
         calendar_dates_paths = [
             p / "calendar_dates.txt"
-            for p in self.paths
+            for p in paths
             if (p / "calendar_dates.txt").exists()
         ]
         if not calendar_dates_paths:
             return None
 
-        schema_dict = get_df_schema_dict(calendar_dates_paths[0])
-        calendar_dates = read_csv_list(
+        schema_dict = utils.get_df_schema_dict(calendar_dates_paths[0])
+        calendar_dates = utils.read_csv_list(
             calendar_dates_paths, schema_overrides=schema_dict
         )
 
@@ -245,12 +250,12 @@ class Calendar:
         max_day_offset = max(date_bounds_as_days)
 
         # Convert the integer day offsets back into standard datetime.date objects.
-        min_date = EPOCH + timedelta(days=min_day_offset)
-        max_date = EPOCH + timedelta(days=max_day_offset)
+        min_date = utils.EPOCH + timedelta(days=min_day_offset)
+        max_date = utils.EPOCH + timedelta(days=max_day_offset)
 
         return min_date, max_date
 
-    def get_services_in_date(self, date: datetime) -> List[str]:
+    def get_services_in_date(self, date: datetime | date) -> List[str]:
         """
         Returns a list of service_ids active on a given date.
 
@@ -258,12 +263,12 @@ class Calendar:
         exceptions.
 
         Args:
-            date (datetime): Date to check for active services.
+            date (datetim | date): Date to check for active services.
 
         Returns:
             list[str]: Sorted list of active service IDs on the given date.
         """
-        date_int = datetime_to_days_since_epoch(date)
+        date_int = utils.datetime_to_days_since_epoch(date)
         weekday = date.strftime("%A").lower()  # e.g., 'monday'
 
         # Filter calendar.txt for services active on this weekday and date
@@ -324,7 +329,12 @@ class Calendar:
         return list(active_services)
 
     def get_services_in_date_range(
-        self, start_date: Optional[datetime] = None, end_date: Optional[datetime] = None
+        self,
+        start_date: Optional[datetime | date] = None,
+        end_date: Optional[datetime | date] = None,
+        date_type: Optional[str | list[str]] = None,
+        lon: float = None,
+        lat: float = None,
     ) -> pl.DataFrame:
         """
         Returns a Polars DataFrame with active service IDs for each date in the range.
@@ -337,8 +347,8 @@ class Calendar:
         If start_date or end_date is not provided, they are inferred from available data.
 
         Args:
-            start_date (datetime, optional): Start date of range.
-            end_date (datetime, optional): End date of range.
+            start_date (datetime|date, optional): Start date of range.
+            end_date (datetime|date, optional): End date of range.
 
         Returns:
             pl.DataFrame: DataFrame with active services per date.
@@ -379,8 +389,8 @@ class Calendar:
         }
 
         if self.lf is not None:
-            start_int = datetime_to_days_since_epoch(start_date)
-            end_int = datetime_to_days_since_epoch(end_date)
+            start_int = utils.datetime_to_days_since_epoch(start_date)
+            end_int = utils.datetime_to_days_since_epoch(end_date)
 
             calendar_df = (
                 self.lf.select(
@@ -420,8 +430,8 @@ class Calendar:
 
         # Apply exceptions from calendar_dates.txt
         if self.exceptions_lf is not None:
-            start_int = datetime_to_days_since_epoch(start_date)
-            end_int = datetime_to_days_since_epoch(end_date)
+            start_int = utils.datetime_to_days_since_epoch(start_date)
+            end_int = utils.datetime_to_days_since_epoch(end_date)
 
             calendar_dates_df = (
                 self.exceptions_lf.select(["date", "service_id", "exception_type"])
@@ -430,7 +440,7 @@ class Calendar:
             )
 
             for row in calendar_dates_df.iter_rows(named=True):
-                date_str = (EPOCH + timedelta(days=row["date"])).isoformat()
+                date_str = (utils.EPOCH + timedelta(days=row["date"])).isoformat()
                 service_id = row["service_id"]
                 exception = row["exception_type"]
 
@@ -459,4 +469,106 @@ class Calendar:
             .alias("date")
         )
 
+        if date_type is not None:
+            valid_date_types = {
+                "workday",
+                "holiday",
+                "non_workday",
+                "weekend",
+                "monday",
+                "tuesday",
+                "wednesday",
+                "thursday",
+                "friday",
+                "saturday",
+                "sunday",
+            }
+
+            # Ensure date_type is a list
+            if isinstance(date_type, str):
+                date_type = [date_type]
+
+            if "holiday" in date_type:
+                result = self.add_holidays_and_weekends(result, lon, lat)
+
+            # Normalize and validate
+            date_type = [dt.lower() for dt in date_type]
+            invalid = [dt for dt in date_type if dt not in valid_date_types]
+            if invalid:
+                raise Exception(f"Date type(s) not implemented: {invalid}")
+
+            # Apply filters one by one (AND logic)
+            if "workday" in date_type:
+                result = result.filter(
+                    (not pl.col("holiday"))
+                    & (not pl.col("sunday"))
+                    & (not pl.col("saturday"))
+                )
+
+            if "non_workday" in date_type:
+                result = result.filter(
+                    (pl.col("holiday")) | (pl.col("sunday")) | (pl.col("saturday"))
+                )
+
+            if "holiday" in date_type:
+                result = result.filter(pl.col("holiday"))
+
+            if "weekend" in date_type:
+                result = result.filter((pl.col("sunday")) | (pl.col("saturday")))
+
+            for day in [
+                "monday",
+                "tuesday",
+                "wednesday",
+                "thursday",
+                "friday",
+                "saturday",
+                "sunday",
+            ]:
+                if day in date_type:
+                    result = result.filter(pl.col("weekday") == day)
+
+            if "holiday" in date_type:
+                result = result.drop("holiday", "weekend")
+
         return result
+
+    def add_holidays_and_weekends(self, data, lon, lat):
+        # If LazyFrame, collect to DataFrame
+        if isinstance(data, pl.LazyFrame):
+            data = data.collect()
+
+        # Determine country and subdivision (your utils function)
+        country_code, subdivision_code = utils.get_country_region(lat, lon)
+
+        # Extract unique years as list of ints
+        years = data.select(pl.col("date").dt.year()).unique().to_series().to_list()
+
+        # Collect holidays for each year
+        holidays_df = [
+            utils.get_holidays(year, country_code, subdivision_code) for year in years
+        ]
+        holidays_df = pl.concat(holidays_df)
+
+        # Get min and max dates in data
+        # min_date = data.select(pl.col("date").min()).item()
+        # max_date = data.select(pl.col("date").max()).item()
+
+        # Convert holidays_df 'date' column (assumed days since epoch) to datetime (Polars Date)
+        holidays_df = holidays_df.with_columns(
+            (
+                pl.lit(utils.EPOCH).cast(pl.Date) + pl.duration(days=pl.col("date"))
+            ).alias("date")
+        )
+
+        # Add weekend and holiday flags
+        data = data.with_columns(
+            [
+                # Weekend: check if weekday is Saturday or Sunday
+                pl.col("weekday").is_in(["saturday", "sunday"]).alias("weekend"),
+                # Holiday: if 'date' is in holidays_df
+                pl.col("date").is_in(holidays_df.get_column("date")).alias("holiday"),
+            ]
+        )
+
+        return data

@@ -25,6 +25,7 @@ class Stops:
         self,
         path: Union[str, Path, List[Union[str, Path]]],
         aoi: Union[gpd.GeoDataFrame, gpd.GeoSeries, None] = None,
+        stop_group_distance: float = 0,
         stop_ids: Union[List[str], None] = None,
     ):
         """
@@ -36,25 +37,48 @@ class Stops:
             stop_ids (list[str], optional): List of stop IDs to include.
         """
         if isinstance(path, (str, Path)):
-            self.paths = [Path(path)]
+            paths = [Path(path)]
         else:
-            self.paths = [Path(p) for p in path]
+            paths = [Path(p) for p in path]
 
-        self.lf = self.__read_stops(stop_ids)
+        self.lf = self.__read_stops(paths, stop_ids)
 
-        if aoi is not None:
-            self.lf, self.gdf = self.__filter_by_aoi(aoi)
-        else:
+        if aoi is None:
             df = self.lf.select(["stop_id", "stop_lat", "stop_lon"]).collect()
             self.gdf = gpd.GeoDataFrame(
                 {"stop_id": df["stop_id"]},
                 geometry=gpd.points_from_xy(df["stop_lon"], df["stop_lat"]),
                 crs="EPSG:4326",
             )
+        else:
+            self.lf = self.lf.collect().lazy()
+            self.lf, self.gdf = self.filter_by_aoi(aoi)
+            self.lf = self.lf.collect().lazy()
 
-        self.stop_ids = self.lf.select("stop_id").collect()["stop_id"].to_list()
+        if stop_group_distance > 0:
+            self.lf = self.lf.collect().lazy()
+            self.lf, self.gdf = self.group_stops(stop_group_distance)
+            self.lf = self.lf.collect().lazy()
 
-    def __read_stops(self, stop_ids: Union[List[str], None] = None) -> pl.LazyFrame:
+        if (aoi is not None) or (stop_group_distance > 0):
+            self.stop_ids = self.lf.select("stop_id").collect()["stop_id"].to_list()
+        else:
+            self.stop_ids = None
+
+        # Compute mean coordinates of stops (assumed self.stops.lf is LazyFrame)
+        mean_coords = self.lf.select(
+            [
+                pl.col("stop_lon").mean().alias("mean_lon"),
+                pl.col("stop_lat").mean().alias("mean_lat"),
+            ]
+        ).collect()
+
+        self.mean_lon = mean_coords["mean_lon"][0]
+        self.mean_lat = mean_coords["mean_lat"][0]
+
+    def __read_stops(
+        self, paths, stop_ids: Union[List[str], None] = None
+    ) -> pl.LazyFrame:
         """
         Read GTFS stops.txt files and filter by stop IDs if provided.
 
@@ -66,7 +90,7 @@ class Stops:
         Returns:
             pl.LazyFrame: Filtered and normalized stops LazyFrame.
         """
-        stop_paths = [p / "stops.txt" for p in self.paths if (p / "stops.txt").exists()]
+        stop_paths = [p / "stops.txt" for p in paths if (p / "stops.txt").exists()]
         if not stop_paths:
             raise FileNotFoundError("No stops.txt files found in the provided path(s).")
 
@@ -74,15 +98,22 @@ class Stops:
         lf = read_csv_list(stop_paths, schema_overrides=schema_dict)
 
         if stop_ids:
-            stop_ids_df = pl.DataFrame({"stop_id": stop_ids})
+            stop_ids_df = pl.LazyFrame({"stop_id": stop_ids})
             lf = lf.join(stop_ids_df.lazy(), on="stop_id", how="inner")
 
         if "parent_station" not in lf.collect_schema().names():
             lf = lf.with_columns(pl.lit(None).alias("parent_station"))
 
+        lf = lf.with_columns(
+            pl.when(pl.col("parent_station").is_null())
+            .then(pl.col("stop_id"))
+            .otherwise("parent_station")
+            .alias("parent_station")
+        )
+
         return lf
 
-    def __filter_by_aoi(
+    def filter_by_aoi(
         self, aoi: gpd.GeoDataFrame | gpd.GeoSeries
     ) -> tuple[pl.LazyFrame, gpd.GeoDataFrame]:
         """
@@ -119,13 +150,13 @@ class Stops:
             crs="EPSG:4326",
         )
 
-        union_geom = aoi.unary_union
+        union_geom = aoi.union_all()
         gdf = gdf[gdf.intersects(union_geom)]
 
         if gdf.empty:
             raise ValueError("No stops found inside AOI bounds")
 
-        stop_ids_df = pl.DataFrame({"stop_id": gdf["stop_id"].to_list()})
+        stop_ids_df = pl.LazyFrame({"stop_id": gdf["stop_id"].to_list()})
         final_lf = filtered_lf.join(stop_ids_df.lazy(), on="stop_id", how="inner")
 
         return final_lf, gdf
@@ -164,7 +195,7 @@ class Stops:
         # This assumes parent_station info comes from self.lf (not self.gdf)
         parent_station_df = self.lf.select(["stop_id", "parent_station"]).collect()
 
-        cluster_df = pl.DataFrame(
+        cluster_df = pl.LazyFrame(
             {"stop_id": gdf["stop_id"].to_list(), "cluster": gdf["cluster"].to_list()}
         ).join(parent_station_df, on="stop_id", how="left")
 
@@ -209,8 +240,12 @@ class Stops:
             .drop("final_cluster")
         )
 
+        cluster_df = cluster_df.collect()
+
         # Update gdf and lf
-        self.gdf = self.gdf.merge(cluster_df.to_pandas(), on="stop_id")
-        self.lf = self.lf.drop("parent_station").join(
+        gdf = self.gdf.merge(cluster_df.to_pandas(), on="stop_id")
+        lf = self.lf.drop("parent_station").join(
             cluster_df.lazy(), on="stop_id", how="left"
         )
+
+        return lf, gdf
