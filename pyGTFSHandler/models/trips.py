@@ -34,6 +34,11 @@ class Trips:
         else:
             self.paths = [Path(p) for p in path]
 
+        if service_ids:
+            service_ids = [
+                sid[:-6] if sid.endswith("_night") else sid for sid in service_ids
+            ]
+
         self.lf = self.__read_trips(service_ids, trip_ids, route_ids)
         if service_ids or route_ids:
             self.trip_ids = (
@@ -68,14 +73,14 @@ class Trips:
 
         if service_ids:
             service_ids_df = pl.DataFrame({"service_id": service_ids})
-            trips = trips.join(service_ids_df.lazy(), on="service_id", how="inner")
+            trips = trips.join(service_ids_df.lazy(), on="service_id", how="semi")
 
         if trip_ids:
             trip_ids_df = pl.DataFrame({"trip_id": trip_ids})
-            trips = trips.join(trip_ids_df.lazy(), on="trip_id", how="inner")
+            trips = trips.join(trip_ids_df.lazy(), on="trip_id", how="semi")
 
         if route_ids:
             route_ids_df = pl.DataFrame({"route_id": route_ids})
-            trips = trips.join(route_ids_df.lazy(), on="route_id", how="inner")
+            trips = trips.join(route_ids_df.lazy(), on="route_id", how="semi")
 
         return trips

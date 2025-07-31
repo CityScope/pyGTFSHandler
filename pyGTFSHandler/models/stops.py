@@ -99,7 +99,7 @@ class Stops:
 
         if stop_ids:
             stop_ids_df = pl.LazyFrame({"stop_id": stop_ids})
-            lf = lf.join(stop_ids_df.lazy(), on="stop_id", how="inner")
+            lf = lf.join(stop_ids_df.lazy(), on="stop_id", how="semi")
 
         if "parent_station" not in lf.collect_schema().names():
             lf = lf.with_columns(pl.lit(None).alias("parent_station"))
@@ -157,7 +157,7 @@ class Stops:
             raise ValueError("No stops found inside AOI bounds")
 
         stop_ids_df = pl.LazyFrame({"stop_id": gdf["stop_id"].to_list()})
-        final_lf = filtered_lf.join(stop_ids_df.lazy(), on="stop_id", how="inner")
+        final_lf = filtered_lf.join(stop_ids_df.lazy(), on="stop_id", how="semi")
 
         return final_lf, gdf
 

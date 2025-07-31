@@ -40,38 +40,56 @@ class Calendar:
         else:
             paths = [Path(p) for p in path]
 
+        if service_ids:
+            service_ids = [
+                sid[:-6] if sid.endswith("_night") else sid for sid in service_ids
+            ]
+
         self.lf = self.__read_calendar(paths, service_ids)
         self.exceptions_lf = self.__read_calendar_dates(paths, service_ids)
         self.min_date, self.max_date = self.__get_min_max_dates(
             self.lf, self.exceptions_lf
         )
+
+        if isinstance(start_date, datetime):
+            start_date = start_date.date()
+
+        if isinstance(end_date, datetime):
+            end_date = end_date.date()
+
         if start_date and end_date:
-            if start_date.date == end_date.date:
-                self.service_ids = self.get_services_in_date(start_date)
-            elif start_date.date > end_date.date:
+            if start_date == end_date:
+                self.service_ids = list(
+                    set(self.get_services_in_date(start_date))
+                    | set(self.get_services_in_date(start_date - timedelta(days=1)))
+                )
+                service_ids_df = pl.DataFrame({"service_id": self.service_ids})
+            elif start_date > end_date:
                 raise Exception("Start date happens after end date")
             else:
-                self.service_ids = (
+                service_ids_df = (
                     self.get_services_in_date_range(
-                        start_date, end_date, date_type=date_type, lon=lon, lat=lat
+                        start_date - timedelta(days=1),
+                        end_date,
+                        date_type=date_type,
+                        lon=lon,
+                        lat=lat,
                     )
                     .select("service_ids")
-                    .explode("service_ids")
-                    .collect()["service_ids"]
-                    .to_list()
+                    .rename({"service_ids": "service_id"})
+                    .explode("service_id")
+                    .unique()
                 )
+                self.service_ids = service_ids_df["service_id"].to_list()
 
-            self.service_ids = [i + "_night" for i in self.service_ids]
-
-            service_ids_df = pl.DataFrame({"service_id": self.service_ids})
-            if self.lf:
+            if self.lf is not None:
                 self.lf = self.lf.join(
-                    service_ids_df.lazy(), on="service_id", how="inner"
+                    service_ids_df.lazy(), on="service_id", how="semi"
                 )
 
-            if self.exceptions_lf:
+            if self.exceptions_lf is not None:
                 self.exceptions_lf = self.exceptions_lf.join(
-                    service_ids_df.lazy(), on="service_id", how="inner"
+                    service_ids_df.lazy(), on="service_id", how="semi"
                 )
 
         else:
@@ -100,9 +118,7 @@ class Calendar:
 
         if service_ids:
             service_ids_df = pl.DataFrame({"service_id": service_ids})
-            calendar = calendar.join(
-                service_ids_df.lazy(), on="service_id", how="inner"
-            )
+            calendar = calendar.join(service_ids_df.lazy(), on="service_id", how="semi")
 
         # Convert start_date and end_date (YYYYMMDD int) to days since year 1-01-01
         calendar = calendar.with_columns(
@@ -168,7 +184,7 @@ class Calendar:
         if service_ids:
             service_ids_df = pl.DataFrame({"service_id": service_ids})
             calendar_dates = calendar_dates.join(
-                service_ids_df.lazy(), on="service_id", how="inner"
+                service_ids_df.lazy(), on="service_id", how="semi"
             )
 
         # Convert start_date and end_date (YYYYMMDD int) to days since year 1-01-01

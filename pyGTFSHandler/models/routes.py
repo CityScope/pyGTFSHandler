@@ -68,10 +68,10 @@ class Routes:
 
         if route_ids:
             route_ids_df = pl.DataFrame({"route_id": route_ids})
-            routes = routes.join(route_ids_df.lazy(), on="route_id", how="inner")
+            routes = routes.join(route_ids_df.lazy(), on="route_id", how="semi")
 
         if route_types:
             route_types_df = pl.DataFrame({"route_type": route_types})
-            routes = routes.join(route_types_df.lazy(), on="route_type", how="inner")
+            routes = routes.join(route_types_df.lazy(), on="route_type", how="semi")
 
         return routes

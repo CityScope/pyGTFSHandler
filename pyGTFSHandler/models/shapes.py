@@ -6,6 +6,7 @@ from shapely import wkt
 import math
 
 "TODO: read shapes file and use it when available"
+"TODO: finish shape gdf"
 "TODO: define directions clustering shape ids by similar directionality in linestrings by consistent with routes or maybe one direction per stop or somethig"
 
 TRIP_ROUND_TIME = 120
@@ -39,7 +40,7 @@ class Shapes:
         self.stop_shapes = self.stop_shapes.collect().lazy()
         self.gdf = self.__get_shapes_gdf(self.lf)
 
-    def __generate_shape_direction_column(self, stop_shapes, round=10):
+    def __generate_shape_direction_column(self, stop_shapes, round_factor=10):
         """
         Generate a new column 'shape_direction' in the stop_shapes LazyFrame,
         representing the approximate direction of shape segments in degrees,
@@ -62,32 +63,14 @@ class Shapes:
         deg2rad = math.pi / 180  # conversion factor degrees to radians
         rad2deg = 180 / math.pi  # conversion factor radians to degrees
 
-        # Sort stops by shape_id and stop_sequence to ensure correct order
-        stop_shapes = stop_shapes.sort(["shape_id", "stop_sequence"])
-
-        # Calculate the total number of stops per shape,
-        # where n_stops = reversed stop_sequence index + 1
-        # This helps in computing cumulative means excluding current stop later.
-        stop_shapes = stop_shapes.with_columns(
-            [
-                (pl.col("stop_sequence").reverse().over("shape_id") + 1).alias(
-                    "n_stops"
-                ),
-            ]
-        )
-
         # Calculate cumulative mean latitude and longitude including the current stop.
         # cum_sum / n_stops gives running average for each shape_id group.
-        stop_shapes = stop_shapes.with_columns(
+        stop_shapes = stop_shapes.sort(
+            ["shape_id", "stop_sequence"], descending=True
+        ).with_columns(
             [
-                (
-                    pl.col("shape_pt_lat").cum_sum().over("shape_id")
-                    / pl.col("n_stops")
-                ).alias("mean_lat"),
-                (
-                    pl.col("shape_pt_lon").cum_sum().over("shape_id")
-                    / pl.col("n_stops")
-                ).alias("mean_lon"),
+                (pl.col("shape_pt_lat").cum_sum().over("shape_id")).alias("mean_lat"),
+                (pl.col("shape_pt_lon").cum_sum().over("shape_id")).alias("mean_lon"),
             ]
         )
 
@@ -96,49 +79,74 @@ class Shapes:
         stop_shapes = stop_shapes.with_columns(
             [
                 (
-                    (pl.col("n_stops") * pl.col("mean_lat") - pl.col("shape_pt_lat"))
-                    / (pl.col("n_stops") - 1)
+                    (pl.col("mean_lat") - pl.col("shape_pt_lat"))
+                    / (
+                        pl.col("stop_sequence").max().over("shape_id")
+                        - pl.col("stop_sequence")
+                    )
                 ).alias("mean_lat"),
                 (
-                    (pl.col("n_stops") * pl.col("mean_lon") - pl.col("shape_pt_lon"))
-                    / (pl.col("n_stops") - 1)
+                    (pl.col("mean_lon") - pl.col("shape_pt_lon"))
+                    / (
+                        pl.col("stop_sequence").max().over("shape_id")
+                        - pl.col("stop_sequence")
+                    )
                 ).alias("mean_lon"),
             ]
-        ).drop("n_stops")
+        )
 
-        # Calculate the angle in degrees between the vector from current point to the mean of others.
+        # Calculate the angle in degrees from north to the vector from current point to the mean of others.
         # Using spherical trigonometry (arctan2 formula adapted for lat/lon).
         # The angle is normalized to [0, 360) degrees and rounded to nearest multiple of `round`.
-        stop_shapes = stop_shapes.with_columns(
-            (
-                (
+        stop_shapes = (
+            stop_shapes.with_columns(
+                [
+                    # radians
+                    ((pl.col("mean_lon") - pl.col("shape_pt_lon")) * deg2rad).alias(
+                        "dlon_rad"
+                    ),
+                    (pl.col("shape_pt_lat") * deg2rad).alias("lat1_rad"),
+                    (pl.col("mean_lat") * deg2rad).alias("lat2_rad"),
+                ]
+            )
+            .with_columns(
+                [
+                    # calculate y and x
+                    (pl.col("dlon_rad").sin() * pl.col("lat2_rad").cos()).alias("y"),
                     (
-                        (
-                            rad2deg
-                            * pl.arctan2(
-                                (
-                                    (pl.col("mean_lon") - pl.col("shape_pt_lon"))
-                                    * deg2rad
-                                ).sin()
-                                * (pl.col("mean_lat") * deg2rad).cos(),
-                                (pl.col("shape_pt_lat") * deg2rad).cos()
-                                * (pl.col("mean_lat") * deg2rad).sin()
-                                - (pl.col("shape_pt_lat") * deg2rad).sin()
-                                * (pl.col("mean_lat") * deg2rad).cos()
-                                * (
-                                    (pl.col("mean_lon") - pl.col("shape_pt_lon"))
-                                    * deg2rad
-                                ).cos(),
-                            )
-                            + 360  # Add 360 to avoid negative angles
-                        )
-                        % 360  # Normalize angle between 0 and 360
-                    )
-                    / round  # Scale by rounding factor
-                ).round(0)
-                * round  # Round to nearest multiple of `round`
-            ).alias("shape_direction")
-        ).drop("mean_lat", "mean_lon")
+                        pl.col("lat1_rad").cos() * pl.col("lat2_rad").sin()
+                        - pl.col("lat1_rad").sin()
+                        * pl.col("lat2_rad").cos()
+                        * pl.col("dlon_rad").cos()
+                    ).alias("x"),
+                ]
+            )
+            .with_columns(
+                [
+                    # angle and direction
+                    (
+                        (rad2deg * pl.arctan2(pl.col("y"), pl.col("x")) + 360) % 360
+                    ).alias("angle"),
+                ]
+            )
+            .with_columns(
+                [
+                    ((pl.col("angle") / round_factor).round(0) * round_factor).alias(
+                        "shape_direction"
+                    ),
+                ]
+            )
+            .drop(
+                "mean_lat",
+                "mean_lon",
+                "dlon_rad",
+                "lat1_rad",
+                "lat2_rad",
+                "y",
+                "x",
+                "angle",
+            )
+        )
 
         return stop_shapes
 
