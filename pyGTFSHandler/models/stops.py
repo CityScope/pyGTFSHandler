@@ -193,7 +193,7 @@ class Stops:
         )
 
         # This assumes parent_station info comes from self.lf (not self.gdf)
-        parent_station_df = self.lf.select(["stop_id", "parent_station"]).collect()
+        parent_station_df = self.lf.select(["stop_id", "parent_station"])
 
         cluster_df = pl.LazyFrame(
             {"stop_id": gdf["stop_id"].to_list(), "cluster": gdf["cluster"].to_list()}

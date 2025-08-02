@@ -848,7 +848,7 @@ class StopTimes:
             ),
             on="trip_id",
             how="left",
-        )
+        ).rename({"departure_time": "first_departure_time"})
         return frequencies
 
     def _midnight_frequencies_to_stop_times(
@@ -897,36 +897,36 @@ class StopTimes:
                 pl.col("trip_id").alias("orig_trip_id")
             )
 
-        delta_times = (
-            midnight_frequencies.with_columns(
-                [
+        delta_times = midnight_frequencies.with_columns(
+            [
+                (
                     (
-                        (
-                            (pl.col("new_end_time") - pl.col("departure_time"))
-                            / pl.col("headway_secs")
-                        ).ceil()
-                        * pl.col("headway_secs")
-                        + pl.col("departure_time")
-                    ).alias("aligned_start")
-                ]
-            )
-            .with_columns(
-                [
-                    pl.int_ranges(
-                        pl.col("aligned_start") - pl.col("departure_time"),
-                        pl.col("end_time") + 1 - pl.col("departure_time"),
-                        pl.col("headway_secs"),
-                    ).alias("delta_time")
-                ]
-            )
-            .explode("delta_time")
-            .filter(pl.col("delta_time") != 0)
+                        (pl.col("new_end_time") - pl.col("first_departure_time"))
+                        / pl.col("headway_secs")
+                    ).ceil()
+                    * pl.col("headway_secs")
+                    + pl.col("first_departure_time")
+                ).alias("aligned_start")
+            ]
+        ).with_columns(
+            [
+                pl.int_ranges(
+                    pl.col("aligned_start") - pl.col("first_departure_time"),
+                    pl.col("end_time") + 1 - pl.col("first_departure_time"),
+                    pl.col("headway_secs"),
+                )
+                .alias("delta_time")
+                .list.eval(pl.element().filter(pl.element() != 0).append(0))
+            ]
         )
 
         stop_times = (
             stop_times.join(
-                delta_times.select(["trip_id", "delta_time"]), on="trip_id", how="left"
+                delta_times.select(["trip_id", "delta_time", "headway_secs"]),
+                on="trip_id",
+                how="left",
             )
+            .explode("delta_time")
             .with_columns(pl.col("delta_time").fill_null(0).alias("delta_time"))
             .with_columns(
                 (pl.col("arrival_time") + pl.col("delta_time")).alias("arrival_time"),
@@ -937,7 +937,11 @@ class StopTimes:
                     pl.when(pl.col("delta_time") != 0)
                     .then(
                         pl.concat_str(
-                            pl.col("trip_id"), pl.lit("_"), pl.col("delta_time")
+                            pl.col("trip_id"),
+                            pl.lit("_"),
+                            (pl.col("delta_time") / pl.col("headway_secs"))
+                            .ceil()
+                            .cast(int),
                         )
                     )
                     .otherwise(pl.col("trip_id"))
@@ -949,7 +953,7 @@ class StopTimes:
                 .otherwise(pl.col("next_day"))
                 .alias("next_day")
             )
-            .drop("delta_time")
+            .drop("delta_time", "headway_secs")
         )
 
         frequencies = (

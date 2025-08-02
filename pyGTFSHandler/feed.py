@@ -42,11 +42,8 @@ TODOs:
 - TODO check that all trips have a route and if not generate it.
 - TODO check that trips from stop_times have a trip in trips and same for stops
 - TODO add direction_id to routes based on shape direction per shape_id
-- TODO check that shape_direction is properly computed it looks like it is in the range 0-180 and not 0-360
-- TODO check where you should use parent_station instead of stop_id
 - TODO finish dealing with shape_id and shapes.txt
-- TODO shape id the  way it is now if only one direction but two routes it splits them into two
-- TODO shape direction computed wrong
+- TODO If in a trip_id a stop_id is repeated divide it into 2 trip ids check if this is really needed
 """
 
 from models import StopTimes, Stops, Trips, Calendar, Routes, Shapes
@@ -241,7 +238,7 @@ class Feed:
 
         # Merge with trips, stops, routes, and shapes data to create the full view.
         self.lf = self.lf.join(
-            self.trips.lf.filter(not pl.col("next_day")).select(
+            self.trips.lf.filter(~pl.col("next_day")).select(
                 ["trip_id", "service_id", "route_id"]
             ),
             on="trip_id",
@@ -259,6 +256,34 @@ class Feed:
             on="stop_id",
             how="left",
         )
+
+        # Ensure that every trip does not stop twice at the parent_station
+
+        # Sort by trip_id and stop_sequence
+        self.lf = self.lf.sort(["trip_id", "stop_sequence"])
+
+        # Create a new column with shifted parent_station per trip_id group
+        self.lf = self.lf.with_columns(
+            [
+                pl.col("parent_station")
+                .shift(1)
+                .over("trip_id")
+                .alias("prev_parent_station")
+            ]
+        )
+
+        # Replace duplicate consecutive parent_station with None
+        self.lf = self.lf.with_columns(
+            [
+                pl.when(pl.col("parent_station") == pl.col("prev_parent_station"))
+                .then(None)
+                .otherwise(pl.col("parent_station"))
+                .alias("parent_station")
+            ]
+        )
+
+        # Drop helper column if you don't want to keep it
+        self.lf = self.lf.drop("prev_parent_station")
 
         self.lf = self.lf.join(
             self.routes.lf.select(["route_id", "route_type"]), on="route_id", how="left"
@@ -279,7 +304,7 @@ class Feed:
             how="left",
         )
 
-        # --- 6. Perform Final Data Cleaning and Transformation ---
+        # --- Perform Final Data Cleaning and Transformation ---
         # If any times were fixed with the simple method, run the advanced,
         # shape-based interpolation now that shape_dist_traveled is available.
         if self.stop_times.fixed_times:
@@ -406,16 +431,18 @@ class Feed:
         gtfs_lf = gtfs_lf.lazy()
 
         if frequencies_exist:
-            delta_times = (
+            gtfs_lf_frequencies = (
                 gtfs_lf.filter(
-                    (~pl.col("start_time").is_null())
-                    & (~pl.col("start_time").is_nan())
-                    & (pl.col("stop_sequence") == 0)
+                    (~pl.col("start_time").is_null()) & (~pl.col("start_time").is_nan())
                 )
                 .with_columns(
                     (
                         (
-                            (pl.col("start_time") - pl.col("departure_time"))
+                            (
+                                pl.col("start_time")
+                                - pl.col("departure_time")
+                                + pl.col("shape_time_traveled")
+                            )
                             / pl.col("headway_secs")
                         ).ceil()
                         * pl.col("headway_secs")
@@ -426,32 +453,46 @@ class Feed:
                     [
                         pl.int_ranges(
                             pl.col("aligned_start"),
-                            pl.col("end_time") + 1,
+                            pl.col("end_time") + 1 + pl.col("shape_time_traveled"),
                             pl.col("headway_secs"),
-                        ).alias("delta_time")
+                        ).alias("new_departure_time")
                     ]
                 )
-                .explode("delta_time")
-                .filter(pl.col("departure_time") != pl.col("delta_time"))
-            )
-
-            gtfs_lf = (
-                gtfs_lf.join(
-                    delta_times.select(["trip_id", "delta_time"]),
-                    on="trip_id",
-                    how="left",
-                )
-                .with_columns(pl.col("delta_time").fill_null(pl.col("departure_time")))
+                .explode("new_departure_time")
                 .with_columns(
-                    (
-                        pl.col("arrival_time")
-                        - pl.col("departure_time")
-                        + pl.col("delta_time")
-                    ).alias("arrival_time"),
-                    (pl.col("delta_time")).alias("departure_time"),
+                    pl.concat_str(
+                        [
+                            pl.col("trip_id"),
+                            pl.lit("_"),
+                            (
+                                (
+                                    pl.col("new_departure_time")
+                                    - pl.col("start_time")
+                                    - pl.col("shape_time_traveled")
+                                )
+                                / pl.col("headway_secs")
+                            )
+                            .ceil()
+                            .cast(int),
+                        ]
+                    ).alias("trip_id")
                 )
-                .drop("delta_time")
-            )
+            ).drop("aligned_start")
+
+            gtfs_lf_times = gtfs_lf.filter(
+                (pl.col("start_time").is_null()) | (pl.col("start_time").is_nan())
+            ).with_columns(pl.col("departure_time").alias("new_departure_time"))
+
+            gtfs_lf = pl.concat([gtfs_lf_frequencies, gtfs_lf_times])
+
+            gtfs_lf = gtfs_lf.with_columns(
+                (
+                    pl.col("arrival_time")
+                    - pl.col("departure_time")
+                    + pl.col("new_departure_time")
+                ).alias("arrival_time"),
+                (pl.col("new_departure_time")).alias("departure_time"),
+            ).drop("new_departure_time")
 
             gtfs_lf = gtfs_lf.with_columns(
                 pl.lit(None).alias("start_time"),
@@ -557,8 +598,8 @@ class Feed:
                 pl.col("start_time").is_null()
                 | pl.col("start_time").is_nan()
                 | (
-                    (pl.col("start_time") >= start_time)
-                    & (pl.col("end_time") <= end_time)
+                    (pl.col("end_time") > start_time)
+                    & (pl.col("start_time") < end_time)
                 )
             )
             # For non-frequency trips, filter by explicit departure/arrival times.
@@ -701,6 +742,7 @@ class Feed:
         date: Optional[datetime | date],
         start_time: datetime | time = time.min,
         end_time: datetime | time = time.max,
+        on: str = "parent_station",
         method: str = "route",
         n_divisions: int = 1,
     ) -> pl.LazyFrame:
@@ -736,9 +778,9 @@ class Feed:
         Returns:
             A Polars LazyFrame with mean interval calculations. The schema depends
             on the chosen `method`:
-            - 'route': ["stop_id", "route_id", "direction_id", "mean_interval", ...]
-            - 'max': ["stop_id", "route_id", "direction_id", "mean_interval", ...]
-            - 'agg': ["stop_id", "mean_interval", "shape_directions", "shape_ids", "route_ids"]
+            - 'route': ["parent_station", "route_id", "direction_id", "mean_interval", ...]
+            - 'max': ["parent_station", "route_id", "direction_id", "mean_interval", ...]
+            - 'agg': ["parent_station", "mean_interval", "shape_directions", "shape_ids", "route_ids"]
 
         Raises:
             ValueError: If an unimplemented `method` is provided.
@@ -752,8 +794,10 @@ class Feed:
                 f"Method '{method}' is not implemented. Choose from {valid_methods}."
             )
 
+        gtfs_lf = self.lf.drop_nulls(on)
+
         # Filter the GTFS data by the specified date and time window.
-        gtfs_lf: pl.LazyFrame = self.filter_by_date(self.lf, date)
+        gtfs_lf = self.filter_by_date(gtfs_lf, date)
 
         gtfs_lf = self.filter_by_time_range(gtfs_lf, start_time, end_time)
 
@@ -768,6 +812,7 @@ class Feed:
         gtfs_lf = gtfs_lf.filter(
             pl.col("shape_time_traveled") != pl.col("shape_total_travel_time")
         )
+
         gtfs_lf = gtfs_lf.collect().lazy()
         # Per-Route Interval Calculation ('route' and 'max' methods)
 
@@ -776,7 +821,7 @@ class Feed:
             # defined by a unique combination of stop, route, and direction.
             gtfs_lf = (
                 gtfs_lf.sort("departure_time")
-                .group_by(["stop_id", "route_id", "direction_id"])
+                .group_by([on, "route_id", "direction_id"])
                 .agg(
                     [
                         # Collect all departure times into a list for each service group.
@@ -814,7 +859,7 @@ class Feed:
         if method == "max":
             # For each stop, find the single service (route/direction) that has
             # the minimum mean interval (i.e., the highest frequency).
-            gtfs_lf = gtfs_lf.group_by("stop_id").agg(
+            gtfs_lf = gtfs_lf.group_by(on).agg(
                 [
                     # Find the minimum interval at the stop.
                     pl.col("route_id")
@@ -841,55 +886,67 @@ class Feed:
             # Create sectors for each direction and its opposite (e.g., N/S are one pair).
             # E.g., n_divisions=2 -> 4 sectors (N, E, S, W).
             n_sectors = n_divisions * 2
-
             # Bin services into directional sectors.
-            gtfs_lf = gtfs_lf.with_columns(
-                # Find the mean travel direction (in degrees) for all services at a stop.
-                # This serves as a reference angle to create consistent directional bins.
+            gtfs_lf = (
                 (
-                    ((pl.col("shape_direction").mean().over("stop_id") * 2 + 180) / 2)
-                    % 360
-                ).alias("mean_shape_direction")
-            )  # *2 + 180)/2 is to add reversed trip directions and ensure cropping in between two main directions even if the
-            # stop only has trips in one direction
+                    gtfs_lf.with_columns(
+                        # Find the mean travel direction (in degrees) for all services at a stop.
+                        # This serves as a reference angle to create consistent directional bins.
+                        (
+                            (
+                                (
+                                    pl.col("shape_direction")
+                                    .mean()
+                                    .over([on, "shape_id"])
+                                    * 2
+                                    + 180
+                                )
+                                / 2
+                            )
+                            % 180
+                            # *2 + 180)/2 is to add reversed trip directions and ensure
+                            # cropping in between two main directions even if the
+                            # stop only has trips in one direction
+                        ).alias("mean_shape_direction")
+                    )
+                )
+                .collect()
+                .lazy()
+            )
+
+            gtfs_lf = (
+                gtfs_lf.with_columns(
+                    pl.col("mean_shape_direction")
+                    .mean()
+                    .over(on)
+                    .alias("mean_shape_direction")
+                )
+                .with_columns(
+                    (
+                        (
+                            pl.col("shape_direction")
+                            - pl.col("mean_shape_direction")
+                            + 360
+                        )
+                        % 360
+                    ).alias("angle")
+                )
+                .with_columns(
+                    ((pl.col("angle") * n_sectors / 360).floor().cast(pl.Int32)).alias(
+                        "shape_direction_id"
+                    )
+                )
+                .drop("angle")
+            )
 
             # Assign each service to a directional sector ID (0 to n_sectors-1)
             # based on its angle relative to the stop's mean direction.
             # Build chained when/then expression
-            expr = None
-
-            for i in range(n_sectors):
-                start = (pl.col("mean_shape_direction") + i * 360 / n_sectors) % 360
-                end = (pl.col("mean_shape_direction") + (i + 1) * 360 / n_sectors) % 360
-
-                # Handle angular wrap-around (e.g., sector from 350° to 10°)
-                condition = (
-                    pl.when(start < end)
-                    .then(
-                        (pl.col("shape_direction") > start)
-                        & (pl.col("shape_direction") < end)
-                    )
-                    .otherwise(
-                        (pl.col("shape_direction") > start)
-                        | (pl.col("shape_direction") < end)
-                    )
-                )
-
-                if expr is None:
-                    expr = pl.when(condition).then(i)
-                else:
-                    expr = expr.when(condition).then(i)
-
-            # Add default (None) and alias only once
-            expr = expr.otherwise(None).alias("shape_direction_id")
-
-            # Apply with_columns using a list (even if it's just one)
-            gtfs_lf = gtfs_lf.with_columns([expr])
 
             # Calculate headway for each directional bin.
             gtfs_lf = (
                 gtfs_lf.sort("departure_time")
-                .group_by(["stop_id", "shape_direction_id"])
+                .group_by([on, "shape_direction_id"])
                 .agg(
                     [
                         pl.col("departure_time").sort().alias("departure_times"),
@@ -922,7 +979,7 @@ class Feed:
 
             # For each direction *group* (e.g., N/S), find the best headway.
             # This selects the best-performing service from a set of parallel services.
-            gtfs_lf = gtfs_lf.group_by(["stop_id", "shape_direction_group_id"]).agg(
+            gtfs_lf = gtfs_lf.group_by([on, "shape_direction_group_id"]).agg(
                 [
                     # Keep the details of the service with the minimum interval.
                     pl.col("shape_direction")
@@ -947,7 +1004,7 @@ class Feed:
             )
 
             # Combine the best headways from all direction groups for each stop.
-            gtfs_lf = gtfs_lf.group_by("stop_id").agg(
+            gtfs_lf = gtfs_lf.group_by(on).agg(
                 [
                     # The combined headway is the harmonic mean of the individual best headways.
                     # Formula: 1 / (1/H_1 + 1/H_2 + ...), where H_i is the headway.
