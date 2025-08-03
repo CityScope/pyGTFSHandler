@@ -163,11 +163,9 @@ class StopTimes:
                 self.frequencies, trips
             )
             self.frequencies = self.frequencies.collect().lazy()
+            self.frequencies = self._frequencies_midnight_crossing(self.frequencies)
             self.lf, self.frequencies = self.__check_frequencies_in_stop_times(
                 self.lf, self.frequencies
-            )
-            self.frequencies, self.lf = self._frequencies_midnight_crossing(
-                self.frequencies, self.lf
             )
 
             self.lf = self.lf.collect().lazy()
@@ -635,34 +633,63 @@ class StopTimes:
         return frequencies.select(cols)
 
     def __check_frequencies_in_stop_times(self, stop_times, frequencies):
-        # Select relevant columns
-        freq_trips = frequencies.select("trip_id", "gtfs_name")
-        stop_trips = stop_times.select("trip_id", "gtfs_name")
-
-        # Inner join to get matching trip_id and gtfs_name
-        inner_joined = freq_trips.join(
-            stop_trips, on=["trip_id", "gtfs_name"], how="semi"
-        ).select("trip_id")
-
-        # Outer join on gtfs_name to include unmatched trip_ids
-        outer_joined = stop_trips.join(
-            freq_trips.select("gtfs_name"), on="gtfs_name", how="anti"
-        ).select("trip_id")
-
-        # Combine results and extract unique trip_ids
-        unique_trip_ids = pl.concat([inner_joined, outer_joined])
-
         frequencies = frequencies.join(
-            unique_trip_ids,
-            on="trip_id",
+            stop_times,
+            left_on="orig_trip_id",
+            right_on="trip_id",
             how="semi",
         )
 
-        stop_times = stop_times.join(
-            unique_trip_ids,
-            on="trip_id",
-            how="semi",
+        stop_times_cols = stop_times.collect_schema().names()
+
+        # Build frequencies with orig_trip_id and suffixed trip_id if duplicated
+        frequencies = (
+            frequencies.with_columns(
+                [
+                    pl.col("trip_id").count().over("trip_id").alias("trip_count"),
+                    pl.col("trip_id").cum_count().over("trip_id").alias("suffix_index"),
+                ]
+            )
+            .with_columns(
+                [
+                    pl.when(pl.col("trip_count") == 1)
+                    .then(pl.col("trip_id"))
+                    .otherwise(
+                        pl.col("trip_id")
+                        + "_frequency_"
+                        + pl.col("suffix_index").cast(str)
+                    )
+                    .alias("trip_id")
+                ]
+            )
+            .drop(["trip_count", "suffix_index"])
         )
+
+        # Split stop_times:
+        # 1. Those with trip_ids in frequencies (to be duplicated)
+        # 2. Those without (to be preserved)
+
+        # Join and replicate matching stop_times
+        stop_times_matched = frequencies.join(
+            stop_times.with_columns(pl.col("trip_id").alias("orig_trip_id")),
+            on="orig_trip_id",
+            how="inner",
+        ).select(stop_times_cols + ["orig_trip_id"])
+
+        # Preserve unmatched stop_times
+        stop_times_unmatched = (
+            stop_times.join(
+                frequencies.select("orig_trip_id").unique(),
+                left_on="trip_id",
+                right_on="orig_trip_id",
+                how="anti",
+            )
+            .with_columns([pl.col("trip_id").alias("orig_trip_id")])
+            .select(stop_times_cols + ["orig_trip_id"])
+        )
+
+        # Final stop_times = matched + unmatched
+        stop_times = pl.concat([stop_times_matched, stop_times_unmatched])
 
         return stop_times, frequencies
 
@@ -703,9 +730,7 @@ class StopTimes:
 
         return frequencies
 
-    def _frequencies_midnight_crossing(
-        self, frequencies: pl.LazyFrame, stop_times: pl.LazyFrame
-    ) -> pl.LazyFrame:
+    def _frequencies_midnight_crossing(self, frequencies: pl.LazyFrame) -> pl.LazyFrame:
         """
         Handles frequency entries that span midnight.
 
@@ -781,28 +806,7 @@ class StopTimes:
 
         frequencies = pl.concat([normal_rows, duplicated_rows], how="vertical_relaxed")
 
-        # Get the mapping of new trip_ids to original template trip_ids.
-        unique_trip_ids: pl.LazyFrame = pl.concat(
-            [
-                frequencies.select(["trip_id", "orig_trip_id"]),
-                stop_times.select("trip_id").with_columns(
-                    pl.col("trip_id").alias("orig_trip_id")
-                ),
-            ]
-        ).unique()
-
-        # Join the trips table with this mapping. This duplicates the original
-        # trip's data (route_id, service_id, etc.) for each new generated trip_id.
-        stop_times = stop_times.rename(
-            {"trip_id": "orig_trip_id"}
-        ).join(
-            unique_trip_ids,
-            left_on="orig_trip_id",
-            right_on="orig_trip_id",
-            how="right",  # right join ensures all new trip_ids from stop_times are included.
-        )
-
-        return frequencies, stop_times
+        return frequencies
 
     def _add_frequencies_n_trips(self, frequencies: pl.LazyFrame) -> pl.LazyFrame:
         """
@@ -891,11 +895,6 @@ class StopTimes:
                 )
             ]
         )
-
-        if "orig_trip_id" not in stop_times.collect_schema().names():
-            stop_times = stop_times.with_columns(
-                pl.col("trip_id").alias("orig_trip_id")
-            )
 
         delta_times = midnight_frequencies.with_columns(
             [
