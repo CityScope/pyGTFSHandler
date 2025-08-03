@@ -8,7 +8,7 @@ import requests
 import pycountry
 from difflib import get_close_matches
 import warnings
-import pygeohash
+# import pygeohash
 
 EPOCH = date(1970, 1, 1)
 
@@ -341,39 +341,39 @@ def get_holidays(year, country_code, subdivision_code=None):
     return df
 
 
-def geohash(
-    df: pl.DataFrame, lat_col: str, lon_col: str, precision: int = 7
-) -> pl.DataFrame:
-    """
-    Add a geohash column to a Polars DataFrame based on latitude and longitude columns.
+# def geohash(
+#     df: pl.DataFrame, lat_col: str, lon_col: str, precision: int = 7
+# ) -> pl.DataFrame:
+#     """
+#     Add a geohash column to a Polars DataFrame based on latitude and longitude columns.
 
-    Parameters
-    ----------
-    df : pl.DataFrame
-        The input Polars DataFrame containing latitude and longitude data.
-    lat_col : str
-        The name of the latitude column in the DataFrame.
-    lon_col : str
-        The name of the longitude column in the DataFrame.
-    precision : int, optional
-        The precision (length) of the geohash string. Default is 7.
+#     Parameters
+#     ----------
+#     df : pl.DataFrame
+#         The input Polars DataFrame containing latitude and longitude data.
+#     lat_col : str
+#         The name of the latitude column in the DataFrame.
+#     lon_col : str
+#         The name of the longitude column in the DataFrame.
+#     precision : int, optional
+#         The precision (length) of the geohash string. Default is 7.
 
-    Returns
-    -------
-    pl.DataFrame
-        A new DataFrame with an additional 'geohash' column containing geohash strings.
-    """
-    df = df.with_columns(
-        pl.struct([lat_col, lon_col])
-        .map_elements(
-            lambda point: pygeohash.encode(
-                point[lat_col], point[lon_col], precision=precision
-            ),
-            return_dtype=pl.String,
-        )
-        .alias("geohash")
-    )
-    return df
+#     Returns
+#     -------
+#     pl.DataFrame
+#         A new DataFrame with an additional 'geohash' column containing geohash strings.
+#     """
+#     df = df.with_columns(
+#         pl.struct([lat_col, lon_col])
+#         .map_elements(
+#             lambda point: pygeohash.encode(
+#                 point[lat_col], point[lon_col], precision=precision
+#             ),
+#             return_dtype=pl.String,
+#         )
+#         .alias("geohash")
+#     )
+#     return df
 
 
 def normalize_route_type(route_type):
