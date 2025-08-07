@@ -1,0 +1,2 @@
+service_id,date,exception_type
+WEEK,20240512,1

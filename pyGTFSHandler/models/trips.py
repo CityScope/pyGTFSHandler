@@ -1,7 +1,7 @@
 from pathlib import Path
 import polars as pl
 from typing import Optional, List, Union
-from utils import read_csv_list, get_df_schema_dict
+from ..utils import read_csv_list, get_df_schema_dict
 
 
 class Trips:

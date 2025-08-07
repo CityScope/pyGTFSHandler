@@ -2,7 +2,7 @@
 import polars as pl
 from pathlib import Path
 from typing import Union, List, Tuple, Optional, Dict
-import utils
+from .. import utils
 from datetime import datetime, time
 import warnings
 

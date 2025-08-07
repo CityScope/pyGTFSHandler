@@ -1,0 +1,4 @@
+shape_id,shape_pt_lat,shape_pt_lon,shape_pt_sequence,shape_dist_traveled
+S2,40.0,-3.7,1,0.0
+S2,40.01,-3.71,2,0.5
+S2,40.02,-3.72,3,1.0

@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, date
 from typing import Tuple
 
 import polars as pl
-import utils
+from .. import utils
 
 from typing import Union, Optional, List
 from pathlib import Path
@@ -12,12 +12,12 @@ class Calendar:
     def __init__(
         self,
         path: Union[str, Path, List[str], List[Path]],
-        start_date: datetime | date = None,
-        end_date: datetime | date = None,
-        date_type: list[str] | str = None,
-        lon: float = None,
-        lat: float = None,
-        service_ids: Optional[List[str]] = None,
+        start_date: datetime | date | None = None,
+        end_date: datetime | date | None = None,
+        date_type: list[str] | str | None = None,
+        lon: float | None = None,
+        lat: float | None = None,
+        service_ids: Optional[List[str]] | None = None,
     ):
         """
         A class to manage GTFS calendar data, allowing filtering of active services
@@ -39,6 +39,11 @@ class Calendar:
             paths = [Path(path)]
         else:
             paths = [Path(p) for p in path]
+        
+        if isinstance(start_date, datetime):
+            start_date = start_date.date()
+        if isinstance(end_date, datetime):
+            end_date = end_date.date()
 
         if service_ids:
             service_ids = [
@@ -50,7 +55,11 @@ class Calendar:
         self.min_date, self.max_date = self.__get_min_max_dates(
             self.lf, self.exceptions_lf
         )
-
+        if start_date is not None and start_date > self.min_date:
+            self.min_date = start_date
+        if end_date is not None and end_date < self.max_date:
+            self.max_date = end_date
+        
         if isinstance(start_date, datetime):
             start_date = start_date.date()
 

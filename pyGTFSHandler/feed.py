@@ -46,8 +46,8 @@ TODOs:
 - TODO If in a trip_id a stop_id is repeated divide it into 2 trip ids check if this is really needed
 """
 
-from models import StopTimes, Stops, Trips, Calendar, Routes, Shapes
-import utils
+from .models import StopTimes, Stops, Trips, Calendar, Routes, Shapes
+from . import utils
 
 from pathlib import Path
 from datetime import datetime, time, date
