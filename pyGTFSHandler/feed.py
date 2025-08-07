@@ -669,11 +669,24 @@ class Feed:
 
         return data
 
+    def filter_by_route_type(
+        self, data: pl.LazyFrame, route_types: list | int | str
+    ) -> pl.LazyFrame:
+        if isinstance(route_types, list):
+            route_types = [utils.normalize_route_type(i) for i in route_types]
+        else:
+            route_types = [utils.normalize_route_type(route_types)]
+
+        route_types_df = pl.DataFrame({"route_type": route_types})
+        data = data.join(route_types_df.lazy(), on="route_type", how="semi")
+        return data
+
     def get_service_intensity_in_date_range(
         self,
         start_date: Optional[datetime | date] = None,
         end_date: Optional[datetime | date] = None,
         date_type: Optional[str | list[str]] = None,
+        route_types: Optional[str | int | list[str] | list[int]] = None,
     ) -> pl.DataFrame:
         """
         Calculates the number of scheduled stop times per date within a given date range.
@@ -698,12 +711,17 @@ class Feed:
             lon=self.stops.mean_lon,
             lat=self.stops.mean_lat,
         )
+
+        gtfs_lf = self.lf
+        if route_types is not None:
+            gtfs_lf = self.filter_by_route_type(gtfs_lf, route_types=route_types)
+
         if self.stop_times.frequencies is None:
-            gtfs_lf: pl.LazyFrame = self.lf.unique(
+            gtfs_lf: pl.LazyFrame = gtfs_lf.unique(
                 ["service_id", "stop_id", "departure_time"]
             ).select("trip_id", "service_id", "n_trips")
         else:
-            gtfs_lf: pl.LazyFrame = self.lf.unique(
+            gtfs_lf: pl.LazyFrame = gtfs_lf.unique(
                 ["service_id", "stop_id", "departure_time", "start_time", "end_time"]
             ).select("trip_id", "service_id", "n_trips")
 
@@ -739,9 +757,10 @@ class Feed:
 
     def get_mean_intervall_at_stops(
         self,
-        date: Optional[datetime | date],
+        date: datetime | date,
         start_time: datetime | time = time.min,
         end_time: datetime | time = time.max,
+        route_types: list | int | str | None = None,
         on: str = "parent_station",
         method: str = "route",
         n_divisions: int = 1,
@@ -795,6 +814,9 @@ class Feed:
             )
 
         gtfs_lf = self.lf.drop_nulls(on)
+
+        if route_types is not None:
+            gtfs_lf = self.filter_by_route_type(gtfs_lf, route_types=route_types)
 
         # Filter the GTFS data by the specified date and time window.
         gtfs_lf = self.filter_by_date(gtfs_lf, date)
