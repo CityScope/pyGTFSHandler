@@ -1,0 +1,9 @@
+stop_id,stop_name,stop_lat,stop_lon
+# Outbound stops (e.g., on the west side of the street)
+central_out,Central Station,40.7505,-73.9934
+market_out,Market St,40.7525,-73.9954
+westend_out,West End,40.7545,-73.9974
+# Inbound stops (e.g., on the east side of the street, slightly different location)
+central_in,Central Station,40.7505,-73.9933
+market_in,Market St,40.7525,-73.9953
+westend_in,West End,40.7545,-73.9973

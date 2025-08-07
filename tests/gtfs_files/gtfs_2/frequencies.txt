@@ -1,0 +1,5 @@
+trip_id,start_time,end_time,headway_secs
+# Outbound trips run every hour (3600s) from 9 AM until 12 PM
+trip_out_template,09:00:00,12:00:01,3600
+# Inbound trips run every hour (3600s) from 9:30 AM until 12:30 PM
+trip_in_template,09:30:00,12:30:01,3600

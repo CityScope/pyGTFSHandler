@@ -1,0 +1,29 @@
+ trip_id,arrival_time,departure_time,stop_id , stop_sequence
+
+# Outbound Trips (Central -> West End)
+trip_out_0900,9:00:00,09:00:00,central,1
+trip_out_0900, 9:05:00,09:05:00,market,2 
+trip_out_0900, 09:10:00,09:10:00 ,westend, 3
+trip_out_1000,10:00:00,10:00:00,central,1
+trip_out_1000,10:05:00,10:05:00,market,2
+
+trip_out_1000,10:10:00,10:10:00,westend,3
+trip_out_1100,11:00:00,11:00:00,  central,1
+trip_out_1100,11:05:00,11:05:00,market,2
+trip_out_1100,11:10:00,11:10:00,westend,3
+trip_out_1200,12:00:00,12:00:00,central,1
+trip_out_1200,12:05:00,12:05:00,market,2
+trip_out_1200,12:10:00,12:10:00,westend,3
+# Inbound Trips (West End -> Central)
+trip_in_0930,09:30:00,09:30:00,westend,1
+trip_in_0930,09:35:00,09:35:00,market,2
+trip_in_0930,09:40:00,09:40:00,central,3
+trip_in_1030,10:30:00,10:30:00,westend,1
+trip_in_1030,10:35:00,10:35:00,market,2
+trip_in_1030,10:40:00,10:40:00,central,3
+trip_in_1130,11:30:00,11:30:00,westend,1
+trip_in_1130,11:35:00,11:35:00,market,2
+trip_in_1130,11:40:00,11:40:00,central,3
+trip_in_1230,12:30:00,12:30:00,westend,1
+trip_in_1230,12:35:00,12:35:00,market,2
+trip_in_1230,12:40:00,12:40:00,central,3

@@ -1,0 +1,9 @@
+trip_id,arrival_time,departure_time,stop_id,stop_sequence
+# Stop times for the outbound template trip
+trip_out_template,00:00:00,00:00:00,central_out,1
+trip_out_template,0:05:00,00:05:00,market_out,2
+trip_out_template,00:10:00,00:10:00,westend_out,3
+# Stop times for the inbound template trip
+trip_in_template,00:00:00,00:00:00,westend_in,1
+trip_in_template,00:05:00,00:05:00,market_in,2
+trip_in_template,00:10:00,00:10:00,central_in,3

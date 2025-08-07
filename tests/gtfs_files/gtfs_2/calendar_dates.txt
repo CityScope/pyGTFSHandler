@@ -1,0 +1,2 @@
+service_id,date,exception_type
+ALL_DAYS,20241225,2

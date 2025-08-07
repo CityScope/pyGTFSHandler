@@ -1,0 +1,5 @@
+stop_id,stop_name,stop_lat,stop_lon
+central,Central Station,40.7505,-73.9934
+market,Market St,40.7525,-73.9954
+westend,West End,40.7545,-73.9974
+

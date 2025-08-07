@@ -1,0 +1,11 @@
+route_id,service_id,trip_id,trip_headsign,direction_id
+R55,ALL_DAYS,trip_out_0900,To West End,0
+R55,ALL_DAYS,trip_out_1000,To West End,0
+R55,ALL_DAYS,trip_out_1100,To West End,0
+R55,ALL_DAYS,trip_out_1200,To West End,0
+R55,ALL_DAYS,trip_in_0930,To Central Station,1
+R55,ALL_DAYS,trip_in_1030,To Central Station,1
+R55,ALL_DAYS,trip_in_1130,To Central Station,1
+R55,ALL_DAYS,trip_in_1230,To Central Station,1
+
+    
