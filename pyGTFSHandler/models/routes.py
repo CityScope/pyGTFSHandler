@@ -1,7 +1,8 @@
 from pathlib import Path
 import polars as pl
 from typing import Optional, List, Union
-from ..utils import read_csv_list, get_df_schema_dict
+from .. import utils
+import os
 
 """
 TODO: LLM prompt like this for route type 3
@@ -22,7 +23,7 @@ class Routes:
     def __init__(
         self,
         path: Union[str, Path, List[Union[str, Path]]],
-        route_ids: Optional[List[str]] = None,
+        route_ids: Optional[List[str] | pl.LazyFrame | pl.DataFrame] = None,
         route_types: Optional[List[int]] = None,
     ):
         """
@@ -38,7 +39,7 @@ class Routes:
             paths = [Path(p) for p in path]
 
         self.lf = self.__read_routes(paths, route_ids, route_types)
-        if route_ids or route_types:
+        if (route_ids is not None) or (route_types is not None):
             self.route_ids = (
                 self.lf.select("route_id").unique().collect()["route_id"].to_list()
             )
@@ -57,21 +58,28 @@ class Routes:
         Returns:
             pl.LazyFrame: Filtered routes data as a LazyFrame.
         """
-        route_paths = [p / "routes.txt" for p in paths if (p / "routes.txt").exists()]
-        if not route_paths:
-            raise FileNotFoundError(
-                "No routes.txt files found in the provided path(s)."
-            )
+        route_paths = [p / "routes.txt" for p in paths]
 
-        schema_dict = get_df_schema_dict(route_paths[0])
-        routes = read_csv_list(route_paths, schema_overrides=schema_dict)
+        for p in route_paths:
+            if not os.path.isfile(p):
+                raise FileNotFoundError(f"File {p} does not exist")
 
-        if route_ids:
-            route_ids_df = pl.DataFrame({"route_id": route_ids})
-            routes = routes.join(route_ids_df.lazy(), on="route_id", how="semi")
+        schema_dict = utils.get_df_schema_dict(route_paths[0])
+        routes = utils.read_csv_list(route_paths, schema_overrides=schema_dict)
 
-        if route_types:
-            route_types_df = pl.DataFrame({"route_type": route_types})
-            routes = routes.join(route_types_df.lazy(), on="route_type", how="semi")
+        if route_ids is not None:
+            if isinstance(route_ids, list):
+                route_ids_df = pl.LazyFrame({"route_id": route_ids})
+                routes = routes.join(route_ids_df, on="route_id", how="semi")
+            else:
+                if isinstance(route_ids, pl.DataFrame):
+                    route_ids = route_ids.lazy()
+
+                columns = route_ids.collect_schema().names()
+                routes = routes.join(route_ids, on=columns, how="semi")
+
+        if route_types is not None:
+            route_types_df = pl.LazyFrame({"route_type": route_types})
+            routes = routes.join(route_types_df, on="route_type", how="semi")
 
         return routes

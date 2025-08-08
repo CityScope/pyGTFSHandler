@@ -37,6 +37,9 @@ The `Feed` class acts as a high-level container that:
 The final result is a powerful `Feed` object that holds a clean, integrated, and
 analysis-ready representation of the entire GTFS schedule.
 
+
+Columns that might have duplicates between gtfs files: stop_id, route_id
+Columns that autoresolve duplicates between gtfs files: trip_id, service_id, shape_id
 TODOs:
 - TODO avoid performing non necesary checks at the begining. Do first all the filters and then the checks.
 - TODO check that all trips have a route and if not generate it.
@@ -164,7 +167,7 @@ class Feed:
             self.gtfs_dir,
             service_ids=self.calendar.service_ids,
             trip_ids=trip_ids,
-            route_ids=self.routes.route_ids,
+            route_ids=self.routes.lf.select(["route_id", "file_id"]),
         )
 
         self.stop_times = StopTimes(
@@ -172,10 +175,16 @@ class Feed:
             trips=self.trips.lf,
             start_time=start_time,
             end_time=end_time,
-            stop_ids=self.stops.stop_ids,
+            stop_ids=self.stops.lf.select(["stop_id", "file_id"]),
             trip_ids=self.trips.trip_ids,
         )
         self.trips.lf = self.stop_times.trips_lf
+
+        # Reload stops_lf so that at least in the lf the next stop of bordering trips is loaded
+
+        self.stops.reload_stops_lf(
+            self.gtfs_dir, self.stop_times.lf.select("stop_id", "file_id")
+        )
 
         # --- 3. Integrate Generated Trips from Frequencies ---
         # If StopTimes generated new trips from frequencies.txt, we need to add them
@@ -200,6 +209,8 @@ class Feed:
                 "shape_total_travel_time",
                 "next_day",
                 "fixed_time",  # Keep this flag for advanced interpolation
+                "gtfs_name",
+                "file_id",
             ]
         )
 
@@ -245,15 +256,16 @@ class Feed:
             how="left",
         )
         self.lf = self.lf.join(
-            self.trip_shape_ids_lf.select(["trip_ids", "shape_id"]).explode("trip_ids"),
-            left_on="trip_id",
-            right_on="trip_ids",
+            self.trip_shape_ids_lf.select(["trip_ids", "shape_id"])
+            .explode("trip_ids")
+            .rename({"trip_ids": "trip_id"}),
+            on="trip_id",
             how="left",
         )
 
         self.lf = self.lf.join(
-            self.stops.lf.select(["stop_id", "parent_station"]),
-            on="stop_id",
+            self.stops.lf.select(["stop_id", "parent_station", "file_id"]),
+            on=["stop_id", "file_id"],
             how="left",
         )
 
@@ -286,7 +298,9 @@ class Feed:
         self.lf = self.lf.drop("prev_parent_station")
 
         self.lf = self.lf.join(
-            self.routes.lf.select(["route_id", "route_type"]), on="route_id", how="left"
+            self.routes.lf.select(["route_id", "route_type", "file_id"]),
+            on=["route_id", "file_id"],
+            how="left",
         )
 
         self.lf = self.lf.join(
@@ -806,6 +820,11 @@ class Feed:
         """
         # --- 1. Pre-computation and Filtering ---
 
+        if on == "stop_id":
+            on = ["stop_id", "gtfs_name"]  # to avoid duplicated stop ids
+        else:
+            on = [on]
+
         # Fail early for invalid methods.
         valid_methods = ["route", "max", "agg"]
         if method not in valid_methods:
@@ -843,7 +862,7 @@ class Feed:
             # defined by a unique combination of stop, route, and direction.
             gtfs_lf = (
                 gtfs_lf.sort("departure_time")
-                .group_by([on, "route_id", "direction_id"])
+                .group_by([*on, "route_id", "direction_id"])
                 .agg(
                     [
                         # Collect all departure times into a list for each service group.
@@ -919,7 +938,7 @@ class Feed:
                                 (
                                     pl.col("shape_direction")
                                     .mean()
-                                    .over([on, "shape_id"])
+                                    .over([*on, "shape_id"])
                                     * 2
                                     + 180
                                 )
@@ -968,7 +987,7 @@ class Feed:
             # Calculate headway for each directional bin.
             gtfs_lf = (
                 gtfs_lf.sort("departure_time")
-                .group_by([on, "shape_direction_id"])
+                .group_by([*on, "shape_direction_id"])
                 .agg(
                     [
                         pl.col("departure_time").sort().alias("departure_times"),
@@ -1001,7 +1020,7 @@ class Feed:
 
             # For each direction *group* (e.g., N/S), find the best headway.
             # This selects the best-performing service from a set of parallel services.
-            gtfs_lf = gtfs_lf.group_by([on, "shape_direction_group_id"]).agg(
+            gtfs_lf = gtfs_lf.group_by([*on, "shape_direction_group_id"]).agg(
                 [
                     # Keep the details of the service with the minimum interval.
                     pl.col("shape_direction")

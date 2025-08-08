@@ -10,6 +10,8 @@ from difflib import get_close_matches
 import warnings
 # import pygeohash
 
+"TODO: if filter_by_id_column ids come with file_number then filter by file_number too and if not dont and allow mix in the same list"
+
 EPOCH = date(1970, 1, 1)
 
 
@@ -99,7 +101,9 @@ def get_df_schema_dict(path) -> dict:
     return schema_dict
 
 
-def read_csv_lazy(path: str, schema_overrides: dict = None) -> pl.LazyFrame:
+def read_csv_lazy(
+    path: str, schema_overrides: dict | None = None, file_id: int | None = None
+) -> pl.LazyFrame | None:
     """
     Lazily reads a CSV file into a Polars LazyFrame with optional schema overrides and column filtering.
 
@@ -120,6 +124,9 @@ def read_csv_lazy(path: str, schema_overrides: dict = None) -> pl.LazyFrame:
             A lazily loaded Polars LazyFrame with applied schema overrides and a new column `gtfs_name`
             containing the GTFS directory name inferred from the path.
     """
+    if not os.path.isfile(path):
+        return None
+
     # Lazily scan CSV with optional column selection
     lf = pl.scan_csv(path, infer_schema=False)
 
@@ -136,7 +143,9 @@ def read_csv_lazy(path: str, schema_overrides: dict = None) -> pl.LazyFrame:
     gtfs_name = os.path.basename(os.path.dirname(path))
 
     # Add gtfs_name as a literal column
-    lf = lf.with_columns(pl.lit(gtfs_name).alias("gtfs_name"))
+    lf = lf.with_columns(
+        pl.lit(gtfs_name).alias("gtfs_name"), pl.lit(file_id).alias("file_id")
+    )
 
     return lf
 
@@ -164,8 +173,22 @@ def read_csv_list(
         pl.LazyFrame
             A concatenated LazyFrame of all input files, using `how='diagonal_relaxed'` to handle differing schemas.
     """
+    file_lfs = [
+        res
+        for i in range(len(path_list))
+        if (
+            res := read_csv_lazy(
+                path_list[i], schema_overrides=schema_overrides, file_id=i
+            )
+        )
+        is not None
+    ]
+
+    if len(file_lfs) == 0:
+        return None
+
     return pl.concat(
-        [read_csv_lazy(path, schema_overrides=schema_overrides) for path in path_list],
+        file_lfs,
         how="diagonal_relaxed",
     )
 
@@ -419,3 +442,22 @@ def normalize_route_type(route_type):
         )
 
     return route_type
+
+
+def filter_by_id_column(lf, column, ids: list | None = []):
+    if ids is None:
+        ids = []
+
+    if lf is None:
+        return None
+
+    if len(ids) > 0:
+        ids_df = pl.LazyFrame({column: ids}).with_columns(
+            pl.col(column).str.replace(r"_file_\d+", "").alias(column)
+        )
+        lf = lf.join(ids_df, on=column, how="semi")
+
+    lf = lf.with_columns(
+        (pl.col(column) + "_file_" + pl.col("file_id").cast(pl.Utf8)).alias(column)
+    )
+    return lf

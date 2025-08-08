@@ -1,7 +1,8 @@
 from pathlib import Path
 import polars as pl
 from typing import Optional, List, Union
-from ..utils import read_csv_list, get_df_schema_dict
+from .. import utils
+import os
 
 
 class Trips:
@@ -18,7 +19,7 @@ class Trips:
         path: Union[str, Path, List[Union[str, Path]]],
         service_ids: Optional[List[str]] = None,
         trip_ids: Optional[List[str]] = None,
-        route_ids: Optional[List[str]] = None,
+        route_ids: Optional[List[str] | pl.LazyFrame | pl.DataFrame] = None,
     ):
         """
         Initializes the Trips class by reading and filtering the trips data.
@@ -34,13 +35,13 @@ class Trips:
         else:
             self.paths = [Path(p) for p in path]
 
-        if service_ids:
+        if service_ids is not None:
             service_ids = [
                 sid[:-6] if sid.endswith("_night") else sid for sid in service_ids
             ]
 
         self.lf = self.__read_trips(service_ids, trip_ids, route_ids)
-        if service_ids or route_ids:
+        if (service_ids is not None) or (route_ids is not None):
             self.trip_ids = (
                 self.lf.select("trip_id").unique().collect()["trip_id"].to_list()
             )
@@ -64,23 +65,25 @@ class Trips:
         Returns:
             pl.LazyFrame: Filtered trips data as a LazyFrame including duplicated night trips.
         """
-        trip_paths = [p / "trips.txt" for p in self.paths if (p / "trips.txt").exists()]
-        if not trip_paths:
-            raise FileNotFoundError("No trips.txt files found in the provided path(s).")
+        trip_paths = [p / "trips.txt" for p in self.paths]
+        for p in trip_paths:
+            if not os.path.isfile(p):
+                raise FileNotFoundError(f"File {p} does not exist")
 
-        schema_dict = get_df_schema_dict(trip_paths[0])
-        trips = read_csv_list(trip_paths, schema_overrides=schema_dict)
+        schema_dict = utils.get_df_schema_dict(trip_paths[0])
+        trips = utils.read_csv_list(trip_paths, schema_overrides=schema_dict)
 
-        if service_ids:
-            service_ids_df = pl.DataFrame({"service_id": service_ids})
-            trips = trips.join(service_ids_df.lazy(), on="service_id", how="semi")
+        trips = utils.filter_by_id_column(trips, "service_id", service_ids)
+        trips = utils.filter_by_id_column(trips, "trip_id", trip_ids)
+        if route_ids is not None:
+            if isinstance(route_ids, list):
+                route_ids_df = pl.LazyFrame({"route_id": route_ids})
+                trips = trips.join(route_ids_df, on="route_id", how="semi")
+            else:
+                if isinstance(route_ids, pl.DataFrame):
+                    route_ids = route_ids.lazy()
 
-        if trip_ids:
-            trip_ids_df = pl.DataFrame({"trip_id": trip_ids})
-            trips = trips.join(trip_ids_df.lazy(), on="trip_id", how="semi")
-
-        if route_ids:
-            route_ids_df = pl.DataFrame({"route_id": route_ids})
-            trips = trips.join(route_ids_df.lazy(), on="route_id", how="semi")
+                columns = route_ids.collect_schema().names()
+                trips = trips.join(route_ids, on=columns, how="semi")
 
         return trips

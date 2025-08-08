@@ -39,7 +39,7 @@ class Calendar:
             paths = [Path(path)]
         else:
             paths = [Path(p) for p in path]
-        
+
         if isinstance(start_date, datetime):
             start_date = start_date.date()
         if isinstance(end_date, datetime):
@@ -59,7 +59,7 @@ class Calendar:
             self.min_date = start_date
         if end_date is not None and end_date < self.max_date:
             self.max_date = end_date
-        
+
         if isinstance(start_date, datetime):
             start_date = start_date.date()
 
@@ -116,33 +116,30 @@ class Calendar:
         Returns:
             Optional[pl.LazyFrame]: Filtered calendar data or None if no files found.
         """
-        calendar_paths = [
-            p / "calendar.txt" for p in paths if (p / "calendar.txt").exists()
-        ]
-        if not calendar_paths:
-            return None
+        calendar_paths = [p / "calendar.txt" for p in paths]
 
         schema_dict = utils.get_df_schema_dict(calendar_paths[0])  # assume same schema
         calendar = utils.read_csv_list(calendar_paths, schema_overrides=schema_dict)
 
-        if service_ids:
-            service_ids_df = pl.DataFrame({"service_id": service_ids})
-            calendar = calendar.join(service_ids_df.lazy(), on="service_id", how="semi")
+        if calendar is None:
+            return None
+
+        calendar = utils.filter_by_id_column(calendar, "service_id", service_ids)
 
         # Convert start_date and end_date (YYYYMMDD int) to days since year 1-01-01
         calendar = calendar.with_columns(
-            [
+            (
                 pl.col("start_date")
                 .cast(pl.Utf8)
                 .str.strptime(pl.Date, "%Y%m%d")
                 .dt.epoch(time_unit="d")  # days since 1970-01-01 (int)
-                .alias("start_date"),
+            ).alias("start_date"),
+            (
                 pl.col("end_date")
                 .cast(pl.Utf8)
                 .str.strptime(pl.Date, "%Y%m%d")
                 .dt.epoch(time_unit="d")
-                .alias("end_date"),
-            ]
+            ).alias("end_date"),
         )
 
         night_services = calendar.with_columns(
@@ -177,24 +174,19 @@ class Calendar:
         Returns:
             Optional[pl.LazyFrame]: Filtered calendar_dates data or None if no files found.
         """
-        calendar_dates_paths = [
-            p / "calendar_dates.txt"
-            for p in paths
-            if (p / "calendar_dates.txt").exists()
-        ]
-        if not calendar_dates_paths:
-            return None
+        calendar_dates_paths = [p / "calendar_dates.txt" for p in paths]
 
         schema_dict = utils.get_df_schema_dict(calendar_dates_paths[0])
         calendar_dates = utils.read_csv_list(
             calendar_dates_paths, schema_overrides=schema_dict
         )
 
-        if service_ids:
-            service_ids_df = pl.DataFrame({"service_id": service_ids})
-            calendar_dates = calendar_dates.join(
-                service_ids_df.lazy(), on="service_id", how="semi"
-            )
+        if calendar_dates is None:
+            return None
+
+        calendar_dates = utils.filter_by_id_column(
+            calendar_dates, "service_id", service_ids
+        )
 
         # Convert start_date and end_date (YYYYMMDD int) to days since year 1-01-01
         calendar_dates = calendar_dates.with_columns(

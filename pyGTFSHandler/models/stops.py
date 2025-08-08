@@ -2,7 +2,8 @@ import polars as pl
 import geopandas as gpd
 from pathlib import Path
 from typing import Union, List
-from ..utils import read_csv_list, get_df_schema_dict
+from .. import utils
+import os
 
 
 class Stops:
@@ -26,7 +27,7 @@ class Stops:
         path: Union[str, Path, List[Union[str, Path]]],
         aoi: Union[gpd.GeoDataFrame, gpd.GeoSeries, None] = None,
         stop_group_distance: float = 0,
-        stop_ids: Union[List[str], None] = None,
+        stop_ids: Union[List[str], pl.DataFrame | pl.LazyFrame] = None,
     ):
         """
         Initialize Stops instance and load GTFS stops from one or more files.
@@ -44,9 +45,15 @@ class Stops:
         self.lf = self.__read_stops(paths, stop_ids)
 
         if aoi is None:
-            df = self.lf.select(["stop_id", "stop_lat", "stop_lon"]).collect()
+            df = self.lf.select(
+                ["stop_id", "parent_station", "stop_lat", "stop_lon", "file_id"]
+            ).collect()
             self.gdf = gpd.GeoDataFrame(
-                {"stop_id": df["stop_id"]},
+                {
+                    "stop_id": df["stop_id"],
+                    "parent_station": df["parent_station"],
+                    "file_id": df["file_id"],
+                },
                 geometry=gpd.points_from_xy(df["stop_lon"], df["stop_lat"]),
                 crs="EPSG:4326",
             )
@@ -90,16 +97,26 @@ class Stops:
         Returns:
             pl.LazyFrame: Filtered and normalized stops LazyFrame.
         """
-        stop_paths = [p / "stops.txt" for p in paths if (p / "stops.txt").exists()]
-        if not stop_paths:
-            raise FileNotFoundError("No stops.txt files found in the provided path(s).")
+        stop_paths = [p / "stops.txt" for p in paths]
+        for p in stop_paths:
+            if not os.path.isfile(p):
+                raise FileNotFoundError(f"File {p} does not exist")
 
-        schema_dict = get_df_schema_dict(stop_paths[0])
-        lf = read_csv_list(stop_paths, schema_overrides=schema_dict)
+        schema_dict = utils.get_df_schema_dict(stop_paths[0])
+        lf = utils.read_csv_list(stop_paths, schema_overrides=schema_dict)
 
-        if stop_ids:
-            stop_ids_df = pl.LazyFrame({"stop_id": stop_ids})
-            lf = lf.join(stop_ids_df.lazy(), on="stop_id", how="semi")
+        if isinstance(stop_ids, list):
+            stop_ids_lf = pl.LazyFrame({"stop_id": stop_ids})
+
+            # Select matching stop_times with just needed columns
+            lf = lf.join(stop_ids_lf, on="stop_id", how="semi")
+        elif stop_ids is not None:
+            if isinstance(stop_ids, pl.DataFrame):
+                stop_ids = stop_ids.lazy()
+
+            columns = stop_ids.collect_schema().names()
+
+            lf = lf.join(stop_ids, on=columns, how="semi")
 
         if "parent_station" not in lf.collect_schema().names():
             lf = lf.with_columns(pl.lit(None).alias("parent_station"))
@@ -142,10 +159,16 @@ class Stops:
             & (pl.col("stop_lat") < maxy)
         )
 
-        df = filtered_lf.select(["stop_id", "stop_lat", "stop_lon"]).collect()
+        df = filtered_lf.select(
+            ["stop_id", "parent_station", "stop_lat", "stop_lon", "file_id"]
+        ).collect()
 
         gdf = gpd.GeoDataFrame(
-            {"stop_id": df["stop_id"]},
+            {
+                "stop_id": df["stop_id"],
+                "parent_station": df["parent_station"],
+                "file_id": df["file_id"],
+            },
             geometry=gpd.points_from_xy(df["stop_lon"], df["stop_lat"]),
             crs="EPSG:4326",
         )
@@ -156,8 +179,10 @@ class Stops:
         if gdf.empty:
             raise ValueError("No stops found inside AOI bounds")
 
-        stop_ids_df = pl.LazyFrame({"stop_id": gdf["stop_id"].to_list()})
-        final_lf = filtered_lf.join(stop_ids_df.lazy(), on="stop_id", how="semi")
+        stop_ids_df = pl.from_pandas(gdf[["stop_id", "file_id"]]).lazy()
+        final_lf = filtered_lf.join(
+            stop_ids_df.lazy(), on=["stop_id", "file_id"], how="semi"
+        )
 
         return final_lf, gdf
 
@@ -193,11 +218,12 @@ class Stops:
         )
 
         # This assumes parent_station info comes from self.lf (not self.gdf)
-        parent_station_df = self.lf.select(["stop_id", "parent_station"])
+        parent_station_df = self.lf.select(["stop_id", "parent_station", "file_id"])
+        stop_ids_df = pl.from_pandas(gdf[["stop_id", "file_id", "cluster"]]).lazy()
 
-        cluster_df = pl.LazyFrame(
-            {"stop_id": gdf["stop_id"].to_list(), "cluster": gdf["cluster"].to_list()}
-        ).join(parent_station_df, on="stop_id", how="left")
+        cluster_df = stop_ids_df.join(
+            parent_station_df, on=["stop_id", "file_id"], how="left"
+        )
 
         # Merge clusters with common parent_station
         cluster_df = cluster_df.join(
@@ -233,19 +259,96 @@ class Stops:
             .agg(
                 [
                     pl.col("stop_id"),
+                    pl.col("file_id"),
                     pl.col("fallback_id").first().alias("parent_station"),
                 ]
             )
-            .explode("stop_id")
-            .drop("final_cluster")
+            .with_columns(
+                pl.col("parent_station")
+                .cum_count()
+                .over("parent_station")
+                .alias("suffix_count"),
+                pl.col("parent_station").is_duplicated().alias("is_dup"),
+            )
+            .explode(["stop_id", "file_id"])
+            .with_columns(
+                (
+                    pl.when(pl.col("is_dup"))
+                    .then(
+                        pl.col("parent_station")
+                        + "_duplicated_"
+                        + pl.col("suffix_count").cast(pl.Utf8)
+                    )
+                    .otherwise(pl.col("parent_station"))
+                ).alias("parent_station")
+            )
+            .drop(["suffix_count", "is_dup", "final_cluster"])
         )
 
         cluster_df = cluster_df.collect()
 
         # Update gdf and lf
-        gdf = self.gdf.merge(cluster_df.to_pandas(), on="stop_id")
+        gdf = self.gdf.drop(columns=["parent_station"]).merge(
+            cluster_df.to_pandas(), on=["stop_id", "file_id"]
+        )
         lf = self.lf.drop("parent_station").join(
-            cluster_df.lazy(), on="stop_id", how="left"
+            cluster_df.lazy(), on=["stop_id", "file_id"], how="left"
         )
 
         return lf, gdf
+
+    def reload_stops_lf(self, path, stop_ids=None):
+        if isinstance(path, (str, Path)):
+            paths = [Path(path)]
+        else:
+            paths = [Path(p) for p in path]
+
+        stop_paths = [p / "stops.txt" for p in paths]
+
+        schema_dict = utils.get_df_schema_dict(stop_paths[0])
+        stops = utils.read_csv_list(stop_paths, schema_overrides=schema_dict)
+
+        if isinstance(stop_ids, list):
+            stop_ids_lf = pl.LazyFrame({"stop_id": stop_ids})
+
+            # Select matching stop_times with just needed columns
+            stops = stops.join(stop_ids_lf, on="stop_id", how="semi")
+        elif stop_ids is not None:
+            if isinstance(stop_ids, pl.DataFrame):
+                stop_ids = stop_ids.lazy()
+
+            columns = stop_ids.collect_schema().names()
+
+            stops = stops.join(stop_ids, on=columns, how="semi")
+
+        if "parent_station" in stops.collect_schema().names():
+            stops = stops.with_columns(
+                (
+                    pl.when(pl.col("parent_station").is_null())
+                    .then(pl.col("stop_id"))
+                    .otherwise(pl.col("parent_station"))
+                ).alias("parent_station")
+            )
+        else:
+            stops = stops.with_columns(pl.col("stop_id").alias("parent_station"))
+
+        stops = (
+            stops.join(
+                self.lf.select("stop_id", "parent_station", "file_id").rename(
+                    {"parent_station": "parent_station_right"}
+                ),
+                on=["stop_id", "file_id"],
+                how="left",
+            )
+            .with_columns(
+                (
+                    pl.when(pl.col("parent_station_right").is_null())
+                    .then(pl.col("parent_station"))
+                    .otherwise(pl.col("parent_station_right"))
+                ).alias("parent_station")
+            )
+            .drop("parent_station_right")
+        )
+
+        self.lf = stops
+        return None

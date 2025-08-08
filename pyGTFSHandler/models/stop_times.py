@@ -5,6 +5,7 @@ from typing import Union, List, Tuple, Optional, Dict
 from .. import utils
 from datetime import datetime, time
 import warnings
+import os
 
 """
 GTFS StopTimes Data Processing Module
@@ -109,7 +110,7 @@ class StopTimes:
         trips,
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
-        stop_ids: Optional[List[str]] = None,
+        stop_ids: Optional[List[str] | pl.DataFrame | pl.LazyFrame] = None,
         trip_ids: Optional[List[str]] = None,
     ):
         """
@@ -143,7 +144,7 @@ class StopTimes:
         self.lf, self.fixed_times = self.__fix_nulls_easy(self.lf)
         self.lf = self.__normalize_times(self.lf)
 
-        if stop_ids:
+        if stop_ids is not None:
             self.lf = self.__filter_by_stop_id(self.lf, stop_ids)
             self.lf = self.__correct_sequence(self.lf)
             self.lf = self.lf.collect().lazy()
@@ -267,11 +268,11 @@ class StopTimes:
         Raises:
             FileNotFoundError: If no `stop_times.txt` files are found in the given paths.
         """
-        stop_times_paths: List[Path] = [
-            p / "stop_times.txt" for p in paths if (p / "stop_times.txt").exists()
-        ]
-        if not stop_times_paths:
-            raise FileNotFoundError("No stop_times.txt files found in given paths.")
+        stop_times_paths: List[Path] = [p / "stop_times.txt" for p in paths]
+
+        for p in stop_times_paths:
+            if not os.path.isfile(p):
+                raise FileNotFoundError(f"File {p} does not exist")
 
         schema_dict: Dict[str, pl.DataType] = utils.get_df_schema_dict(
             stop_times_paths[0]
@@ -280,9 +281,7 @@ class StopTimes:
             stop_times_paths, schema_overrides=schema_dict
         )
 
-        if trip_ids:
-            trip_ids_df = pl.LazyFrame({"trip_id": trip_ids})
-            stop_times = stop_times.join(trip_ids_df, on="trip_id", how="semi")
+        stop_times = utils.filter_by_id_column(stop_times, "trip_id", trip_ids)
 
         stop_times = stop_times.with_columns(
             [
@@ -389,16 +388,25 @@ class StopTimes:
         )
         return stop_times
 
-    def __filter_by_stop_id(
-        self, stop_times: pl.LazyFrame, stop_ids: list[str]
-    ) -> pl.LazyFrame:
+    def __filter_by_stop_id(self, stop_times: pl.LazyFrame, stop_ids) -> pl.LazyFrame:
         # Create stop_ids as a lazy frame
-        stop_ids_lf = pl.LazyFrame({"stop_id": stop_ids})
 
-        # Select matching stop_times with just needed columns
-        stop_times_filter = stop_times.select(
-            ["trip_id", "stop_id", "stop_sequence"]
-        ).join(stop_ids_lf, on="stop_id", how="semi")
+        if isinstance(stop_ids, list):
+            stop_ids_lf = pl.LazyFrame({"stop_id": stop_ids})
+
+            # Select matching stop_times with just needed columns
+            stop_times_filter = stop_times.select(
+                ["trip_id", "stop_id", "stop_sequence"]
+            ).join(stop_ids_lf, on=["stop_id"], how="semi")
+        elif stop_ids is not None:
+            if isinstance(stop_ids, pl.DataFrame):
+                stop_ids = stop_ids.lazy()
+
+            columns = stop_ids.collect_schema().names()
+
+            stop_times_filter = stop_times.select(
+                ["trip_id", "stop_sequence", *columns]
+            ).join(stop_ids, on=columns, how="semi")
 
         # Use a window function to compute max(stop_sequence) per trip,
         # then increment it and keep only one row per trip
@@ -565,11 +573,7 @@ class StopTimes:
             Optional[pl.LazyFrame]: A LazyFrame of parsed frequencies,
                                     or None if no `frequencies.txt` file is found.
         """
-        frequencies_paths: List[Path] = [
-            p / "frequencies.txt" for p in paths if (p / "frequencies.txt").exists()
-        ]
-        if not frequencies_paths:
-            return None
+        frequencies_paths: List[Path] = [p / "frequencies.txt" for p in paths]
 
         schema_dict: Dict[str, pl.DataType] = utils.get_df_schema_dict(
             frequencies_paths[0]
@@ -578,9 +582,10 @@ class StopTimes:
             frequencies_paths, schema_overrides=schema_dict
         )
 
-        if trip_ids:
-            trip_ids_df = pl.LazyFrame({"trip_id": trip_ids})
-            frequencies = frequencies.join(trip_ids_df, on="trip_id", how="semi")
+        if frequencies is None:
+            return None
+
+        frequencies = utils.filter_by_id_column(frequencies, "trip_id", trip_ids)
 
         frequencies = frequencies.with_columns(
             [
@@ -1002,6 +1007,7 @@ class StopTimes:
             .group_by("trip_id")
             .agg(
                 [
+                    pl.col("file_id").first().alias("file_id"),
                     pl.col("stop_id").sort_by("stop_sequence").alias("stop_ids"),
                     pl.col("stop_sequence").sort().alias("stop_sequence"),
                     pl.col("shape_total_travel_time")
@@ -1017,7 +1023,7 @@ class StopTimes:
         )
 
         grouped = trip_sequences.group_by(
-            ["stop_ids", "shape_total_travel_time_rounded"]
+            ["stop_ids", "shape_total_travel_time_rounded", "file_id"]
         ).agg(
             [
                 pl.col("trip_id").unique().alias("trip_ids"),
