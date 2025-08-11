@@ -41,6 +41,8 @@ analysis-ready representation of the entire GTFS schedule.
 Columns that might have duplicates between gtfs files: stop_id, route_id
 Columns that autoresolve duplicates between gtfs files: trip_id, service_id, shape_id
 TODOs:
+- TODO when grouping by parent_station shape_direction should be what it is for the direction with the most remaining stops and the oposite for
+the direction with less remaining stops
 - TODO avoid performing non necesary checks at the begining. Do first all the filters and then the checks.
 - TODO check that all trips have a route and if not generate it.
 - TODO check that trips from stop_times have a trip in trips and same for stops
@@ -312,6 +314,7 @@ class Feed:
                     "shape_dist_traveled",
                     "shape_total_distance",
                     "shape_direction",
+                    "shape_direction_backwards",
                 ]
             ),
             on=["stop_id", "shape_id", "stop_sequence"],
@@ -832,7 +835,9 @@ class Feed:
                 f"Method '{method}' is not implemented. Choose from {valid_methods}."
             )
 
-        gtfs_lf = self.lf.drop_nulls(on)
+        gtfs_lf = self.lf.filter(
+            pl.col("stop_sequence") != pl.col("stop_sequence").max().over("trip_id")
+        )
 
         if route_types is not None:
             gtfs_lf = self.filter_by_route_type(gtfs_lf, route_types=route_types)
@@ -850,10 +855,6 @@ class Feed:
         start_time_sec = utils.time_to_seconds(start_time)
         end_time_sec = utils.time_to_seconds(end_time)
 
-        gtfs_lf = gtfs_lf.filter(
-            pl.col("shape_time_traveled") != pl.col("shape_total_travel_time")
-        )
-
         gtfs_lf = gtfs_lf.collect().lazy()
         # Per-Route Interval Calculation ('route' and 'max' methods)
 
@@ -868,14 +869,20 @@ class Feed:
                         # Collect all departure times into a list for each service group.
                         pl.col("departure_time").sort().alias("departure_times"),
                         # Get a representative direction (in degrees) for the service.
-                        pl.col("shape_direction").mean().alias("shape_direction"),
+                        utils.mean_angle("shape_direction").alias("shape_direction"),
+                        utils.mean_angle("shape_direction_backwards").alias(
+                            "shape_direction_backwards"
+                        ),
                         (
                             (pl.col("departure_time").min() - start_time_sec)
                             + (end_time_sec - pl.col("departure_time").max())
                         ).alias("initial_interval"),
                     ]
                 )
-                .with_columns(
+            )
+
+            gtfs_lf = (
+                gtfs_lf.with_columns(
                     # Calculate the harmonic mean of the intervals.
                     # Harmonic Mean = N / sum(1/x_i), where x_i are the intervals.
                     # This is the correct way to average rates (like service frequency).
@@ -927,28 +934,90 @@ class Feed:
             # Create sectors for each direction and its opposite (e.g., N/S are one pair).
             # E.g., n_divisions=2 -> 4 sectors (N, E, S, W).
             n_sectors = n_divisions * 2
-            # Bin services into directional sectors.
+            # Bin services into directional sectors.shape_direction_backwards
             gtfs_lf = (
-                (
-                    gtfs_lf.with_columns(
-                        # Find the mean travel direction (in degrees) for all services at a stop.
-                        # This serves as a reference angle to create consistent directional bins.
-                        (
+                gtfs_lf.with_columns(  # This ensures a separation between both shape directions of exactly 180º
+                    (
+                        pl.when(
                             (
                                 (
                                     pl.col("shape_direction")
-                                    .mean()
-                                    .over([*on, "shape_id"])
-                                    * 2
-                                    + 180
+                                    + 360
+                                    - pl.col("shape_direction_backwards")
                                 )
-                                / 2
+                                % 360
                             )
-                            % 180
-                            # *2 + 180)/2 is to add reversed trip directions and ensure
-                            # cropping in between two main directions even if the
-                            # stop only has trips in one direction
-                        ).alias("mean_shape_direction")
+                            > (
+                                (
+                                    pl.col("shape_direction_backwards")
+                                    + 360
+                                    - pl.col("shape_direction")
+                                )
+                                % 360
+                            )
+                        )
+                        .then(
+                            -1
+                            * (
+                                180
+                                - (
+                                    (
+                                        pl.col("shape_direction_backwards")
+                                        + 360
+                                        - pl.col("shape_direction")
+                                    )
+                                    % 360
+                                )
+                            )
+                            / 2
+                        )
+                        .otherwise(
+                            (
+                                180
+                                - (
+                                    (
+                                        pl.col("shape_direction")
+                                        + 360
+                                        - pl.col("shape_direction_backwards")
+                                    )
+                                    % 360
+                                )
+                            )
+                            / 2
+                        )
+                    ).alias("shape_diff")
+                )
+                .with_columns(
+                    (
+                        pl.when(
+                            pl.col("shape_diff").is_null()
+                            | pl.col("shape_diff").is_nan()
+                        )
+                        .then(pl.lit(0))
+                        .otherwise(pl.col("shape_diff"))
+                    ).alias("shape_diff")
+                )
+                .with_columns(
+                    pl.col("shape_direction").alias("shape_dir_orig"),
+                    (
+                        (pl.col("shape_direction") + 360 + pl.col("shape_diff")) % 360
+                    ).alias("shape_direction"),
+                )
+                .drop("shape_diff")
+                .with_columns(
+                    # Find the mean travel direction (in degrees) for all services at a stop.
+                    # This serves as a reference angle to create consistent directional bins.
+                    (
+                        ((pl.col("shape_direction") * 2 + 180) / 2) % 180
+                        # *2 + 180)/2 is to add reversed trip directions and ensure
+                        # cropping in between two main directions even if the
+                        # stop only has trips in one direction
+                        # % 180 ensures first sector limit in range 0-180
+                    ).alias("mean_shape_direction")
+                )
+                .with_columns(
+                    utils.mean_angle("mean_shape_direction", over=on).alias(
+                        "mean_shape_direction"
                     )
                 )
                 .collect()
@@ -957,12 +1026,6 @@ class Feed:
 
             gtfs_lf = (
                 gtfs_lf.with_columns(
-                    pl.col("mean_shape_direction")
-                    .mean()
-                    .over(on)
-                    .alias("mean_shape_direction")
-                )
-                .with_columns(
                     (
                         (
                             pl.col("shape_direction")
@@ -991,8 +1054,12 @@ class Feed:
                 .agg(
                     [
                         pl.col("departure_time").sort().alias("departure_times"),
-                        pl.col("shape_direction").mean().alias("shape_direction"),
-                        pl.col("route_id").unique().alias("route_ids"),
+                        utils.mean_angle("shape_direction").alias("shape_direction"),
+                        pl.concat_str(
+                            [pl.col("route_id"), pl.lit("_file_id_"), pl.col("file_id")]
+                        )
+                        .unique()
+                        .alias("route_ids"),
                         pl.col("shape_id").unique().alias("shape_ids"),
                         (
                             (pl.col("departure_time").min() - start_time_sec)
@@ -1001,6 +1068,7 @@ class Feed:
                     ]
                 )
             )
+
             gtfs_lf = gtfs_lf.with_columns(
                 [
                     (

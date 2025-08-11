@@ -2,7 +2,6 @@ import polars as pl
 from pathlib import Path
 from typing import Union, List
 import geopandas as gpd
-from shapely import wkt
 import math
 
 "TODO: read shapes file and use it when available"
@@ -40,7 +39,7 @@ class Shapes:
         self.stop_shapes = self.stop_shapes.collect().lazy()
         self.gdf = self.__get_shapes_gdf(self.lf)
 
-    def __generate_shape_direction_column(self, stop_shapes, round_factor=10):
+    def __generate_shape_direction_column(self, stop_shapes):
         """
         Generate a new column 'shape_direction' in the stop_shapes LazyFrame,
         representing the approximate direction of shape segments in degrees,
@@ -65,13 +64,36 @@ class Shapes:
 
         # Calculate cumulative mean latitude and longitude including the current stop.
         # cum_sum / n_stops gives running average for each shape_id group.
-        stop_shapes = stop_shapes.sort(
-            ["shape_id", "stop_sequence"], descending=True
-        ).with_columns(
-            [
-                (pl.col("shape_pt_lat").cum_sum().over("shape_id")).alias("mean_lat"),
-                (pl.col("shape_pt_lon").cum_sum().over("shape_id")).alias("mean_lon"),
-            ]
+
+        stop_shapes = (
+            stop_shapes.sort(["shape_id", "stop_sequence"], descending=True)
+            .with_columns(
+                [
+                    (pl.col("shape_pt_lat").cum_sum().over("shape_id")).alias(
+                        "mean_lat"
+                    ),
+                    (pl.col("shape_pt_lon").cum_sum().over("shape_id")).alias(
+                        "mean_lon"
+                    ),
+                    (
+                        pl.col("stop_sequence").max().over("shape_id")
+                        - pl.col("stop_sequence")
+                    ).alias("stop_sequence_rev"),
+                ]
+            )
+            .collect()
+            .lazy()
+            .sort(["shape_id", "stop_sequence_rev"], descending=True)
+            .with_columns(
+                [
+                    (pl.col("shape_pt_lat").cum_sum().over("shape_id")).alias(
+                        "mean_lat_rev"
+                    ),
+                    (pl.col("shape_pt_lon").cum_sum().over("shape_id")).alias(
+                        "mean_lon_rev"
+                    ),
+                ]
+            )
         )
 
         # Recalculate mean_lat and mean_lon to exclude the current point.
@@ -80,18 +102,20 @@ class Shapes:
             [
                 (
                     (pl.col("mean_lat") - pl.col("shape_pt_lat"))
-                    / (
-                        pl.col("stop_sequence").max().over("shape_id")
-                        - pl.col("stop_sequence")
-                    )
+                    / (pl.col("stop_sequence_rev"))
                 ).alias("mean_lat"),
                 (
                     (pl.col("mean_lon") - pl.col("shape_pt_lon"))
-                    / (
-                        pl.col("stop_sequence").max().over("shape_id")
-                        - pl.col("stop_sequence")
-                    )
+                    / (pl.col("stop_sequence_rev"))
                 ).alias("mean_lon"),
+                (
+                    (pl.col("mean_lat_rev") - pl.col("shape_pt_lat"))
+                    / (pl.col("stop_sequence"))
+                ).alias("mean_lat_rev"),
+                (
+                    (pl.col("mean_lon_rev") - pl.col("shape_pt_lon"))
+                    / (pl.col("stop_sequence"))
+                ).alias("mean_lon_rev"),
             ]
         )
 
@@ -107,6 +131,10 @@ class Shapes:
                     ),
                     (pl.col("shape_pt_lat") * deg2rad).alias("lat1_rad"),
                     (pl.col("mean_lat") * deg2rad).alias("lat2_rad"),
+                    ((pl.col("mean_lon_rev") - pl.col("shape_pt_lon")) * deg2rad).alias(
+                        "dlon_rad_rev"
+                    ),
+                    (pl.col("mean_lat_rev") * deg2rad).alias("lat2_rad_rev"),
                 ]
             )
             .with_columns(
@@ -119,6 +147,15 @@ class Shapes:
                         * pl.col("lat2_rad").cos()
                         * pl.col("dlon_rad").cos()
                     ).alias("x"),
+                    (pl.col("dlon_rad_rev").sin() * pl.col("lat2_rad_rev").cos()).alias(
+                        "y_rev"
+                    ),
+                    (
+                        pl.col("lat1_rad").cos() * pl.col("lat2_rad_rev").sin()
+                        - pl.col("lat1_rad").sin()
+                        * pl.col("lat2_rad_rev").cos()
+                        * pl.col("dlon_rad_rev").cos()
+                    ).alias("x_rev"),
                 ]
             )
             .with_columns(
@@ -126,16 +163,23 @@ class Shapes:
                     # angle and direction
                     (
                         (rad2deg * pl.arctan2(pl.col("y"), pl.col("x")) + 360) % 360
-                    ).alias("angle"),
+                    ).alias("shape_direction"),
+                    (
+                        (rad2deg * pl.arctan2(pl.col("y_rev"), pl.col("x_rev")) + 360)
+                        % 360
+                    ).alias("shape_direction_backwards"),
                 ]
             )
-            .with_columns(
-                [
-                    ((pl.col("angle") / round_factor).round(0) * round_factor).alias(
-                        "shape_direction"
-                    ),
-                ]
-            )
+            # .with_columns(
+            #     [
+            #         ((pl.col("shape_direction") / round_factor).round(0) * round_factor).alias(
+            #             "shape_direction"
+            #         ),
+            #         ((pl.col("shape_direction_backwards") / round_factor).round(0) * round_factor).alias(
+            #             "shape_direction_backwards"
+            #         ),
+            #     ]
+            # )
             .drop(
                 "mean_lat",
                 "mean_lon",
@@ -144,7 +188,13 @@ class Shapes:
                 "lat2_rad",
                 "y",
                 "x",
-                "angle",
+                "mean_lat_rev",
+                "mean_lon_rev",
+                "dlon_rad_rev",
+                "lat1_rad",
+                "lat2_rad_rev",
+                "y_rev",
+                "x_rev",
             )
         )
 
@@ -302,35 +352,42 @@ class Shapes:
 
         return shapes
 
-    def __get_shapes_gdf(self, shapes):
-        return None
-        # Create WKT LINESTRINGs grouped by shape_id
-        shapes_gdf = (
-            shapes.group_by("shape_id")
-            .agg(
-                [
-                    pl.format(
-                        "LINESTRING({})",
-                        pl.concat_str(
-                            pl.col("shape_pt_lon")
-                            .sort_by("shape_pt_sequence")
-                            .cast(str)
-                            + " "
-                            + pl.col("shape_pt_lat")
-                            .sort_by("shape_pt_sequence")
-                            .cast(str),
-                            separator=", ",
-                        ),
-                    ).alias("geometry")
-                ]
+    def __get_shapes_gdf(self, shapes: pl.LazyFrame) -> gpd.GeoDataFrame:
+        """
+        Convert GTFS shapes.txt into a GeoDataFrame of LINESTRING geometries.
+        """
+        grouped = (
+            shapes.sort(["shape_id", "shape_pt_sequence"])
+            .with_columns(
+                (
+                    pl.col("shape_pt_lon").cast(pl.Utf8)
+                    + " "
+                    + pl.col("shape_pt_lat").cast(pl.Utf8)
+                ).alias("pt")
             )
-            .collect()
-            .to_pandas()
+            .group_by("shape_id")
+            .agg(pl.col("pt").sort_by("shape_pt_sequence").alias("pt"))
+            .with_columns(
+                (
+                    pl.when(pl.col("pt").list.len() == 1)
+                    .then(
+                        pl.concat_str(
+                            [pl.lit("Point("), pl.col("pt").list.join(""), pl.lit(")")]
+                        )
+                    )
+                    .otherwise(
+                        pl.concat_str(
+                            [
+                                pl.lit("LINESTRING("),
+                                pl.col("pt").list.join(", "),
+                                pl.lit(")"),
+                            ]
+                        )
+                    )
+                ).alias("wkt")
+            )
         )
 
-        # Convert WKT strings to shapely geometries
-        shapes_gdf["geometry"] = shapes_gdf["geometry"].apply(wkt.loads)
-
-        # Convert to GeoDataFrame and assign CRS (EPSG:4326)
-        shapes_gdf = gpd.GeoDataFrame(shapes_gdf, geometry="geometry", crs="EPSG:4326")
-        return shapes_gdf
+        df = grouped.collect().to_pandas()
+        df["geometry"] = gpd.GeoSeries.from_wkt(df["wkt"])
+        return gpd.GeoDataFrame(df, geometry="geometry", crs="EPSG:4326")

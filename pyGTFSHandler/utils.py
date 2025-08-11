@@ -461,3 +461,14 @@ def filter_by_id_column(lf, column, ids: list | None = []):
         (pl.col(column) + "_file_" + pl.col("file_id").cast(pl.Utf8)).alias(column)
     )
     return lf
+
+
+def mean_angle(column, over=None):
+    if over is None:
+        mean_cos = pl.col(column).radians().cos().mean()
+        mean_sin = pl.col(column).radians().sin().mean()
+    else:
+        mean_cos = pl.col(column).radians().cos().mean().over(over)
+        mean_sin = pl.col(column).radians().sin().mean().over(over)
+
+    return pl.arctan2(mean_sin, mean_cos).degrees().mod(360)
