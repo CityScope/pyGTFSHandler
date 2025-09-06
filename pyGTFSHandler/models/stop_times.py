@@ -281,6 +281,13 @@ class StopTimes:
             stop_times_paths, schema_overrides=schema_dict
         )
 
+        stop_times = stop_times.with_columns(
+            [
+                pl.col("arrival_time").replace("", None).alias("arrival_time"),
+                pl.col("departure_time").replace("", None).alias("departure_time"),
+            ]
+        )
+
         stop_times = utils.filter_by_id_column(stop_times, "trip_id", trip_ids)
 
         stop_times = stop_times.with_columns(
@@ -461,6 +468,8 @@ class StopTimes:
                 pl.col("departure_time")
                 .interpolate(method="linear")
                 .over("trip_id")
+                .round(0)  # round to nearest integer
+                .cast(int)  # ensure integer type
                 .alias("departure_time"),
             )
 
@@ -475,6 +484,10 @@ class StopTimes:
                     .alias("arrival_time"),
                 ]
             )
+
+            stop_times = stop_times.filter(pl.col("departure_time").is_not_null())
+            stop_times = stop_times.filter(pl.col("departure_time").is_not_nan())
+
             return stop_times, True
         else:
             stop_times = stop_times.with_columns(pl.lit(False).alias("fixed_time"))
@@ -1007,7 +1020,6 @@ class StopTimes:
             .group_by("trip_id")
             .agg(
                 [
-                    pl.col("file_id").first().alias("file_id"),
                     pl.col("stop_id").sort_by("stop_sequence").alias("stop_ids"),
                     pl.col("stop_sequence").sort().alias("stop_sequence"),
                     pl.col("shape_total_travel_time")
@@ -1023,7 +1035,7 @@ class StopTimes:
         )
 
         grouped = trip_sequences.group_by(
-            ["stop_ids", "shape_total_travel_time_rounded", "file_id"]
+            ["stop_ids", "shape_total_travel_time_rounded"]
         ).agg(
             [
                 pl.col("trip_id").unique().alias("trip_ids"),

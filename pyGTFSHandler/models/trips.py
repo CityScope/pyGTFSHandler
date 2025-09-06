@@ -75,15 +75,6 @@ class Trips:
 
         trips = utils.filter_by_id_column(trips, "service_id", service_ids)
         trips = utils.filter_by_id_column(trips, "trip_id", trip_ids)
-        if route_ids is not None:
-            if isinstance(route_ids, list):
-                route_ids_df = pl.LazyFrame({"route_id": route_ids})
-                trips = trips.join(route_ids_df, on="route_id", how="semi")
-            else:
-                if isinstance(route_ids, pl.DataFrame):
-                    route_ids = route_ids.lazy()
-
-                columns = route_ids.collect_schema().names()
-                trips = trips.join(route_ids, on=columns, how="semi")
+        trips = utils.filter_by_id_column(trips, "route_id", route_ids)
 
         return trips

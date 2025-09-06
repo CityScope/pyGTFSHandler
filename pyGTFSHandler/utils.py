@@ -8,11 +8,17 @@ import requests
 import pycountry
 from difflib import get_close_matches
 import warnings
+
+import zipfile
+import hashlib
+
 # import pygeohash
 
 "TODO: if filter_by_id_column ids come with file_number then filter by file_number too and if not dont and allow mix in the same list"
 
 EPOCH = date(1970, 1, 1)
+
+id_cols = ["trip_id", "service_id", "route_id", "stop_id", "shape_id", "parent_station"]
 
 
 def datetime_to_days_since_epoch(dt: datetime | date) -> int:
@@ -56,7 +62,11 @@ def get_df_schema_dict(path) -> dict:
             "stop_lon": float,
         }
     elif "trips.txt" in str(path):
-        schema_dict = {"route_id": str, "service_id": str, "trip_id": str}
+        schema_dict = {
+            "route_id": str,
+            "service_id": str,
+            "trip_id": str,
+        }
     elif "stop_times.txt" in str(path):
         schema_dict = {
             "trip_id": str,
@@ -68,6 +78,7 @@ def get_df_schema_dict(path) -> dict:
     elif "routes.txt" in str(path):
         schema_dict = {
             "route_id": str,
+            "agency_id": str,
             "route_short_name": str,
             "route_long_name": str,
             "route_type": int,
@@ -93,6 +104,18 @@ def get_df_schema_dict(path) -> dict:
             "start_time": str,
             "end_time": str,
             "headway_secs": int,
+        }
+    elif "shapes.txt" in str(path):
+        schema_dict = {
+            "shape_id": str,
+            "shape_pt_sequence": int,
+            "shape_pt_lat": float,
+            "shape_pt_lon": float,
+            "shape_dist_traveled": float,
+        }
+    elif "agency.txt" in str(path):
+        schema_dict = {
+            "agency_id": str,
         }
 
     else:
@@ -146,6 +169,20 @@ def read_csv_lazy(
     lf = lf.with_columns(
         pl.lit(gtfs_name).alias("gtfs_name"), pl.lit(file_id).alias("file_id")
     )
+
+    columns = lf.collect_schema().names()
+    for col in id_cols:
+        if col in columns:
+            lf = lf.with_columns(
+                pl.when(pl.col(col).is_null() | (pl.col(col) == ""))
+                .then(pl.lit(None))
+                .otherwise(
+                    pl.concat_str([pl.col(col), pl.lit("_file_"), pl.col("file_id")])
+                )
+                .alias(col)
+            )
+            if col != "parent_station":
+                lf = lf.filter(pl.col(col).is_not_null())
 
     return lf
 
@@ -445,6 +482,7 @@ def normalize_route_type(route_type):
 
 
 def filter_by_id_column(lf, column, ids: list | None = []):
+    "TODO: Deal with _file_id in ids and column"
     if ids is None:
         ids = []
 
@@ -452,14 +490,9 @@ def filter_by_id_column(lf, column, ids: list | None = []):
         return None
 
     if len(ids) > 0:
-        ids_df = pl.LazyFrame({column: ids}).with_columns(
-            pl.col(column).str.replace(r"_file_\d+", "").alias(column)
-        )
+        ids_df = pl.LazyFrame({column: ids})
         lf = lf.join(ids_df, on=column, how="semi")
 
-    lf = lf.with_columns(
-        (pl.col(column) + "_file_" + pl.col("file_id").cast(pl.Utf8)).alias(column)
-    )
     return lf
 
 
@@ -472,3 +505,100 @@ def mean_angle(column, over=None):
         mean_sin = pl.col(column).radians().sin().mean().over(over)
 
     return pl.arctan2(mean_sin, mean_cos).degrees().mod(360)
+
+
+def max_separation_angle(df, column):
+    df = (
+        df.with_columns(pl.col(column).list.concat(pl.col(column) + 180).alias(column))
+        .with_columns(
+            [
+                (pl.col(column) % 360).list.min().alias(name=f"{column}_min_angle"),
+            ]
+        )
+        .with_columns(
+            (pl.col(column) % 360 - pl.col(f"{column}_min_angle")).alias(
+                f"{column}_normalized"
+            ),
+        )
+        .with_columns(
+            [
+                # collect, sort, append 360
+                (
+                    pl.col(f"{column}_normalized")
+                    .list.sort()
+                    .list.concat(pl.lit([360]))
+                ).alias(f"{column}_angle_sorted"),
+            ]
+        )
+        .with_columns(
+            [
+                # arc differences
+                pl.col(f"{column}_angle_sorted")
+                .list.diff(null_behavior="drop")
+                .alias(f"{column}_arc_angle")
+            ]
+        )
+        .with_columns(
+            [
+                # max separation = max arc/2 + angle at max
+                (
+                    pl.col(f"{column}_arc_angle").list.max() / 2
+                    + pl.col(f"{column}_angle_sorted").list.get(
+                        pl.col(f"{column}_arc_angle").list.arg_max()
+                    )
+                    + pl.col(f"{column}_min_angle")
+                ).alias(f"{column}_max_separation_angle")
+            ]
+        )
+    )
+    return df[f"{column}_max_separation_angle"]
+
+
+def hash_file(path, chunk_size=8192):
+    """Compute MD5 hash of a single file."""
+    h = hashlib.md5()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(chunk_size), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def hash_folder(folder_path, chunk_size=8192):
+    """Compute a combined MD5 hash of all .txt files in a folder (order-independent)."""
+    hashes = []
+    for f in os.listdir(folder_path):
+        if f.endswith(".txt"):
+            file_path = os.path.join(folder_path, f)
+            hashes.append(hash_file(file_path, chunk_size))
+    return hashlib.md5("".join(sorted(hashes)).encode()).hexdigest()
+
+
+def hash_zip(zip_path, chunk_size=8192):
+    """Compute a combined MD5 hash of all .txt files in a zip archive (order-independent)."""
+    hashes = []
+    with zipfile.ZipFile(zip_path, "r") as z:
+        for f in z.namelist():
+            if f.endswith(".txt"):
+                h = hashlib.md5()
+                with z.open(f) as file:
+                    for chunk in iter(lambda: file.read(chunk_size), b""):
+                        h.update(chunk)
+                hashes.append(h.hexdigest())
+    return hashlib.md5("".join(sorted(hashes)).encode()).hexdigest()
+
+
+def hash_path(path, chunk_size=8192):
+    """Compute hash of a path: file, folder, or zip."""
+    if os.path.isdir(path):
+        return hash_folder(path, chunk_size)
+    elif zipfile.is_zipfile(path):
+        return hash_zip(path, chunk_size)
+    elif os.path.isfile(path):
+        return hash_file(path, chunk_size)
+    else:
+        raise ValueError(f"{path} is not a file, folder, or zip archive")
+
+
+def compare_paths(path1, path2):
+    """Compare any two paths by content."""
+    return hash_path(path1) == hash_path(path2)

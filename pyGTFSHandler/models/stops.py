@@ -46,13 +46,12 @@ class Stops:
 
         if aoi is None:
             df = self.lf.select(
-                ["stop_id", "parent_station", "stop_lat", "stop_lon", "file_id"]
+                ["stop_id", "parent_station", "stop_lat", "stop_lon"]
             ).collect()
             self.gdf = gpd.GeoDataFrame(
                 {
                     "stop_id": df["stop_id"],
                     "parent_station": df["parent_station"],
-                    "file_id": df["file_id"],
                 },
                 geometry=gpd.points_from_xy(df["stop_lon"], df["stop_lat"]),
                 crs="EPSG:4326",
@@ -105,18 +104,7 @@ class Stops:
         schema_dict = utils.get_df_schema_dict(stop_paths[0])
         lf = utils.read_csv_list(stop_paths, schema_overrides=schema_dict)
 
-        if isinstance(stop_ids, list):
-            stop_ids_lf = pl.LazyFrame({"stop_id": stop_ids})
-
-            # Select matching stop_times with just needed columns
-            lf = lf.join(stop_ids_lf, on="stop_id", how="semi")
-        elif stop_ids is not None:
-            if isinstance(stop_ids, pl.DataFrame):
-                stop_ids = stop_ids.lazy()
-
-            columns = stop_ids.collect_schema().names()
-
-            lf = lf.join(stop_ids, on=columns, how="semi")
+        lf = utils.filter_by_id_column(lf, "stop_id", stop_ids)
 
         if "parent_station" not in lf.collect_schema().names():
             lf = lf.with_columns(pl.lit(None).alias("parent_station"))
@@ -160,14 +148,13 @@ class Stops:
         )
 
         df = filtered_lf.select(
-            ["stop_id", "parent_station", "stop_lat", "stop_lon", "file_id"]
+            ["stop_id", "parent_station", "stop_lat", "stop_lon"]
         ).collect()
 
         gdf = gpd.GeoDataFrame(
             {
                 "stop_id": df["stop_id"],
                 "parent_station": df["parent_station"],
-                "file_id": df["file_id"],
             },
             geometry=gpd.points_from_xy(df["stop_lon"], df["stop_lat"]),
             crs="EPSG:4326",
@@ -179,10 +166,8 @@ class Stops:
         if gdf.empty:
             raise ValueError("No stops found inside AOI bounds")
 
-        stop_ids_df = pl.from_pandas(gdf[["stop_id", "file_id"]]).lazy()
-        final_lf = filtered_lf.join(
-            stop_ids_df.lazy(), on=["stop_id", "file_id"], how="semi"
-        )
+        stop_ids_df = pl.from_pandas(gdf[["stop_id"]]).lazy()
+        final_lf = filtered_lf.join(stop_ids_df.lazy(), on=["stop_id"], how="semi")
 
         return final_lf, gdf
 
@@ -218,12 +203,10 @@ class Stops:
         )
 
         # This assumes parent_station info comes from self.lf (not self.gdf)
-        parent_station_df = self.lf.select(["stop_id", "parent_station", "file_id"])
-        stop_ids_df = pl.from_pandas(gdf[["stop_id", "file_id", "cluster"]]).lazy()
+        parent_station_df = self.lf.select(["stop_id", "parent_station"])
+        stop_ids_df = pl.from_pandas(gdf[["stop_id", "cluster"]]).lazy()
 
-        cluster_df = stop_ids_df.join(
-            parent_station_df, on=["stop_id", "file_id"], how="left"
-        )
+        cluster_df = stop_ids_df.join(parent_station_df, on=["stop_id"], how="left")
 
         # Merge clusters with common parent_station
         cluster_df = cluster_df.join(
@@ -259,7 +242,6 @@ class Stops:
             .agg(
                 [
                     pl.col("stop_id"),
-                    pl.col("file_id"),
                     pl.col("fallback_id").first().alias("parent_station"),
                 ]
             )
@@ -270,7 +252,7 @@ class Stops:
                 .alias("suffix_count"),
                 pl.col("parent_station").is_duplicated().alias("is_dup"),
             )
-            .explode(["stop_id", "file_id"])
+            .explode(["stop_id"])
             .with_columns(
                 (
                     pl.when(pl.col("is_dup"))
@@ -289,10 +271,10 @@ class Stops:
 
         # Update gdf and lf
         gdf = self.gdf.drop(columns=["parent_station"]).merge(
-            cluster_df.to_pandas(), on=["stop_id", "file_id"]
+            cluster_df.to_pandas(), on=["stop_id"]
         )
         lf = self.lf.drop("parent_station").join(
-            cluster_df.lazy(), on=["stop_id", "file_id"], how="left"
+            cluster_df.lazy(), on=["stop_id"], how="left"
         )
 
         return lf, gdf
@@ -334,10 +316,10 @@ class Stops:
 
         stops = (
             stops.join(
-                self.lf.select("stop_id", "parent_station", "file_id").rename(
+                self.lf.select("stop_id", "parent_station").rename(
                     {"parent_station": "parent_station_right"}
                 ),
-                on=["stop_id", "file_id"],
+                on=["stop_id"],
                 how="left",
             )
             .with_columns(

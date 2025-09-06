@@ -67,16 +67,7 @@ class Routes:
         schema_dict = utils.get_df_schema_dict(route_paths[0])
         routes = utils.read_csv_list(route_paths, schema_overrides=schema_dict)
 
-        if route_ids is not None:
-            if isinstance(route_ids, list):
-                route_ids_df = pl.LazyFrame({"route_id": route_ids})
-                routes = routes.join(route_ids_df, on="route_id", how="semi")
-            else:
-                if isinstance(route_ids, pl.DataFrame):
-                    route_ids = route_ids.lazy()
-
-                columns = route_ids.collect_schema().names()
-                routes = routes.join(route_ids, on=columns, how="semi")
+        routes = utils.filter_by_id_column(routes, "route_id", route_ids)
 
         if route_types is not None:
             route_types_df = pl.LazyFrame({"route_type": route_types})

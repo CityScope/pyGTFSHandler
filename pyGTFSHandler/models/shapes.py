@@ -202,16 +202,14 @@ class Shapes:
 
     def __generate_shapes_file(self, stops_lf, trip_shape_ids_lf):
         trip_shape_ids_lf = (
-            trip_shape_ids_lf.select(
-                ["shape_id", "stop_ids", "stop_sequence", "file_id"]
-            )
+            trip_shape_ids_lf.select(["shape_id", "stop_ids", "stop_sequence"])
             .explode(["stop_ids", "stop_sequence"])
             .rename({"stop_ids": "stop_id"})
         )
 
         trip_shape_ids_lf = trip_shape_ids_lf.join(
-            stops_lf.select("stop_id", "stop_lat", "stop_lon", "file_id"),
-            on=["stop_id", "file_id"],
+            stops_lf.select("stop_id", "stop_lat", "stop_lon"),
+            on=["stop_id"],
             how="left",
         )
 

@@ -169,7 +169,7 @@ class Feed:
             self.gtfs_dir,
             service_ids=self.calendar.service_ids,
             trip_ids=trip_ids,
-            route_ids=self.routes.lf.select(["route_id", "file_id"]),
+            route_ids=self.routes.route_ids,
         )
 
         self.stop_times = StopTimes(
@@ -177,16 +177,14 @@ class Feed:
             trips=self.trips.lf,
             start_time=start_time,
             end_time=end_time,
-            stop_ids=self.stops.lf.select(["stop_id", "file_id"]),
+            stop_ids=self.stops.stop_ids,
             trip_ids=self.trips.trip_ids,
         )
         self.trips.lf = self.stop_times.trips_lf
 
         # Reload stops_lf so that at least in the lf the next stop of bordering trips is loaded
 
-        self.stops.reload_stops_lf(
-            self.gtfs_dir, self.stop_times.lf.select("stop_id", "file_id")
-        )
+        self.stops.reload_stops_lf(self.gtfs_dir, self.stop_times.lf.select("stop_id"))
 
         # --- 3. Integrate Generated Trips from Frequencies ---
         # If StopTimes generated new trips from frequencies.txt, we need to add them
@@ -266,15 +264,17 @@ class Feed:
         )
 
         self.lf = self.lf.join(
-            self.stops.lf.select(["stop_id", "parent_station", "file_id"]),
-            on=["stop_id", "file_id"],
+            self.stops.lf.select(["stop_id", "parent_station"]),
+            on=["stop_id"],
             how="left",
         )
 
         # Ensure that every trip does not stop twice at the parent_station
 
         # Sort by trip_id and stop_sequence
-        self.lf = self.lf.sort(["trip_id", "stop_sequence"])
+        self.lf = self.lf.sort(
+            ["trip_id", "service_id", "route_id", "shape_id", "stop_sequence"]
+        )
 
         # Create a new column with shifted parent_station per trip_id group
         self.lf = self.lf.with_columns(
@@ -300,8 +300,8 @@ class Feed:
         self.lf = self.lf.drop("prev_parent_station")
 
         self.lf = self.lf.join(
-            self.routes.lf.select(["route_id", "route_type", "file_id"]),
-            on=["route_id", "file_id"],
+            self.routes.lf.select(["route_id", "route_type"]),
+            on=["route_id"],
             how="left",
         )
 
@@ -340,6 +340,8 @@ class Feed:
             ]
         ).drop("next_day")
 
+        self.lf = self.lf.unique()
+
     def __fix_null_times(self, stop_times: pl.LazyFrame) -> pl.LazyFrame:
         """
         Performs advanced, shape-based interpolation for missing stop times.
@@ -364,7 +366,11 @@ class Feed:
                 pl.when(pl.col("fixed_time"))
                 .then(None)
                 .otherwise(pl.col("departure_time"))
-                .alias("departure_time")
+                .alias("departure_time"),
+                pl.when(pl.col("fixed_time"))
+                .then(None)
+                .otherwise(pl.col("shape_dist_traveled"))
+                .alias("shape_dist_traveled_copy"),
             ]
         )
 
@@ -375,7 +381,7 @@ class Feed:
                 .forward_fill()
                 .over("trip_id")
                 .alias("dep_time_fwd"),
-                pl.col("shape_dist_traveled")
+                pl.col("shape_dist_traveled_copy")
                 .forward_fill()
                 .over("trip_id")
                 .alias("dist_fwd"),
@@ -383,7 +389,7 @@ class Feed:
                 .backward_fill()
                 .over("trip_id")
                 .alias("dep_time_bwd"),
-                pl.col("shape_dist_traveled")
+                pl.col("shape_dist_traveled_copy")
                 .backward_fill()
                 .over("trip_id")
                 .alias("dist_bwd"),
@@ -407,7 +413,8 @@ class Feed:
                             / (pl.col("dist_bwd") - pl.col("dist_fwd"))
                         )
                         * (
-                            (pl.col("dep_time_bwd") + 86400) - pl.col("dep_time_fwd")
+                            (pl.col("dep_time_bwd") + SECS_PER_DAY)
+                            - pl.col("dep_time_fwd")
                         )  # Add 24h to backward time
                     )
                     .otherwise(
@@ -426,9 +433,29 @@ class Feed:
             ]
         )
 
+        stop_times = stop_times.with_columns(
+            pl.col("departure_time").round(0).cast(int).alias("departure_time"),
+            pl.col("arrival_time").round(0).cast(int).alias("arrival_time"),
+        )
+
+        stop_times = stop_times.with_columns(
+            [
+                pl.when(pl.col("fixed_time"))
+                .then(pl.col("departure_time"))
+                .otherwise(pl.col("arrival_time"))
+                .alias("arrival_time")
+            ]
+        )
+
         # Clean up temporary helper columns.
         stop_times = stop_times.drop(
-            ["dep_time_fwd", "dep_time_bwd", "dist_fwd", "dist_bwd"]
+            [
+                "dep_time_fwd",
+                "dep_time_bwd",
+                "dist_fwd",
+                "dist_bwd",
+                "shape_dist_traveled_copy",
+            ]
         )
 
         # Recalculate travel times now that nulls are filled.
@@ -935,6 +962,7 @@ class Feed:
             # E.g., n_divisions=2 -> 4 sectors (N, E, S, W).
             n_sectors = n_divisions * 2
             # Bin services into directional sectors.shape_direction_backwards
+
             gtfs_lf = (
                 gtfs_lf.with_columns(  # This ensures a separation between both shape directions of exactly 180º
                     (
@@ -998,38 +1026,36 @@ class Feed:
                     ).alias("shape_diff")
                 )
                 .with_columns(
-                    pl.col("shape_direction").alias("shape_dir_orig"),
                     (
                         (pl.col("shape_direction") + 360 + pl.col("shape_diff")) % 360
                     ).alias("shape_direction"),
                 )
                 .drop("shape_diff")
-                .with_columns(
-                    # Find the mean travel direction (in degrees) for all services at a stop.
-                    # This serves as a reference angle to create consistent directional bins.
-                    (
-                        ((pl.col("shape_direction") * 2 + 180) / 2) % 180
-                        # *2 + 180)/2 is to add reversed trip directions and ensure
-                        # cropping in between two main directions even if the
-                        # stop only has trips in one direction
-                        # % 180 ensures first sector limit in range 0-180
-                    ).alias("mean_shape_direction")
-                )
-                .with_columns(
-                    utils.mean_angle("mean_shape_direction", over=on).alias(
-                        "mean_shape_direction"
-                    )
-                )
-                .collect()
-                .lazy()
             )
+            gtfs_lf = gtfs_lf.group_by(on).agg(pl.all())
+
+            gtfs_lf = gtfs_lf.collect()
+            gtfs_lf = gtfs_lf.with_columns(
+                utils.max_separation_angle(gtfs_lf, "shape_direction").alias(
+                    "shape_split_direction"
+                )
+            ).explode(pl.exclude([*on, "shape_split_direction"]))
+
+            gtfs_lf = gtfs_lf.lazy()
+
+            if n_divisions % 2 == 0:
+                gtfs_lf = gtfs_lf.with_columns(
+                    pl.col("shape_split_direction") + 90 / n_divisions
+                )
+
+            gtfs_lf = gtfs_lf.with_columns(pl.col("shape_split_direction") % 360)
 
             gtfs_lf = (
                 gtfs_lf.with_columns(
                     (
                         (
                             pl.col("shape_direction")
-                            - pl.col("mean_shape_direction")
+                            - pl.col("shape_split_direction")
                             + 360
                         )
                         % 360
@@ -1055,11 +1081,7 @@ class Feed:
                     [
                         pl.col("departure_time").sort().alias("departure_times"),
                         utils.mean_angle("shape_direction").alias("shape_direction"),
-                        pl.concat_str(
-                            [pl.col("route_id"), pl.lit("_file_id_"), pl.col("file_id")]
-                        )
-                        .unique()
-                        .alias("route_ids"),
+                        pl.col("route_id").unique().alias("route_ids"),
                         pl.col("shape_id").unique().alias("shape_ids"),
                         (
                             (pl.col("departure_time").min() - start_time_sec)
