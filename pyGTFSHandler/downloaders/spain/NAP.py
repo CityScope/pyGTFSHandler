@@ -454,23 +454,23 @@ class APIClient:
         start_date, end_date = input_date(start_date, end_date)
 
         _organization = copy(organization)
-        if isinstance(_organization, list):
+        if not isinstance(_organization, list):
             _organization = [_organization]
 
         _region_type = copy(region_type)
-        if isinstance(_region_type, list):
+        if not isinstance(_region_type, list):
             _region_type = [_region_type]
 
         _region = copy(region)
-        if isinstance(_region, list):
+        if not isinstance(_region, list):
             _region = [_region]
 
         _transport_type = copy(transport_type)
-        if isinstance(_transport_type, list):
+        if not isinstance(_transport_type, list):
             _transport_type = [_transport_type]
 
         _file_description = copy(file_description)
-        if isinstance(_file_description, list):
+        if not isinstance(_file_description, list):
             _file_description = [_file_description]
 
         for i in range(len(_organization)):
@@ -833,7 +833,7 @@ class APIClient:
         os.makedirs(output_path, exist_ok=True)
 
         _file_ids = file_ids
-        if isinstance(_file_ids, list):
+        if not isinstance(_file_ids, list):
             _file_ids = [_file_ids]
         if len(file_ids) == 0:
             return []
@@ -911,3 +911,4 @@ class APIClient:
                 )
 
         return file_names
+
