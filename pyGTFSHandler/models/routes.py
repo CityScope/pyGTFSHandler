@@ -43,6 +43,8 @@ class Routes:
             self.route_ids = (
                 self.lf.select("route_id").unique().collect()["route_id"].to_list()
             )
+            if (len(self.route_ids) > 0) and (self.route_ids[0] is None):
+                self.route_ids = []
         else:
             self.route_ids = None
 

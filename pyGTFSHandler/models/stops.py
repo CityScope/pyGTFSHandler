@@ -68,6 +68,8 @@ class Stops:
 
         if (aoi is not None) or (stop_group_distance > 0):
             self.stop_ids = self.lf.select("stop_id").collect()["stop_id"].to_list()
+            if (len(self.stop_ids) > 0) and (self.stop_ids[0] is None):
+                self.stop_ids = []
         else:
             self.stop_ids = None
 

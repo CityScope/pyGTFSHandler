@@ -138,12 +138,24 @@ class Feed:
         # The loading is done in a logical order to allow for cascading filters.
         # e.g., Calendar is loaded first, and its service_ids are used to filter Trips.
 
+        route_types_print = f"route types {route_types}" if route_types is not None else ""
+        time_range_print = (
+            f"time range {start_date} - {end_date}"
+            if (start_date is not None or end_date is not None)
+            else ""
+        )
+        aoi_print = f"aoi {aoi.geometry.union_all()}" if aoi is not None else ""
+        error_msg = f"No trips with your id filters and filters {route_types_print} {time_range_print} {aoi_print}".strip()
+
         self.stops = Stops(
             self.gtfs_dir,
             aoi=aoi,
             stop_group_distance=stop_group_distance,
             stop_ids=stop_ids,
         )
+
+        if (self.stops.stop_ids is not None) and (len(self.stops.stop_ids) == 0):
+            raise Exception(f"No stops found inside your aoi")
 
         self.calendar = Calendar(
             self.gtfs_dir,
@@ -165,12 +177,22 @@ class Feed:
             self.gtfs_dir, route_ids=route_ids, route_types=route_types
         )
 
+        if (self.routes.route_ids is not None) and (len(self.routes.route_ids) == 0):
+            raise Exception(f"No routes found with filter {route_types}")
+
+        if (self.calendar.service_ids is not None) and (len(self.calendar.service_ids) == 0):
+            raise Exception(f"No trips found in time range {start_date} - {end_date}")
+
         self.trips = Trips(
             self.gtfs_dir,
             service_ids=self.calendar.service_ids,
             trip_ids=trip_ids,
             route_ids=self.routes.route_ids,
         )
+
+        if (self.trips.trip_ids is not None) and (len(self.trips.trip_ids) == 0):
+            raise Exception(error_msg)
+
 
         self.stop_times = StopTimes(
             self.gtfs_dir,
@@ -180,6 +202,10 @@ class Feed:
             stop_ids=self.stops.stop_ids,
             trip_ids=self.trips.trip_ids,
         )
+
+        if self.stop_times.lf.select(pl.count()).collect().item() == 0:
+            raise Exception(error_msg)
+
         self.trips.lf = self.stop_times.trips_lf
 
         # Reload stops_lf so that at least in the lf the next stop of bordering trips is loaded
@@ -341,6 +367,13 @@ class Feed:
         ).drop("next_day")
 
         self.lf = self.lf.unique()
+
+        self.lf = self.lf.join(
+            self.stops.lf.select(["stop_id"]).with_columns(pl.lit(True).alias("isin_aoi")),
+            on="stop_id",
+            how="left"
+        )
+        self.lf = self.lf.with_columns(pl.col("isin_aoi").fill_null(False))
 
     def __fix_null_times(self, stop_times: pl.LazyFrame) -> pl.LazyFrame:
         """
@@ -757,6 +790,7 @@ class Feed:
         )
 
         gtfs_lf = self.lf
+        gtfs_lf = gtfs_lf.filter(pl.col("isin_aoi"))
         if route_types is not None:
             gtfs_lf = self.filter_by_route_type(gtfs_lf, route_types=route_types)
 
@@ -862,7 +896,11 @@ class Feed:
                 f"Method '{method}' is not implemented. Choose from {valid_methods}."
             )
 
-        gtfs_lf = self.lf.filter(
+        gtfs_lf = self.lf
+
+        gtfs_lf = gtfs_lf.filter(pl.col("isin_aoi"))
+
+        gtfs_lf = gtfs_lf.filter(
             pl.col("stop_sequence") != pl.col("stop_sequence").max().over("trip_id")
         )
 

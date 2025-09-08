@@ -19,7 +19,7 @@ import hashlib
 EPOCH = date(1970, 1, 1)
 
 id_cols = ["trip_id", "service_id", "route_id", "stop_id", "shape_id", "parent_station"]
-
+mandatory_cols = ["trip_id", "service_id", "stop_id"]
 
 def datetime_to_days_since_epoch(dt: datetime | date) -> int:
     if type(dt) is datetime:
@@ -181,7 +181,7 @@ def read_csv_lazy(
                 )
                 .alias(col)
             )
-            if col != "parent_station":
+            if col in mandatory_cols:
                 lf = lf.filter(pl.col(col).is_not_null())
 
     return lf
@@ -376,30 +376,89 @@ def get_country_region(lat, lon):
 
 def get_holidays(year, country_code, subdivision_code=None):
     url = f"https://date.nager.at/api/v3/PublicHolidays/{year}/{country_code}"
-    holidays = requests.get(url).json()
-    if subdivision_code:
-        df = pl.DataFrame(
-            [
-                h
-                for h in holidays
-                if h["counties"] is None or subdivision_code in h["counties"]
-            ]
-        )
-    else:
-        df = pl.DataFrame(holidays)
 
-    df = df.with_columns(
-        [
-            pl.col("date")
-            .cast(pl.Utf8)
-            .str.strptime(pl.Date, "%Y-%m-%d")
-            .dt.epoch(time_unit="d")  # days since 1970-01-01 (int)
-            .alias("date"),
-        ]
+    # Define a consistent empty schema
+    empty_df = pl.DataFrame(
+        schema={
+            "date": pl.Int32,
+            "localName": pl.Utf8,
+            "name": pl.Utf8,
+            "countryCode": pl.Utf8,
+            "fixed": pl.Boolean,
+            "global": pl.Boolean,
+            "counties": pl.List(pl.Utf8),
+            "launchYear": pl.Int32,
+            "types": pl.List(pl.Utf8),
+        }
     )
 
-    return df
+    try:
+        response = requests.get(url, timeout=10)
 
+        # Case: 204 No Content
+        if response.status_code == 204:
+            warnings.warn(
+                f"Holiday API returned no content for {country_code}-{year} (204)."
+            )
+            return empty_df
+
+        # Case: other non-200 status codes
+        if response.status_code != 200:
+            warnings.warn(
+                f"Holiday API request failed for {country_code}-{year}. "
+                f"Status code: {response.status_code}"
+            )
+            return empty_df
+
+        # Ensure response is JSON
+        if "application/json" not in response.headers.get("Content-Type", ""):
+            warnings.warn(
+                f"Holiday API returned non-JSON response for {country_code}-{year}. "
+                f"Content-Type: {response.headers.get('Content-Type')}"
+            )
+            return empty_df
+
+        holidays = response.json()
+
+        if not holidays:  # Empty JSON list
+            warnings.warn(
+                f"Holiday API returned empty result for {country_code}-{year}."
+            )
+            return empty_df
+
+    except requests.RequestException as e:
+        warnings.warn(
+            f"Failure in the holidays URL request for {country_code}-{year}. "
+            f"Request error: {e}"
+        )
+        return empty_df
+    except ValueError as e:
+        warnings.warn(
+            f"Failed to parse JSON for {country_code}-{year}. Error: {e}"
+        )
+        return empty_df
+
+    # Apply subdivision filter if provided
+    if subdivision_code:
+        holidays = [
+            h for h in holidays
+            if h.get("counties") is None or subdivision_code in h.get("counties", [])
+        ]
+
+    # Convert to DataFrame
+    df = pl.DataFrame(holidays)
+
+    # Convert date to days since 1970-01-01
+    if "date" in df.columns:
+        df = df.with_columns(
+            pl.col("date")
+            .cast(pl.Utf8)
+            .str.strptime(pl.Date, "%Y-%m-%d", strict=False)
+            .dt.epoch(time_unit="d")
+            .alias("date")
+        )
+
+    return df
 
 # def geohash(
 #     df: pl.DataFrame, lat_col: str, lon_col: str, precision: int = 7

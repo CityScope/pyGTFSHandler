@@ -91,6 +91,9 @@ class Calendar:
                 )
                 self.service_ids = service_ids_df["service_id"].to_list()
 
+            if (len(self.service_ids) > 0) and (self.service_ids[0] is None):
+                self.service_ids = []
+
             if self.lf is not None:
                 self.lf = self.lf.join(
                     service_ids_df.lazy(), on="service_id", how="semi"

@@ -48,6 +48,9 @@ class Trips:
         else:
             self.trip_ids = trip_ids
 
+        if (self.trip_ids is not None) and (len(self.trip_ids) > 0) and (self.trip_ids[0] is None):
+            self.trip_ids = []
+
     def __read_trips(
         self,
         service_ids: Optional[List[str]],
