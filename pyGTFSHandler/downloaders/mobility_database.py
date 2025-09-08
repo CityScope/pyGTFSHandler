@@ -2,7 +2,6 @@ import os
 import json
 import random
 import zipfile
-import tempfile
 import logging
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional, Union, Tuple
@@ -16,6 +15,7 @@ from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut, GeocoderServiceError
 from tqdm import tqdm
 
+from .. import utils
 # Configure logging for better output control
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -477,20 +477,23 @@ class MobilityDatabaseClient:
         extracted_paths = []
 
         for feed in tqdm(feeds, desc="Downloading feeds"):
-            feed_id = feed.get('id', 'unknown_feed')
+            feed_id = feed.get('id', '')
+            feed_name = feed.get('feed_name', '')
+            feed_provider = feed.get('provider', '')
+            feed_filename = utils.normalize_string(f"{feed_id}_{feed_name}_{feed_provider}")
             latest_dataset = feed.get('latest_dataset')
             if not latest_dataset:
-                print(f"Feed '{feed_id}' has no 'latest_dataset'. Skipping.")
+                print(f"Feed '{feed_filename}' has no 'latest_dataset'. Skipping.")
                 continue
 
             hosted_url = latest_dataset.get('hosted_url')
             if not hosted_url:
-                print(f"Feed '{feed_id}' has no 'hosted_url'. Skipping.")
+                print(f"Feed '{feed_filename}' has no 'hosted_url'. Skipping.")
                 continue
 
-            extraction_folder = os.path.join(download_folder, feed_id)
+            extraction_folder = os.path.join(download_folder, feed_filename)
             if os.path.exists(extraction_folder) and os.listdir(extraction_folder) and not overwrite:
-                print(f"Feed '{feed_id}' already exists. Skipping.")
+                print(f"Feed '{feed_filename}' already exists. Skipping.")
                 extracted_paths.append(os.path.abspath(extraction_folder))
                 continue
 
@@ -498,7 +501,7 @@ class MobilityDatabaseClient:
                 import shutil
                 shutil.rmtree(extraction_folder)
 
-            zip_path = os.path.join(download_folder, f"{feed_id}.zip")
+            zip_path = os.path.join(download_folder, f"{feed_filename}.zip")
             try:
                 # Public download — no Authorization header
                 with requests.get(hosted_url, stream=True) as r:
@@ -512,13 +515,13 @@ class MobilityDatabaseClient:
                 with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                     zip_ref.extractall(extraction_folder)
 
-                print(f"Extracted '{feed_id}' to '{extraction_folder}'.")
+                #print(f"Extracted '{feed_filename}' to '{extraction_folder}'.")
                 extracted_paths.append(os.path.abspath(extraction_folder))
 
             except requests.exceptions.RequestException as e:
-                print(f"Error downloading feed '{feed_id}': {e}")
+                print(f"Error downloading feed '{feed_filename}': {e}")
             except (OSError, zipfile.BadZipFile) as e:
-                print(f"Error extracting feed '{feed_id}': {e}")
+                print(f"Error extracting feed '{feed_filename}': {e}")
             finally:
                 if os.path.exists(zip_path):
                     os.remove(zip_path)
