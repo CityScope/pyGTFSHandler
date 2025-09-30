@@ -81,7 +81,7 @@ def get_df_schema_dict(path) -> dict:
             "agency_id": str,
             "route_short_name": str,
             "route_long_name": str,
-            "route_type": int,
+            "route_type": str,
         }
     elif "calendar.txt" in str(path):
         schema_dict = {
@@ -97,7 +97,7 @@ def get_df_schema_dict(path) -> dict:
             "end_date": int,
         }
     elif "calendar_dates.txt" in str(path):
-        schema_dict = {"service_id": str, "date": int, "exception_type": int}
+        schema_dict = {"service_id": str, "date": int, "exception_type": str}
     elif "frequencies.txt" in str(path):
         schema_dict = {
             "trip_id": str,

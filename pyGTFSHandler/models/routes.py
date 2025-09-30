@@ -68,6 +68,19 @@ class Routes:
 
         schema_dict = utils.get_df_schema_dict(route_paths[0])
         routes = utils.read_csv_list(route_paths, schema_overrides=schema_dict)
+        # Identify values that cannot be converted to int
+        non_convertible = routes.filter(
+            pl.col("route_type").cast(pl.Int64, strict=False).is_null()
+        ).select("route_type").collect()["route_type"].unique().to_list()
+
+        if non_convertible:
+            routes = routes.with_columns(pl.col("route_type").alias("route_type_orig"))
+            print(f"Warning: These route_type values could not be converted to int. Orig values in route_type_orig column. Non convertible values: {non_convertible}")
+
+        # Cast column, replacing non-integer values with None
+        routes = routes.with_columns(
+            pl.col("route_type").cast(pl.Int64, strict=False).alias("route_type")
+        )
 
         routes = utils.filter_by_id_column(routes, "route_id", route_ids)
 

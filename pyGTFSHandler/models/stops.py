@@ -1,5 +1,6 @@
 import polars as pl
 import geopandas as gpd
+import pandas as pd
 from pathlib import Path
 from typing import Union, List
 from .. import utils
@@ -193,16 +194,21 @@ class Stops:
         gdf["x"] = gdf.geometry.x
         gdf["y"] = gdf.geometry.y
 
-        gdf["cluster"] = (
-            AgglomerativeClustering(
-                n_clusters=None,
-                distance_threshold=distance,
-                metric="euclidean",
-                linkage="complete",
+        if len(gdf) == 1:
+            gdf["cluster"] = 0
+        elif len(gdf) == 0:
+            gdf["cluster"] = pd.Series(dtype=int)
+        else:
+            gdf["cluster"] = (
+                AgglomerativeClustering(
+                    n_clusters=None,
+                    distance_threshold=distance,
+                    metric="euclidean",
+                    linkage="complete",
+                )
+                .fit(gdf[["x", "y"]])
+                .labels_
             )
-            .fit(gdf[["x", "y"]])
-            .labels_
-        )
 
         # This assumes parent_station info comes from self.lf (not self.gdf)
         parent_station_df = self.lf.select(["stop_id", "parent_station"])

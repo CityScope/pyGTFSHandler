@@ -290,16 +290,33 @@ class StopTimes:
 
         stop_times = utils.filter_by_id_column(stop_times, "trip_id", trip_ids)
 
-        stop_times = stop_times.with_columns(
-            [
-                ("0" + pl.col("arrival_time").cast(str))
-                .str.slice(-8, 8)
+        stop_times = stop_times.with_columns([
+            pl.col("arrival_time")
+                .cast(pl.Utf8)
+                .str.replace_all(r"^(\d+):(\d+)$", r"$1:$2:00")
+                .str.replace_all(r"^(\d):(\d):(\d)$", r"0$1:0$2:0$3")
+                .str.replace_all(r"^(\d{2}):(\d):(\d)$", r"$1:0$2:0$3")
+                .str.replace_all(r"^(\d):(\d{2}):(\d)$", r"0$1:$2:0$3")
+                .str.replace_all(r"^(\d):(\d):(\d{2})$", r"0$1:0$2:$3")
+                .str.replace_all(r"^(\d{2}):(\d{2}):(\d)$", r"$1:$2:0$3")
+                .str.replace_all(r"^(\d):(\d{2}):(\d{2})$", r"0$1:$2:$3")
+                .str.replace_all(r"^(\d{2}):(\d):(\d{2})$", r"$1:0$2:$3")
                 .alias("arrival_time"),
-                ("0" + pl.col("departure_time").cast(str))
-                .str.slice(-8, 8)
-                .alias("departure_time"),
-            ]
-        )
+
+            pl.col("departure_time")
+                .cast(pl.Utf8)
+                .str.replace_all(r"^(\d+):(\d+)$", r"$1:$2:00")
+                .str.replace_all(r"^(\d):(\d):(\d)$", r"0$1:0$2:0$3")
+                .str.replace_all(r"^(\d{2}):(\d):(\d)$", r"$1:0$2:0$3")
+                .str.replace_all(r"^(\d):(\d{2}):(\d)$", r"0$1:$2:0$3")
+                .str.replace_all(r"^(\d):(\d):(\d{2})$", r"0$1:0$2:$3")
+                .str.replace_all(r"^(\d{2}):(\d{2}):(\d)$", r"$1:$2:0$3")
+                .str.replace_all(r"^(\d):(\d{2}):(\d{2})$", r"0$1:$2:$3")
+                .str.replace_all(r"^(\d{2}):(\d):(\d{2})$", r"$1:0$2:$3")
+                .alias("departure_time")
+        ])
+
+
 
         stop_times = stop_times.with_columns(
             [

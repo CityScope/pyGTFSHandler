@@ -580,6 +580,58 @@ class Feed:
 
         return gtfs_lf
 
+    def calendar_new_end_date(self, new_end_date: datetime | date, file_id=None,gtfs_name=None):
+        end_date = int(utils.datetime_to_days_since_epoch(new_end_date))
+        if self.calendar.lf is not None:
+            if file_id is not None:
+                self.calendar.lf = self.calendar.lf.with_columns(
+                    pl.when(
+                        pl.col("file_id") == pl.lit(file_id)
+                    ).then(
+                    pl.lit(end_date)
+                    ).otherwise(pl.col("end_date")
+                    ).alias("end_date")
+                )
+            elif gtfs_name is not None:
+                self.calendar.lf = self.calendar.lf.with_columns(
+                    pl.when(
+                        pl.col("gtfs_name") == pl.lit(gtfs_name)
+                    ).then(
+                    pl.lit(end_date)
+                    ).otherwise(pl.col("end_date")
+                    ).alias("end_date")
+                )
+            else:
+                self.calendar.lf = self.calendar.lf.with_columns(
+                    pl.lit(end_date).alias("end_date")
+                )
+
+    def calendar_new_start_date(self, new_start_date: datetime | date, file_id=None,gtfs_name=None):
+        start_date = int(utils.datetime_to_days_since_epoch(new_start_date))
+        if self.calendar.lf is not None:
+            if file_id is not None:
+                self.calendar.lf = self.calendar.lf.with_columns(
+                    pl.when(
+                        pl.col("file_id") == pl.lit(file_id)
+                    ).then(
+                    pl.lit(start_date)
+                    ).otherwise(pl.col("start_date")
+                    ).alias("start_date")
+                )
+            elif gtfs_name is not None:
+                self.calendar.lf = self.calendar.lf.with_columns(
+                    pl.when(
+                        pl.col("gtfs_name") == pl.lit(gtfs_name)
+                    ).then(
+                    pl.lit(start_date)
+                    ).otherwise(pl.col("start_date")
+                    ).alias("start_date")
+                )
+            else:
+                self.calendar.lf = self.calendar.lf.with_columns(
+                    pl.lit(start_date).alias("start_date")
+                )
+                
     def filter_by_date_range(
         self,
         data: pl.LazyFrame,

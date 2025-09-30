@@ -197,11 +197,17 @@ class Calendar:
                 pl.col("date")
                 .cast(pl.Utf8)
                 .str.strptime(pl.Date, "%Y%m%d")
-                .dt.epoch(time_unit="d")  # days since 1970-01-01 (int)
+                .dt.epoch(time_unit="d")  # days since 1970-01-01
                 .alias("date"),
+                
+                pl.col("exception_type")
+                .cast(pl.Utf8)
+                .str.to_lowercase()
+                .replace({"added": "1", "removed": "2"})
+                .cast(int)
+                .alias("exception_type"),
             ]
         )
-
         # Create night services by duplicating and shifting dates +1 day
         night_services = calendar_dates.with_columns(
             [
@@ -384,6 +390,9 @@ class Calendar:
         if isinstance(end_date, datetime):
             end_date = end_date.date()
 
+        if end_date < start_date:
+            raise Exception("end_date should be after start_date")
+
         # Generate list of dates in range with weekday info
         date_list = [
             start_date + timedelta(days=i)
@@ -481,7 +490,7 @@ class Calendar:
                     "service_ids": sorted(data["services"]),
                 }
                 for date, data in sorted(date_service_map.items())
-            ]
+            ] 
         ).with_columns(
             pl.col("date")
             .str.strptime(pl.Datetime, "%Y-%m-%d")

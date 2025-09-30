@@ -37,7 +37,8 @@ class Trips:
 
         if service_ids is not None:
             service_ids = [
-                sid[:-6] if sid.endswith("_night") else sid for sid in service_ids
+                sid[:-6] if (sid is not None and sid.endswith("_night")) else sid
+                for sid in service_ids
             ]
 
         self.lf = self.__read_trips(service_ids, trip_ids, route_ids)
