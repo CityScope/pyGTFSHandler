@@ -29,6 +29,7 @@ class Stops:
         aoi: Union[gpd.GeoDataFrame, gpd.GeoSeries, None] = None,
         stop_group_distance: float = 0,
         stop_ids: Union[List[str], pl.DataFrame | pl.LazyFrame] = None,
+        check_files:bool=False
     ):
         """
         Initialize Stops instance and load GTFS stops from one or more files.
@@ -43,7 +44,7 @@ class Stops:
         else:
             paths = [Path(p) for p in path]
 
-        self.lf = self.__read_stops(paths, stop_ids)
+        self.lf = self.__read_stops(paths, stop_ids, check_files=check_files)
 
         if aoi is None:
             df = self.lf.select(
@@ -86,7 +87,7 @@ class Stops:
         self.mean_lat = mean_coords["mean_lat"][0]
 
     def __read_stops(
-        self, paths, stop_ids: Union[List[str], None] = None
+        self, paths, stop_ids: Union[List[str], None] = None, check_files=False
     ) -> pl.LazyFrame:
         """
         Read GTFS stops.txt files and filter by stop IDs if provided.
@@ -105,7 +106,7 @@ class Stops:
                 raise FileNotFoundError(f"File {p} does not exist")
 
         schema_dict = utils.get_df_schema_dict(stop_paths[0])
-        lf = utils.read_csv_list(stop_paths, schema_overrides=schema_dict)
+        lf = utils.read_csv_list(stop_paths, schema_overrides=schema_dict, check_files=check_files)
 
         lf = utils.filter_by_id_column(lf, "stop_id", stop_ids)
 
@@ -296,7 +297,7 @@ class Stops:
         stop_paths = [p / "stops.txt" for p in paths]
 
         schema_dict = utils.get_df_schema_dict(stop_paths[0])
-        stops = utils.read_csv_list(stop_paths, schema_overrides=schema_dict)
+        stops = utils.read_csv_list(stop_paths, schema_overrides=schema_dict, check_files=False)
 
         if isinstance(stop_ids, list):
             stop_ids_lf = pl.LazyFrame({"stop_id": stop_ids})

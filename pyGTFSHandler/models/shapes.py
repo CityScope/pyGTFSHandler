@@ -22,6 +22,7 @@ class Shapes:
         path: Union[str, Path, List[Union[str, Path]]],
         trip_shape_ids_lf,
         stops_lf,
+        check_files:bool=False
     ):
         """
         Initialize the Shapes instance.

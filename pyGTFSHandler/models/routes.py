@@ -25,6 +25,7 @@ class Routes:
         path: Union[str, Path, List[Union[str, Path]]],
         route_ids: Optional[List[str] | pl.LazyFrame | pl.DataFrame] = None,
         route_types: Optional[List[int]] = None,
+        check_files:bool=False
     ):
         """
         Initializes the Routes class by reading and filtering the routes data.
@@ -38,7 +39,7 @@ class Routes:
         else:
             paths = [Path(p) for p in path]
 
-        self.lf = self.__read_routes(paths, route_ids, route_types)
+        self.lf = self.__read_routes(paths, route_ids, route_types, check_files=check_files)
         if (route_ids is not None) or (route_types is not None):
             self.route_ids = (
                 self.lf.select("route_id").unique().collect()["route_id"].to_list()
@@ -49,7 +50,7 @@ class Routes:
             self.route_ids = None
 
     def __read_routes(
-        self, paths, route_ids: Optional[List[str]], route_types: Optional[List[int]]
+        self, paths, route_ids: Optional[List[str]], route_types: Optional[List[int]], check_files=False
     ) -> pl.LazyFrame:
         """
         Reads the routes data from one or more `routes.txt` files and applies optional filters.
@@ -67,7 +68,7 @@ class Routes:
                 raise FileNotFoundError(f"File {p} does not exist")
 
         schema_dict = utils.get_df_schema_dict(route_paths[0])
-        routes = utils.read_csv_list(route_paths, schema_overrides=schema_dict)
+        routes = utils.read_csv_list(route_paths, schema_overrides=schema_dict, check_files=check_files)
         # Identify values that cannot be converted to int
         non_convertible = routes.filter(
             pl.col("route_type").cast(pl.Int64, strict=False).is_null()

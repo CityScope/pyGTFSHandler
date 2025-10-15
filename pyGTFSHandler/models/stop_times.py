@@ -112,6 +112,7 @@ class StopTimes:
         end_time: Optional[datetime] = None,
         stop_ids: Optional[List[str] | pl.DataFrame | pl.LazyFrame] = None,
         trip_ids: Optional[List[str]] = None,
+        check_files:bool=False
     ):
         """
         Initializes the StopTimes instance and runs the processing pipeline.
@@ -139,7 +140,7 @@ class StopTimes:
             paths: List[Path] = [Path(p) for p in path]
 
         # --- Main Processing Pipeline ---
-        self.lf: pl.LazyFrame = self.__read_stop_times(paths, trip_ids)
+        self.lf: pl.LazyFrame = self.__read_stop_times(paths, trip_ids, check_files=check_files)
         self.lf = self.__correct_sequence(self.lf)
         self.lf, self.fixed_times = self.__fix_nulls_easy(self.lf)
         self.lf = self.__normalize_times(self.lf)
@@ -153,7 +154,7 @@ class StopTimes:
             warnings.warn("Some departure times are null and have been interpolated")
 
         self.frequencies: Optional[pl.LazyFrame] = self.__read_frequencies(
-            paths, trip_ids
+            paths, trip_ids, check_files=check_files
         )
 
         if self.frequencies is not None:
@@ -245,7 +246,7 @@ class StopTimes:
         )
 
     def __read_stop_times(
-        self, paths, trip_ids: Optional[List[str]] = None
+        self, paths, trip_ids: Optional[List[str]] = None, check_files=False
     ) -> pl.LazyFrame:
         """
         Reads and preprocesses `stop_times.txt` files into a Polars LazyFrame.
@@ -278,7 +279,7 @@ class StopTimes:
             stop_times_paths[0]
         )
         stop_times: pl.LazyFrame = utils.read_csv_list(
-            stop_times_paths, schema_overrides=schema_dict
+            stop_times_paths, schema_overrides=schema_dict, check_files=check_files
         )
 
         stop_times = stop_times.with_columns(
@@ -587,7 +588,7 @@ class StopTimes:
         return stop_times
 
     def __read_frequencies(
-        self, paths, trip_ids: Optional[List[str]] = None
+        self, paths, trip_ids: Optional[List[str]] = None, check_files=False
     ) -> Optional[pl.LazyFrame]:
         """
         Reads and processes GTFS `frequencies.txt` files from all available paths.
@@ -609,7 +610,7 @@ class StopTimes:
             frequencies_paths[0]
         )
         frequencies: pl.LazyFrame = utils.read_csv_list(
-            frequencies_paths, schema_overrides=schema_dict
+            frequencies_paths, schema_overrides=schema_dict, check_files=check_files
         )
 
         if frequencies is None:

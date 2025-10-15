@@ -98,6 +98,7 @@ class Feed:
         trip_ids: Optional[List[str]] = None,
         stop_ids: Optional[List[str]] = None,
         route_ids: Optional[List[str]] = None,
+        check_files:bool=True
     ):
         """
         Initializes a Feed instance by loading, filtering, and integrating GTFS data.
@@ -152,6 +153,7 @@ class Feed:
             aoi=aoi,
             stop_group_distance=stop_group_distance,
             stop_ids=stop_ids,
+            check_files=check_files
         )
 
         if (self.stops.stop_ids is not None) and (len(self.stops.stop_ids) == 0):
@@ -165,6 +167,7 @@ class Feed:
             service_ids=service_ids,
             lon=self.stops.mean_lon,
             lat=self.stops.mean_lat,
+            check_files=check_files
         )
 
         if route_types is not None:
@@ -174,7 +177,7 @@ class Feed:
                 route_types = [utils.normalize_route_type(route_types)]
 
         self.routes = Routes(
-            self.gtfs_dir, route_ids=route_ids, route_types=route_types
+            self.gtfs_dir, route_ids=route_ids, route_types=route_types, check_files=check_files
         )
 
         if (self.routes.route_ids is not None) and (len(self.routes.route_ids) == 0):
@@ -188,6 +191,7 @@ class Feed:
             service_ids=self.calendar.service_ids,
             trip_ids=trip_ids,
             route_ids=self.routes.route_ids,
+            check_files=check_files
         )
 
         if (self.trips.trip_ids is not None) and (len(self.trips.trip_ids) == 0):
@@ -201,6 +205,7 @@ class Feed:
             end_time=end_time,
             stop_ids=self.stops.stop_ids,
             trip_ids=self.trips.trip_ids,
+            check_files=check_files
         )
 
         if self.stop_times.lf.select(pl.count()).collect().item() == 0:
@@ -220,7 +225,7 @@ class Feed:
         self.trip_shape_ids_lf: pl.LazyFrame = (
             self.stop_times.generate_shape_ids().collect().lazy()
         )
-        self.shapes = Shapes(self.gtfs_dir, self.trip_shape_ids_lf, self.stops.lf)
+        self.shapes = Shapes(self.gtfs_dir, self.trip_shape_ids_lf, self.stops.lf, check_files=check_files)
 
         # --- 5. Build the Main Integrated LazyFrame (`lf`) ---
         # Start with the core stop_times data.

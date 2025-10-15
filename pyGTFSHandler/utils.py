@@ -11,6 +11,7 @@ import warnings
 
 import zipfile
 import hashlib
+import csv
 
 # import pygeohash
 
@@ -125,7 +126,7 @@ def get_df_schema_dict(path) -> dict:
 
 
 def read_csv_lazy(
-    path: str, schema_overrides: dict | None = None, file_id: int | None = None
+    path: str, schema_overrides: dict | None = None, file_id: int | None = None, check_files:bool=False
 ) -> pl.LazyFrame | None:
     """
     Lazily reads a CSV file into a Polars LazyFrame with optional schema overrides and column filtering.
@@ -150,8 +151,13 @@ def read_csv_lazy(
     if not os.path.isfile(path):
         return None
 
+    if check_files:
+        # Open the CSV file and create a CSV reader object
+        with open('file.csv', 'r') as file:
+            row_count = len(list(csv.reader(file)))
+
     # Lazily scan CSV with optional column selection
-    lf = pl.scan_csv(path, infer_schema=False)
+    lf = pl.scan_csv(path, infer_schema=False, raise_if_empty=False, truncate_ragged_lines=True)
 
     # Apply custom normalization (assuming normalize_df is defined elsewhere)
     lf = normalize_df(lf)
@@ -184,11 +190,18 @@ def read_csv_lazy(
             if col in mandatory_cols:
                 lf = lf.filter(pl.col(col).is_not_null())
 
+    if check_files:
+        lf = lf.collect()
+        if row_count != len(lf):
+            warnings.warn(f"{row_count - len(lf)} rows of the file {path} are invalid and have been skipped.")
+        
+        lf = lf.lazy()
+
     return lf
 
 
 def read_csv_list(
-    path_list: List[str], schema_overrides: Optional[dict] = None
+    path_list: List[str], schema_overrides: Optional[dict] = None, check_files:bool=False
 ) -> pl.LazyFrame:
     """
     Lazily reads a list of CSV (GTFS) files into a single concatenated Polars LazyFrame.
@@ -215,7 +228,7 @@ def read_csv_list(
         for i in range(len(path_list))
         if (
             res := read_csv_lazy(
-                path_list[i], schema_overrides=schema_overrides, file_id=i
+                path_list[i], schema_overrides=schema_overrides, file_id=i, check_files=check_files
             )
         )
         is not None

@@ -18,6 +18,7 @@ class Calendar:
         lon: float | None = None,
         lat: float | None = None,
         service_ids: Optional[List[str]] | None = None,
+        check_files:bool=False
     ):
         """
         A class to manage GTFS calendar data, allowing filtering of active services
@@ -50,8 +51,8 @@ class Calendar:
                 sid[:-6] if sid.endswith("_night") else sid for sid in service_ids
             ]
 
-        self.lf = self.__read_calendar(paths, service_ids)
-        self.exceptions_lf = self.__read_calendar_dates(paths, service_ids)
+        self.lf = self.__read_calendar(paths, service_ids, check_files=check_files)
+        self.exceptions_lf = self.__read_calendar_dates(paths, service_ids, check_files=check_files)
         self.min_date, self.max_date = self.__get_min_max_dates(
             self.lf, self.exceptions_lf
         )
@@ -108,7 +109,7 @@ class Calendar:
             self.service_ids = service_ids
 
     def __read_calendar(
-        self, paths, service_ids: Optional[List[str]]
+        self, paths, service_ids: Optional[List[str]], check_files=False
     ) -> Optional[pl.LazyFrame]:
         """
         Reads the calendar.txt files from all paths using utils.read_csv_list.
@@ -122,7 +123,7 @@ class Calendar:
         calendar_paths = [p / "calendar.txt" for p in paths]
 
         schema_dict = utils.get_df_schema_dict(calendar_paths[0])  # assume same schema
-        calendar = utils.read_csv_list(calendar_paths, schema_overrides=schema_dict)
+        calendar = utils.read_csv_list(calendar_paths, schema_overrides=schema_dict, check_files=check_files)
 
         if calendar is None:
             return None
@@ -166,7 +167,7 @@ class Calendar:
         return calendar
 
     def __read_calendar_dates(
-        self, paths, service_ids: Optional[List[str]]
+        self, paths, service_ids: Optional[List[str]], check_files=False
     ) -> Optional[pl.LazyFrame]:
         """
         Reads the calendar_dates.txt files from all paths using utils.read_csv_list.
@@ -181,7 +182,7 @@ class Calendar:
 
         schema_dict = utils.get_df_schema_dict(calendar_dates_paths[0])
         calendar_dates = utils.read_csv_list(
-            calendar_dates_paths, schema_overrides=schema_dict
+            calendar_dates_paths, schema_overrides=schema_dict, check_files=check_files
         )
 
         if calendar_dates is None:

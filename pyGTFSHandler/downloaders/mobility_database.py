@@ -480,7 +480,15 @@ class MobilityDatabaseClient:
             feed_id = feed.get('id', '')
             feed_name = feed.get('feed_name', '')
             feed_provider = feed.get('provider', '')
-            feed_filename = utils.normalize_string(f"{feed_id}_{feed_name}_{feed_provider}")
+            # Ensure each component is at most x characters
+            max_chars = 10
+            feed_id_short = feed_id[:max_chars]
+            feed_name_short = feed_name[:max_chars]
+            feed_provider_short = feed_provider[:max_chars]
+
+            # Combine and normalize
+            feed_filename = utils.normalize_string(f"{feed_id_short}_{feed_name_short}_{feed_provider_short}")
+
             latest_dataset = feed.get('latest_dataset')
             if not latest_dataset:
                 print(f"Feed '{feed_filename}' has no 'latest_dataset'. Skipping.")
