@@ -156,6 +156,9 @@ def read_csv_lazy(
         with open(path, 'r') as file:
             row_count = len(list(csv.reader(file)))
 
+        if row_count > 0:
+            row_count -= 1
+
     # Lazily scan CSV with optional column selection
     lf = pl.scan_csv(path, infer_schema=False, raise_if_empty=False, truncate_ragged_lines=True)
 
