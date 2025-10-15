@@ -153,7 +153,7 @@ def read_csv_lazy(
 
     if check_files:
         # Open the CSV file and create a CSV reader object
-        with open('file.csv', 'r') as file:
+        with open(path, 'r') as file:
             row_count = len(list(csv.reader(file)))
 
     # Lazily scan CSV with optional column selection
