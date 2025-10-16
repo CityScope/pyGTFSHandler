@@ -120,7 +120,15 @@ class Calendar:
         Returns:
             Optional[pl.LazyFrame]: Filtered calendar data or None if no files found.
         """
-        calendar_paths = [p / "calendar.txt" for p in paths]
+        calendar_paths: List[Path] = []
+        file = "calendar.txt"
+        for p in paths:
+            new_p = utils.search_file(p, file=file)
+            if new_p is None:
+                continue
+            else:
+                calendar_paths.append(new_p)
+
 
         schema_dict = utils.get_df_schema_dict(calendar_paths[0])  # assume same schema
         calendar = utils.read_csv_list(calendar_paths, schema_overrides=schema_dict, check_files=check_files)
@@ -178,7 +186,14 @@ class Calendar:
         Returns:
             Optional[pl.LazyFrame]: Filtered calendar_dates data or None if no files found.
         """
-        calendar_dates_paths = [p / "calendar_dates.txt" for p in paths]
+        calendar_dates_paths: List[Path] = []
+        file = "calendar_dates.txt"
+        for p in paths:
+            new_p = utils.search_file(p, file=file)
+            if new_p is None:
+                continue
+            else:
+                calendar_dates_paths.append(new_p)
 
         schema_dict = utils.get_df_schema_dict(calendar_dates_paths[0])
         calendar_dates = utils.read_csv_list(

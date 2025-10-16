@@ -32,9 +32,9 @@ class Trips:
             route_ids (list[str], optional): List of route IDs to filter by.
         """
         if isinstance(path, (str, Path)):
-            self.paths = [Path(path)]
+            paths = [Path(path)]
         else:
-            self.paths = [Path(p) for p in path]
+            paths = [Path(p) for p in path]
 
         if service_ids is not None:
             service_ids = [
@@ -42,7 +42,7 @@ class Trips:
                 for sid in service_ids
             ]
 
-        self.lf = self.__read_trips(service_ids, trip_ids, route_ids, check_files=check_files)
+        self.lf = self.__read_trips(paths,service_ids, trip_ids, route_ids, check_files=check_files)
         if (service_ids is not None) or (route_ids is not None):
             self.trip_ids = (
                 self.lf.select("trip_id").unique().collect()["trip_id"].to_list()
@@ -55,6 +55,7 @@ class Trips:
 
     def __read_trips(
         self,
+        paths,
         service_ids: Optional[List[str]],
         trip_ids: Optional[List[str]],
         route_ids: Optional[List[str]],
@@ -71,10 +72,15 @@ class Trips:
         Returns:
             pl.LazyFrame: Filtered trips data as a LazyFrame including duplicated night trips.
         """
-        trip_paths = [p / "trips.txt" for p in self.paths]
-        for p in trip_paths:
-            if not os.path.isfile(p):
-                raise FileNotFoundError(f"File {p} does not exist")
+        trip_paths: List[Path] = []
+        file = "trips.txt"
+        for p in paths:
+            new_p = utils.search_file(p, file=file)
+            if new_p is None:
+                raise FileNotFoundError(f"File {file} does not exist in {p}")
+            else:
+                trip_paths.append(new_p)
+
 
         schema_dict = utils.get_df_schema_dict(trip_paths[0])
         trips = utils.read_csv_list(trip_paths, schema_overrides=schema_dict, check_files=check_files)

@@ -100,10 +100,14 @@ class Stops:
         Returns:
             pl.LazyFrame: Filtered and normalized stops LazyFrame.
         """
-        stop_paths = [p / "stops.txt" for p in paths]
-        for p in stop_paths:
-            if not os.path.isfile(p):
-                raise FileNotFoundError(f"File {p} does not exist")
+        stop_paths: List[Path] = []
+        file = "stops.txt"
+        for p in paths:
+            new_p = utils.search_file(p, file=file)
+            if new_p is None:
+                raise FileNotFoundError(f"File {file} does not exist in {p}")
+            else:
+                stop_paths.append(new_p)
 
         schema_dict = utils.get_df_schema_dict(stop_paths[0])
         lf = utils.read_csv_list(stop_paths, schema_overrides=schema_dict, check_files=check_files)
@@ -294,7 +298,14 @@ class Stops:
         else:
             paths = [Path(p) for p in path]
 
-        stop_paths = [p / "stops.txt" for p in paths]
+        stop_paths: List[Path] = []
+        file = "stops.txt"
+        for p in paths:
+            new_p = utils.search_file(p, file=file)
+            if new_p is None:
+                continue
+            else:
+                stop_paths.append(new_p)
 
         schema_dict = utils.get_df_schema_dict(stop_paths[0])
         stops = utils.read_csv_list(stop_paths, schema_overrides=schema_dict, check_files=False)

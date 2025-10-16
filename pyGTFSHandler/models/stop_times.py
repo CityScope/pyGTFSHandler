@@ -269,11 +269,14 @@ class StopTimes:
         Raises:
             FileNotFoundError: If no `stop_times.txt` files are found in the given paths.
         """
-        stop_times_paths: List[Path] = [p / "stop_times.txt" for p in paths]
-
-        for p in stop_times_paths:
-            if not os.path.isfile(p):
-                raise FileNotFoundError(f"File {p} does not exist")
+        stop_times_paths: List[Path] = []
+        file = "stop_times.txt"
+        for p in paths:
+            new_p = utils.search_file(p, file=file)
+            if new_p is None:
+                raise FileNotFoundError(f"File {file} does not exist in {p}")
+            else:
+                stop_times_paths.append(new_p)
 
         schema_dict: Dict[str, pl.DataType] = utils.get_df_schema_dict(
             stop_times_paths[0]
@@ -292,29 +295,25 @@ class StopTimes:
         stop_times = utils.filter_by_id_column(stop_times, "trip_id", trip_ids)
 
         stop_times = stop_times.with_columns([
+            # Normalize arrival_time
             pl.col("arrival_time")
-                .cast(pl.Utf8)
-                .str.replace_all(r"^(\d+):(\d+)$", r"$1:$2:00")
-                .str.replace_all(r"^(\d):(\d):(\d)$", r"0$1:0$2:0$3")
-                .str.replace_all(r"^(\d{2}):(\d):(\d)$", r"$1:0$2:0$3")
-                .str.replace_all(r"^(\d):(\d{2}):(\d)$", r"0$1:$2:0$3")
-                .str.replace_all(r"^(\d):(\d):(\d{2})$", r"0$1:0$2:$3")
-                .str.replace_all(r"^(\d{2}):(\d{2}):(\d)$", r"$1:$2:0$3")
-                .str.replace_all(r"^(\d):(\d{2}):(\d{2})$", r"0$1:$2:$3")
-                .str.replace_all(r"^(\d{2}):(\d):(\d{2})$", r"$1:0$2:$3")
-                .alias("arrival_time"),
+            .str.replace_all(r"^\s*$", None)                     # empty → 00:00:00
+            .str.replace_all(r"^(\d{1,2})$", r"0\1:00:00")             # H → 0H:00:00, HH → HH:00:00
+            .str.replace_all(r"^(\d{1,2}):(\d{1,2})$", r"0\1:0\2:00")  # H:M, HH:M, H:MM, HH:MM
+            .str.replace_all(r"^(\d{1,2}):(\d{1,2}):(\d{1,2})$", r"0\1:0\2:0\3") # H:M:S etc.
+            .str.replace_all(r"^(\d{1,2}):(\d{1,2}):?$", r"0\1:0\2:00")         # H:MM: or HH:MM:
+            .str.replace_all(r"^:?(\\d{1,2}):(\d{1,2})$", r"00:\1:0\2")         # :HH:M → 00:HH:0M
+            .alias("arrival_time"),
 
+            # Normalize departure_time
             pl.col("departure_time")
-                .cast(pl.Utf8)
-                .str.replace_all(r"^(\d+):(\d+)$", r"$1:$2:00")
-                .str.replace_all(r"^(\d):(\d):(\d)$", r"0$1:0$2:0$3")
-                .str.replace_all(r"^(\d{2}):(\d):(\d)$", r"$1:0$2:0$3")
-                .str.replace_all(r"^(\d):(\d{2}):(\d)$", r"0$1:$2:0$3")
-                .str.replace_all(r"^(\d):(\d):(\d{2})$", r"0$1:0$2:$3")
-                .str.replace_all(r"^(\d{2}):(\d{2}):(\d)$", r"$1:$2:0$3")
-                .str.replace_all(r"^(\d):(\d{2}):(\d{2})$", r"0$1:$2:$3")
-                .str.replace_all(r"^(\d{2}):(\d):(\d{2})$", r"$1:0$2:$3")
-                .alias("departure_time")
+            .str.replace_all(r"^\s*$", None)
+            .str.replace_all(r"^(\d{1,2})$", r"0\1:00:00")
+            .str.replace_all(r"^(\d{1,2}):(\d{1,2})$", r"0\1:0\2:00")
+            .str.replace_all(r"^(\d{1,2}):(\d{1,2}):(\d{1,2})$", r"0\1:0\2:0\3")
+            .str.replace_all(r"^(\d{1,2}):(\d{1,2}):?$", r"0\1:0\2:00")
+            .str.replace_all(r"^:?(\\d{1,2}):(\d{1,2})$", r"00:\1:0\2")
+            .alias("departure_time")
         ])
 
 
@@ -604,7 +603,14 @@ class StopTimes:
             Optional[pl.LazyFrame]: A LazyFrame of parsed frequencies,
                                     or None if no `frequencies.txt` file is found.
         """
-        frequencies_paths: List[Path] = [p / "frequencies.txt" for p in paths]
+        frequencies_paths: List[Path] = []
+        file = "frequencies.txt"
+        for p in paths:
+            new_p = utils.search_file(p, file=file)
+            if new_p is None:
+                continue
+            else:
+                frequencies_paths.append(new_p)
 
         schema_dict: Dict[str, pl.DataType] = utils.get_df_schema_dict(
             frequencies_paths[0]

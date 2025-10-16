@@ -12,6 +12,7 @@ import warnings
 import zipfile
 import hashlib
 import csv
+import tempfile
 
 # import pygeohash
 
@@ -36,6 +37,22 @@ def time_to_seconds(t: datetime | time) -> int:
         t = t.time()
 
     return t.hour * 3600 + t.minute * 60 + t.second
+
+def sanitize_csv_quotes(path: str) -> str:
+    """
+    Fixes unescaped quotes inside quoted strings like "King"s" → "King""s".
+    Returns the path to a temporary cleaned file.
+    """
+    with open(path, "r", encoding="utf-8") as f:
+        text = f.read()
+
+    # Replace single unescaped quote followed by s" → double quote escape
+    text = re.sub(r'(".*?)(?<!")"([^",\n])', r'\1""\2', text)
+
+    temp = tempfile.NamedTemporaryFile(delete=False, suffix=".txt")
+    temp.write(text.encode("utf-8"))
+    temp.close()
+    return temp.name
 
 
 def get_df_schema_dict(path) -> dict:
@@ -160,7 +177,11 @@ def read_csv_lazy(
             row_count -= 1
 
     # Lazily scan CSV with optional column selection
-    lf = pl.scan_csv(path, infer_schema=False, raise_if_empty=False, truncate_ragged_lines=True)
+    if check_files:
+        clean_path = sanitize_csv_quotes(path)
+        lf = pl.scan_csv(clean_path, infer_schema=False, raise_if_empty=False, truncate_ragged_lines=True)
+    else:
+        lf = pl.scan_csv(path, infer_schema=False, raise_if_empty=False, truncate_ragged_lines=True)
 
     # Apply custom normalization (assuming normalize_df is defined elsewhere)
     lf = normalize_df(lf)
@@ -204,7 +225,7 @@ def read_csv_lazy(
 
 
 def read_csv_list(
-    path_list: List[str], schema_overrides: Optional[dict] = None, check_files:bool=False
+    path_list: List[str], schema_overrides: Optional[dict] = None, check_files:bool=False, search_files:bool=False
 ) -> pl.LazyFrame:
     """
     Lazily reads a list of CSV (GTFS) files into a single concatenated Polars LazyFrame.
@@ -226,6 +247,18 @@ def read_csv_list(
         pl.LazyFrame
             A concatenated LazyFrame of all input files, using `how='diagonal_relaxed'` to handle differing schemas.
     """
+    if search_files:
+        new_path_list = []
+        for path in path_list:
+            folder, file = os.path.split(path)
+            new_path = search_file(folder,file)
+            if new_path is None:
+                print(f"File {file} not found in path {folder}")
+            else:
+                new_path_list.append(new_path)
+
+        path_list = new_path_list
+
     file_lfs = [
         res
         for i in range(len(path_list))
@@ -268,6 +301,24 @@ def normalize_string(s: str) -> str:
     s = re.sub(r"\s+", "", s)  # Remove all whitespace
     s = re.sub(r"[^a-z0-9_]", "", s)  # Keep only a-z, 0-9, and underscore
     return s
+
+
+def search_file(path, file):
+    """
+    Recursively searches for the first file that matches the given filename
+    in the directory and its subdirectories.
+
+    Args:
+        path (str): The root directory to start searching from.
+        file (str): The filename to search for (case-sensitive).
+
+    Returns:
+        str | None: The full path of the first matching file, or None if not found.
+    """
+    for root, dirs, files in os.walk(path):
+        if file in files:
+            return os.path.join(root, file)
+    return None
 
 
 def normalize_df(lf: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame:
