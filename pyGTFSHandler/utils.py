@@ -166,7 +166,7 @@ def read_csv_lazy(
     # Lazily scan CSV with optional column selection
     if check_files:
         lf = pl.read_csv(
-            "your_file.csv",
+            path,
             infer_schema=False,          # don’t try to infer types
             ignore_errors=True,          # skip parsing errors
             truncate_ragged_lines=True   # handle lines with missing columns
@@ -191,7 +191,7 @@ def read_csv_lazy(
                 ignore_errors=True,          # skip parsing errors
                 truncate_ragged_lines=True   # handle lines with missing columns
             ).lazy()
-            
+
     # Apply custom normalization (assuming normalize_df is defined elsewhere)
     lf = normalize_df(lf)
 
