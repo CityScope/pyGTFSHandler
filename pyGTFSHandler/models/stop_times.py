@@ -624,14 +624,41 @@ class StopTimes:
 
         frequencies = utils.filter_by_id_column(frequencies, "trip_id", trip_ids)
 
-        frequencies = frequencies.with_columns(
-            [
-                ("0" + pl.col("start_time").cast(str))
-                .str.slice(-8, 8)
-                .alias("start_time"),
-                ("0" + pl.col("end_time").cast(str)).str.slice(-8, 8).alias("end_time"),
-            ]
+        frequencies = frequencies.filter(
+            (~pl.col("start_time").is_null()) & (pl.col("start_time") != "")
         )
+        frequencies = frequencies.filter(
+            (~pl.col("end_time").is_null()) & (pl.col("end_time") != "")
+        )
+        
+        frequencies = frequencies.with_columns([
+            # Normalize arrival_time
+            pl.col("start_time")
+            .str.replace_all(r"^(\d{1,2})$", r"0\1:00:00")             # H → 0H:00:00, HH → HH:00:00
+            .str.replace_all(r"^(\d{1,2}):(\d{1,2})$", r"0\1:0\2:00")  # H:M, HH:M, H:MM, HH:MM
+            .str.replace_all(r"^(\d{1,2}):(\d{1,2}):(\d{1,2})$", r"0\1:0\2:0\3") # H:M:S etc.
+            .str.replace_all(r"^(\d{1,2}):(\d{1,2}):?$", r"0\1:0\2:00")         # H:MM: or HH:MM:
+            .str.replace_all(r"^:?(\\d{1,2}):(\d{1,2})$", r"00:\1:0\2")         # :HH:M → 00:HH:0M
+            .alias("start_time"),
+
+            # Normalize departure_time
+            pl.col("end_time")
+            .str.replace_all(r"^(\d{1,2})$", r"0\1:00:00")
+            .str.replace_all(r"^(\d{1,2}):(\d{1,2})$", r"0\1:0\2:00")
+            .str.replace_all(r"^(\d{1,2}):(\d{1,2}):(\d{1,2})$", r"0\1:0\2:0\3")
+            .str.replace_all(r"^(\d{1,2}):(\d{1,2}):?$", r"0\1:0\2:00")
+            .str.replace_all(r"^:?(\\d{1,2}):(\d{1,2})$", r"00:\1:0\2")
+            .alias("end_time")
+        ])
+
+        # frequencies = frequencies.with_columns(
+        #     [
+        #         ("0" + pl.col("start_time").cast(str))
+        #         .str.slice(-8, 8)
+        #         .alias("start_time"),
+        #         ("0" + pl.col("end_time").cast(str)).str.slice(-8, 8).alias("end_time"),
+        #     ]
+        # )
 
         frequencies = frequencies.with_columns(
             [
