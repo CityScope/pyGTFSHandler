@@ -63,28 +63,28 @@ def sanitize_csv_file(path: str) -> str:
 
     with open(path, "r", encoding="utf-8", errors="ignore") as f, temp_file:
         reader = csv.reader(f, delimiter=delimiter, quotechar=quotechar, skipinitialspace=True)
-        writer = csv.writer(temp_file, delimiter=delimiter, quotechar='"', quoting=csv.QUOTE_MINIMAL)
+        writer = csv.writer(temp_file, delimiter=delimiter, quotechar=quotechar, quoting=csv.QUOTE_MINIMAL)
 
-        # Use map() to process rows without a for loop
-        process_row = lambda row: writer.writerow(list(map(normalize_field, row)))
-        list(map(process_row, reader))  # map iterates internally; no explicit for loop
+        # Read header to get expected column count
+        try:
+            header = next(reader)
+        except StopIteration:
+            raise ValueError("CSV file is empty")
+        expected_cols = len(header)
+        writer.writerow(header)
+
+        row_num = 1  # header is row 1
+        for row in reader:
+            row_num += 1
+            if len(row) != expected_cols:
+                print(f"Warning: Row {row_num} has {len(row)} columns, expected {expected_cols}. Skipping.")
+                continue
+            # Escape internal quotes but keep structure intact
+            new_row = [field.replace('"', '""') if field else '' for field in row]
+            writer.writerow(new_row)
 
     shutil.move(temp_file.name, path)
     return path
-
-def normalize_field(field: str) -> str:
-    """Normalize quotes and escape internal double quotes while preserving apostrophes."""
-    if not field:
-        return ''
-    # Convert single quotes used as outer quotes to double quotes
-    if field.startswith("'") and field.endswith("'") and len(field) > 1:
-        field = field[1:-1]
-    # Remove extra outer double quotes
-    while field.startswith('"') and field.endswith('"') and len(field) > 1:
-        field = field[1:-1]
-    # Escape internal double quotes
-    field = field.replace('"', '""')
-    return field
 
 
 def get_df_schema_dict(path) -> dict:
