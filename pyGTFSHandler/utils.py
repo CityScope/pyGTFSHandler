@@ -42,53 +42,6 @@ def time_to_seconds(t: datetime | time) -> int:
     return t.hour * 3600 + t.minute * 60 + t.second
 
 
-def sanitize_csv_file(path: str) -> str:
-    # --- Detect delimiter ---
-    with open(path, "r", encoding="utf-8", errors="ignore") as f:
-        sample = f.read(4096)
-    try:
-        dialect = csv.Sniffer().sniff(sample, delimiters=[',',';','\t'])
-        delimiter = dialect.delimiter
-    except csv.Error:
-        delimiter = ','
-
-    # --- Detect quote character ---
-    with open(path, "r", encoding="utf-8", errors="ignore") as f:
-        sample_lines = list(islice(f, 20))
-    counter = Counter(c for line in sample_lines for c in line if c in ['"', "'"])
-    quotechar = counter.most_common(1)[0][0] if counter else '"'
-
-    # --- Temporary file for writing cleaned CSV ---
-    temp_file = tempfile.NamedTemporaryFile("w", delete=False, newline="", encoding="utf-8")
-
-    with open(path, "r", encoding="utf-8", errors="ignore") as f, temp_file:
-        reader = csv.reader(f, delimiter=delimiter, quotechar=quotechar, skipinitialspace=True)
-        writer = csv.writer(temp_file, delimiter=delimiter, quotechar=quotechar, quoting=csv.QUOTE_MINIMAL)
-
-        # Read header to get expected column count
-        try:
-            header = next(reader)
-        except StopIteration:
-            print(f"CSV file {path} is empty")
-            return path 
-        
-        expected_cols = len(header)
-        writer.writerow(header)
-
-        row_num = 1  # header is row 1
-        for row in reader:
-            row_num += 1
-            if len(row) != expected_cols:
-                print(f"Warning: Row {row_num} has {len(row)} columns, expected {expected_cols}. Skipping.")
-                continue
-            # Escape internal quotes but keep structure intact
-            new_row = [field.replace('"', '""') if field else '' for field in row]
-            writer.writerow(new_row)
-
-    shutil.move(temp_file.name, path)
-    return path
-
-
 def get_df_schema_dict(path) -> dict:
     """
     Returns a dictionary specifying the expected data types for mandatory columns
@@ -212,11 +165,33 @@ def read_csv_lazy(
 
     # Lazily scan CSV with optional column selection
     if check_files:
-        clean_path = sanitize_csv_file(path)
-        lf = pl.scan_csv(clean_path, infer_schema=False, raise_if_empty=False, truncate_ragged_lines=True)
+        lf = pl.read_csv(
+            "your_file.csv",
+            infer_schema=False,          # don’t try to infer types
+            ignore_errors=True,          # skip parsing errors
+            truncate_ragged_lines=True   # handle lines with missing columns
+        ).lazy()
     else:
-        lf = pl.scan_csv(path, infer_schema=False, raise_if_empty=False, truncate_ragged_lines=True)
-
+        try:
+            # Try lazy scan first
+            lf = pl.scan_csv(
+                path,
+                infer_schema=False,
+                raise_if_empty=False,
+                truncate_ragged_lines=True
+            )
+        except Exception as e:
+            # Show exception as a warning
+            warnings.warn(f"scan_csv failed with error: {e}. Falling back to read_csv with ignore_errors.")
+            
+            # Fallback: read_csv with ignore_errors and convert to lazy
+            lf = pl.read_csv(
+                path,
+                infer_schema=False,          # don’t try to infer types
+                ignore_errors=True,          # skip parsing errors
+                truncate_ragged_lines=True   # handle lines with missing columns
+            ).lazy()
+            
     # Apply custom normalization (assuming normalize_df is defined elsewhere)
     lf = normalize_df(lf)
 
