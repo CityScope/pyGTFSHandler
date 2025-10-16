@@ -12,7 +12,10 @@ import warnings
 import zipfile
 import hashlib
 import csv
+import tempfile
 import shutil
+from collections import Counter
+from itertools import islice
 
 # import pygeohash
 
@@ -39,50 +42,49 @@ def time_to_seconds(t: datetime | time) -> int:
     return t.hour * 3600 + t.minute * 60 + t.second
 
 
-def sanitize_csv_quotes(path: str) -> str:
-    """
-    Cleans malformed CSV quote usage in a GTFS file (e.g., stops.txt).
-    Fixes unescaped quotes and ensures each line has balanced quotes.
-
-    The cleaned data is written back to the same file, with a backup created as `filename.bak`.
-
-    Args:
-        path (str): Path to the GTFS .txt file.
-
-    Returns:
-        str: The original file path (after cleaning).
-    """
-    backup_path = path + ".bak"
-    shutil.copy(path, backup_path)
-
-    cleaned_lines = []
-
+def sanitize_csv_file(path: str) -> str:
+    # --- Detect delimiter ---
     with open(path, "r", encoding="utf-8", errors="ignore") as f:
-        for line in f:
-            # Remove BOM or nulls
-            line = line.replace("\x00", "").replace("\ufeff", "").strip("\r\n")
+        sample = f.read(4096)
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=[',',';','\t'])
+        delimiter = dialect.delimiter
+    except csv.Error:
+        delimiter = ','
 
-            # If the line has unbalanced quotes, fix them
-            quote_count = line.count('"')
-            if quote_count % 2 != 0:
-                # Try to fix lines with unescaped internal quotes
-                line = re.sub(r'(?<!")"(?![";,])', '""', line)
+    # --- Detect quote character ---
+    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        sample_lines = list(islice(f, 20))
+    counter = Counter(c for line in sample_lines for c in line if c in ['"', "'"])
+    quotechar = counter.most_common(1)[0][0] if counter else '"'
 
-            # Handle stray leading/trailing quotes that break fields
-            # e.g. ""Sixth Street Garage" → "Sixth Street Garage"
-            line = re.sub(r'^"+', '"', line)
-            line = re.sub(r'"+$', '"', line)
+    # --- Temporary file for writing cleaned CSV ---
+    temp_file = tempfile.NamedTemporaryFile("w", delete=False, newline="", encoding="utf-8")
 
-            # Clean common broken GTFS patterns like ""Stop Name or Stop Name""
-            line = re.sub(r'""+', '"', line)
+    with open(path, "r", encoding="utf-8", errors="ignore") as f, temp_file:
+        reader = csv.reader(f, delimiter=delimiter, quotechar=quotechar, skipinitialspace=True)
+        writer = csv.writer(temp_file, delimiter=delimiter, quotechar='"', quoting=csv.QUOTE_MINIMAL)
 
-            cleaned_lines.append(line)
+        # Use map() to process rows without a for loop
+        process_row = lambda row: writer.writerow(list(map(normalize_field, row)))
+        list(map(process_row, reader))  # map iterates internally; no explicit for loop
 
-    # Write cleaned data back to the same file
-    with open(path, "w", encoding="utf-8", newline="\n") as f:
-        f.write("\n".join(cleaned_lines))
-
+    shutil.move(temp_file.name, path)
     return path
+
+def normalize_field(field: str) -> str:
+    """Normalize quotes and escape internal double quotes while preserving apostrophes."""
+    if not field:
+        return ''
+    # Convert single quotes used as outer quotes to double quotes
+    if field.startswith("'") and field.endswith("'") and len(field) > 1:
+        field = field[1:-1]
+    # Remove extra outer double quotes
+    while field.startswith('"') and field.endswith('"') and len(field) > 1:
+        field = field[1:-1]
+    # Escape internal double quotes
+    field = field.replace('"', '""')
+    return field
 
 
 def get_df_schema_dict(path) -> dict:
@@ -208,7 +210,7 @@ def read_csv_lazy(
 
     # Lazily scan CSV with optional column selection
     if check_files:
-        clean_path = sanitize_csv_quotes(path)
+        clean_path = sanitize_csv_file(path)
         lf = pl.scan_csv(clean_path, infer_schema=False, raise_if_empty=False, truncate_ragged_lines=True)
     else:
         lf = pl.scan_csv(path, infer_schema=False, raise_if_empty=False, truncate_ragged_lines=True)
