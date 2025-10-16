@@ -130,7 +130,7 @@ def get_df_schema_dict(path) -> dict:
 
 
 def read_csv_lazy(
-    path: str, schema_overrides: dict | None = None, file_id: int | None = None, check_files:bool=False
+    path: str, schema_overrides: dict | None = None, file_id: int | None = None, check_files:bool=False, raise_errors:bool=False
 ) -> pl.LazyFrame | None:
     """
     Lazily reads a CSV file into a Polars LazyFrame with optional schema overrides and column filtering.
@@ -165,12 +165,16 @@ def read_csv_lazy(
 
     # Lazily scan CSV with optional column selection
     if check_files:
-        lf = pl.read_csv(
-            path,
-            infer_schema=False,          # don’t try to infer types
-            ignore_errors=True,          # skip parsing errors
-            truncate_ragged_lines=True   # handle lines with missing columns
-        ).lazy()
+        try:
+            lf = pl.read_csv(
+                path,
+                infer_schema=False,          # don’t try to infer types
+                ignore_errors=True,          # skip parsing errors
+                truncate_ragged_lines=True   # handle lines with missing columns
+            ).lazy()
+        except Exception as e:
+            warnings.warn(f"Failed to load CSV {path}: {e}")
+            return None
     else:
         try:
             # Try lazy scan first
@@ -185,12 +189,16 @@ def read_csv_lazy(
             warnings.warn(f"scan_csv failed with error: {e}. Falling back to read_csv with ignore_errors.")
             
             # Fallback: read_csv with ignore_errors and convert to lazy
-            lf = pl.read_csv(
-                path,
-                infer_schema=False,          # don’t try to infer types
-                ignore_errors=True,          # skip parsing errors
-                truncate_ragged_lines=True   # handle lines with missing columns
-            ).lazy()
+            try:
+                lf = pl.read_csv(
+                    path,
+                    infer_schema=False,          # don’t try to infer types
+                    ignore_errors=True,          # skip parsing errors
+                    truncate_ragged_lines=True   # handle lines with missing columns
+                ).lazy()
+            except Exception as e:
+                warnings.warn(f"Failed to load CSV {path}: {e}")
+                return None
 
     # Apply custom normalization (assuming normalize_df is defined elsewhere)
     lf = normalize_df(lf)
