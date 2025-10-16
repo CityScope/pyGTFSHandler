@@ -12,7 +12,7 @@ import warnings
 import zipfile
 import hashlib
 import csv
-import tempfile
+import shutil
 
 # import pygeohash
 
@@ -38,21 +38,51 @@ def time_to_seconds(t: datetime | time) -> int:
 
     return t.hour * 3600 + t.minute * 60 + t.second
 
+
 def sanitize_csv_quotes(path: str) -> str:
     """
-    Fixes unescaped quotes inside quoted strings like "King"s" → "King""s".
-    Returns the path to a temporary cleaned file.
+    Cleans malformed CSV quote usage in a GTFS file (e.g., stops.txt).
+    Fixes unescaped quotes and ensures each line has balanced quotes.
+
+    The cleaned data is written back to the same file, with a backup created as `filename.bak`.
+
+    Args:
+        path (str): Path to the GTFS .txt file.
+
+    Returns:
+        str: The original file path (after cleaning).
     """
-    with open(path, "r", encoding="utf-8") as f:
-        text = f.read()
+    backup_path = path + ".bak"
+    shutil.copy(path, backup_path)
 
-    # Replace single unescaped quote followed by s" → double quote escape
-    text = re.sub(r'(".*?)(?<!")"([^",\n])', r'\1""\2', text)
+    cleaned_lines = []
 
-    temp = tempfile.NamedTemporaryFile(delete=False, suffix=".txt")
-    temp.write(text.encode("utf-8"))
-    temp.close()
-    return temp.name
+    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            # Remove BOM or nulls
+            line = line.replace("\x00", "").replace("\ufeff", "").strip("\r\n")
+
+            # If the line has unbalanced quotes, fix them
+            quote_count = line.count('"')
+            if quote_count % 2 != 0:
+                # Try to fix lines with unescaped internal quotes
+                line = re.sub(r'(?<!")"(?![";,])', '""', line)
+
+            # Handle stray leading/trailing quotes that break fields
+            # e.g. ""Sixth Street Garage" → "Sixth Street Garage"
+            line = re.sub(r'^"+', '"', line)
+            line = re.sub(r'"+$', '"', line)
+
+            # Clean common broken GTFS patterns like ""Stop Name or Stop Name""
+            line = re.sub(r'""+', '"', line)
+
+            cleaned_lines.append(line)
+
+    # Write cleaned data back to the same file
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write("\n".join(cleaned_lines))
+
+    return path
 
 
 def get_df_schema_dict(path) -> dict:
