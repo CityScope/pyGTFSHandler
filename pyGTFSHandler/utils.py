@@ -69,7 +69,9 @@ def sanitize_csv_file(path: str) -> str:
         try:
             header = next(reader)
         except StopIteration:
-            raise ValueError("CSV file is empty")
+            print(f"CSV file {path} is empty")
+            return path 
+        
         expected_cols = len(header)
         writer.writerow(header)
 
