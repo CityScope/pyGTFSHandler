@@ -286,18 +286,19 @@ class StopTimes:
         )
 
         stop_times = stop_times.with_columns(
-            [
-                pl.col("arrival_time").replace("", None).alias("arrival_time"),
-                pl.col("departure_time").replace("", None).alias("departure_time"),
-            ]
+            pl.when(pl.col("arrival_time").str.strip_chars().eq(""))
+            .then(None)
+            .otherwise(pl.col("arrival_time")).alias("arrival_time"),
+            pl.when(pl.col("departure_time").str.strip_chars().eq(""))
+            .then(None)
+            .otherwise(pl.col("departure_time")).alias("departure_time")
         )
 
         stop_times = utils.filter_by_id_column(stop_times, "trip_id", trip_ids)
-
+        
         stop_times = stop_times.with_columns([
             # Normalize arrival_time
             pl.col("arrival_time")
-            .str.replace_all(r"^\s*$", None)                     # empty → 00:00:00
             .str.replace_all(r"^(\d{1,2})$", r"0\1:00:00")             # H → 0H:00:00, HH → HH:00:00
             .str.replace_all(r"^(\d{1,2}):(\d{1,2})$", r"0\1:0\2:00")  # H:M, HH:M, H:MM, HH:MM
             .str.replace_all(r"^(\d{1,2}):(\d{1,2}):(\d{1,2})$", r"0\1:0\2:0\3") # H:M:S etc.
@@ -307,7 +308,6 @@ class StopTimes:
 
             # Normalize departure_time
             pl.col("departure_time")
-            .str.replace_all(r"^\s*$", None)
             .str.replace_all(r"^(\d{1,2})$", r"0\1:00:00")
             .str.replace_all(r"^(\d{1,2}):(\d{1,2})$", r"0\1:0\2:00")
             .str.replace_all(r"^(\d{1,2}):(\d{1,2}):(\d{1,2})$", r"0\1:0\2:0\3")
