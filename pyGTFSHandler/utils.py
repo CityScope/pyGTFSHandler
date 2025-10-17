@@ -207,7 +207,10 @@ def read_csv_lazy(
     if schema_overrides:
         for col, dtype in schema_overrides.items():
             if col in lf.collect_schema().names():
-                lf = lf.with_columns(pl.col(col).cast(dtype))
+                # Cast non-strictly so that parsing errors become null
+                lf = lf.with_columns(pl.col(col).cast(dtype, strict=False))
+                # Drop rows where casting failed (i.e., nulls)
+                lf = lf.filter(pl.col(col).is_not_null())
 
     # Extract GTFS directory name from path (e.g., 'gtfs_file' from '/home/xyz/gtfs_file/stops.txt')
     gtfs_name = os.path.basename(os.path.dirname(path))
