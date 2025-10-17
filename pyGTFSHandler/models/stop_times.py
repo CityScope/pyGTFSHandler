@@ -296,7 +296,7 @@ class StopTimes:
         for p in paths:
             new_p = utils.search_file(p, file=file)
             if new_p is None:
-                raise FileNotFoundError(f"File {file} does not exist in {p}")
+                warnings.warn(f"File {file} does not exist in {p}", UserWarning)
             else:
                 stop_times_paths.append(new_p)
 

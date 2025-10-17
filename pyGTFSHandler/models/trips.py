@@ -3,7 +3,7 @@ import polars as pl
 from typing import Optional, List, Union
 from .. import utils
 import os
-
+import warnings
 
 class Trips:
     """
@@ -77,7 +77,7 @@ class Trips:
         for p in paths:
             new_p = utils.search_file(p, file=file)
             if new_p is None:
-                raise FileNotFoundError(f"File {file} does not exist in {p}")
+                warnings.warn(f"File {file} does not exist in {p}", UserWarning)
             else:
                 trip_paths.append(new_p)
 

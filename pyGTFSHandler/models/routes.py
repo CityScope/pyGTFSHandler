@@ -3,6 +3,7 @@ import polars as pl
 from typing import Optional, List, Union
 from .. import utils
 import os
+import warnings 
 
 """
 TODO: LLM prompt like this for route type 3
@@ -66,7 +67,7 @@ class Routes:
         for p in paths:
             new_p = utils.search_file(p, file=file)
             if new_p is None:
-                raise FileNotFoundError(f"File {file} does not exist in {p}")
+                warnings.warn(f"File {file} does not exist in {p}", UserWarning)
             else:
                 route_paths.append(new_p)
 

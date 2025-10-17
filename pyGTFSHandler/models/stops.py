@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Union, List
 from .. import utils
 import os
-
+import warnings
 
 class Stops:
     """
@@ -105,7 +105,7 @@ class Stops:
         for p in paths:
             new_p = utils.search_file(p, file=file)
             if new_p is None:
-                raise FileNotFoundError(f"File {file} does not exist in {p}")
+                warnings.warn(f"File {file} does not exist in {p}", UserWarning)
             else:
                 stop_paths.append(new_p)
 
