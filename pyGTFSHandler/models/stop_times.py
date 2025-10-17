@@ -73,24 +73,21 @@ all stop times, including those generated from frequencies, ready for advanced a
 TRIP_ROUND_TIME: int = 600
 SECS_PER_DAY: int = 86400
 
-
 def normalize_time_expr(col: str) -> pl.Expr:
     return (
         pl.col(col)
         .cast(pl.Utf8)
-        .str.replace_all(r'[^0-9:]', '')                          # remove junk like quotes/backslashes
-        .str.replace_all(r'^:?(\d{1,2})$', r'\1:00:00')            # H → H:00:00
-        .str.replace_all(r'^:?(\d{1,2}):(\d{1,2})$', r'\1:\2:00')  # H:M → H:M:00
-        .str.replace_all(r'^:?(\d{1,2}):(\d{1,2}):?$', r'\1:\2:00')# H:MM: or HH:MM:
-        .str.replace_all(r'^:?(\d{1,2}):(\d{1,2}):(\d{1,2})$', r'\1:\2:\3')  # H:M:S
-        .str.split(":")
-        .arr.eval(pl.element().cast(pl.Int32))                     # make numeric
-        .arr.eval(
-            pl.when(pl.element().is_not_null())
-            .then(pl.element().cast(pl.Utf8).str.zfill(2))         # zero-pad
-            .otherwise("00")
+        .str.replace_all(r'[^0-9:]', '')                       # remove junk
+        # Ensure H → HH:00:00, H:M → HH:MM:00, H:M:S → HH:MM:SS
+        .str.extract(r'^(?P<h>\d{1,2})(?::(?P<m>\d{1,2}))?(?::(?P<s>\d{1,2}))?$')
+        .select([
+            pl.when(pl.col("h").is_not_null()).then(pl.col("h").cast(pl.Int32)).otherwise(0).alias("h"),
+            pl.when(pl.col("m").is_not_null()).then(pl.col("m").cast(pl.Int32)).otherwise(0).alias("m"),
+            pl.when(pl.col("s").is_not_null()).then(pl.col("s").cast(pl.Int32)).otherwise(0).alias("s"),
+        ])
+        .select(
+            pl.format("{:02}:{:02}:{:02}", pl.col("h"), pl.col("m"), pl.col("s"))
         )
-        .arr.join(":")                                             # back to string HH:MM:SS
     )
 
 class StopTimes:
