@@ -308,7 +308,7 @@ class Stops:
                 stop_paths.append(new_p)
 
         schema_dict = utils.get_df_schema_dict(stop_paths[0])
-        stops = utils.read_csv_list(stop_paths, schema_overrides=schema_dict, check_files=False)
+        stops = utils.read_csv_list(stop_paths, schema_overrides=schema_dict, check_files=True)
 
         if isinstance(stop_ids, list):
             stop_ids_lf = pl.LazyFrame({"stop_id": stop_ids})
