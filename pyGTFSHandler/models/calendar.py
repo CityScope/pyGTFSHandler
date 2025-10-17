@@ -6,7 +6,7 @@ from .. import utils
 
 from typing import Union, Optional, List
 from pathlib import Path
-
+import warnings
 
 class Calendar:
     def __init__(
@@ -139,20 +139,41 @@ class Calendar:
         calendar = utils.filter_by_id_column(calendar, "service_id", service_ids)
 
         # Convert start_date and end_date (YYYYMMDD int) to days since year 1-01-01
-        calendar = calendar.with_columns(
+        # Safely parse dates to integer days since 1970-01-01
+        calendar = calendar.with_columns([
             (
                 pl.col("start_date")
                 .cast(pl.Utf8)
-                .str.strptime(pl.Date, "%Y%m%d")
-                .dt.epoch(time_unit="d")  # days since 1970-01-01 (int)
+                .str.strptime(pl.Date, "%Y%m%d", strict=False)  # invalid → null
+                .dt.epoch(time_unit="d")
             ).alias("start_date"),
             (
                 pl.col("end_date")
                 .cast(pl.Utf8)
-                .str.strptime(pl.Date, "%Y%m%d")
+                .str.strptime(pl.Date, "%Y%m%d", strict=False)
                 .dt.epoch(time_unit="d")
             ).alias("end_date"),
+        ])
+
+        # Lazily count rows with nulls (invalid dates)
+        null_count_expr = (
+            (pl.col("start_date").is_null() | pl.col("end_date").is_null())
+            .sum()
+            .alias("num_invalid_rows")
         )
+
+        null_count_df = calendar.select(null_count_expr).collect()
+        num_invalid_rows = null_count_df.item()  # scalar
+
+        # Drop invalid rows
+        calendar = calendar.filter(
+            pl.col("start_date").is_not_null() & pl.col("end_date").is_not_null()
+        )
+
+        # Warn if any rows were removed
+        if num_invalid_rows > 0:
+            warnings.warn(f"{num_invalid_rows} rows dropped due to invalid start/end dates.", UserWarning)
+
 
         night_services = calendar.with_columns(
             [
@@ -208,22 +229,47 @@ class Calendar:
         )
 
         # Convert start_date and end_date (YYYYMMDD int) to days since year 1-01-01
-        calendar_dates = calendar_dates.with_columns(
-            [
+        # Safely parse `date` and convert `exception_type`
+        calendar_dates = calendar_dates.with_columns([
+            # Parse date safely
+            (
                 pl.col("date")
                 .cast(pl.Utf8)
-                .str.strptime(pl.Date, "%Y%m%d")
-                .dt.epoch(time_unit="d")  # days since 1970-01-01
-                .alias("date"),
-                
+                .str.strptime(pl.Date, "%Y%m%d", strict=False)  # invalid → null
+                .dt.epoch(time_unit="d")
+                .alias("date")
+            ),
+            # Convert exception_type to 1/2 safely
+            (
                 pl.col("exception_type")
                 .cast(pl.Utf8)
                 .str.to_lowercase()
                 .replace({"added": "1", "removed": "2"})
-                .cast(int)
-                .alias("exception_type"),
-            ]
+                .cast(pl.Int32, strict=False)  # invalid → null
+                .alias("exception_type")
+            ),
+        ])
+
+        # Lazily count rows with nulls (invalid date or exception_type)
+        null_count_expr = (
+            (pl.col("date").is_null() | pl.col("exception_type").is_null())
+            .sum()
+            .alias("num_invalid_rows")
         )
+
+        null_count_df = calendar_dates.select(null_count_expr).collect()
+        num_invalid_rows = null_count_df.item()  # scalar
+
+        # Drop invalid rows
+        calendar_dates = calendar_dates.filter(
+            pl.col("date").is_not_null() & pl.col("exception_type").is_not_null()
+        )
+
+        # Warn if any rows were removed
+        if num_invalid_rows > 0:
+            warnings.warn(f"{num_invalid_rows} rows dropped due to invalid date or exception_type values.", UserWarning)
+
+
         # Create night services by duplicating and shifting dates +1 day
         night_services = calendar_dates.with_columns(
             [
