@@ -74,21 +74,27 @@ TRIP_ROUND_TIME: int = 600
 SECS_PER_DAY: int = 86400
 
 def normalize_time_expr(col: str) -> pl.Expr:
-    return (
-        pl.col(col)
-        .cast(pl.Utf8)
-        .str.replace_all(r'[^0-9:]', '')                       # remove junk
-        # Ensure H → HH:00:00, H:M → HH:MM:00, H:M:S → HH:MM:SS
-        .str.extract(r'^(?P<h>\d{1,2})(?::(?P<m>\d{1,2}))?(?::(?P<s>\d{1,2}))?$')
-        .select([
-            pl.when(pl.col("h").is_not_null()).then(pl.col("h").cast(pl.Int32)).otherwise(0).alias("h"),
-            pl.when(pl.col("m").is_not_null()).then(pl.col("m").cast(pl.Int32)).otherwise(0).alias("m"),
-            pl.when(pl.col("s").is_not_null()).then(pl.col("s").cast(pl.Int32)).otherwise(0).alias("s"),
-        ])
-        .select(
-            pl.format("{:02}:{:02}:{:02}", pl.col("h"), pl.col("m"), pl.col("s"))
-        )
-    )
+    """
+    Normalize GTFS-style times into HH:MM:SS.
+    Invalid times become "None" as string.
+    """
+    cleaned = pl.col(col).cast(pl.Utf8).str.replace_all(r'[^0-9:]', '')
+
+    # Split into exactly 3 parts → struct
+    parts_struct = cleaned.str.split_exact(":", 3)
+
+    # Fields safely
+    h = parts_struct.struct.field("field_0").fill_null("0").cast(pl.Utf8).str.zfill(2)
+    m = parts_struct.struct.field("field_1").fill_null("0").cast(pl.Utf8).str.zfill(2)
+    s = parts_struct.struct.field("field_2").fill_null("0").cast(pl.Utf8).str.zfill(2)
+
+    # Valid pattern
+    is_valid = cleaned.str.contains(r'^\d{1,2}(:\d{1,2}){0,2}$')
+
+    # Combine parts safely
+    result = pl.when(is_valid).then(h + ":" + m + ":" + s).otherwise(pl.lit("None"))
+
+    return result
 
 class StopTimes:
     """
