@@ -14,13 +14,18 @@ class Trips:
         lf (pl.LazyFrame): A Polars LazyFrame containing the (optionally filtered) trips data.
     """
 
-    def __init__(
+    def __init__(self,lf=None,trip_ids=None) -> None:
+        self.lf = lf 
+        self.trip_ids = trip_ids
+
+    def load(
         self,
         path: Union[str, Path, List[Union[str, Path]]],
         service_ids: Optional[List[str]] = None,
         trip_ids: Optional[List[str]] = None,
         route_ids: Optional[List[str] | pl.LazyFrame | pl.DataFrame] = None,
-        check_files:bool=False
+        check_files:bool=False,
+        min_file_id=0
     ):
         """
         Initializes the Trips class by reading and filtering the trips data.
@@ -42,7 +47,7 @@ class Trips:
                 for sid in service_ids
             ]
 
-        self.lf = self.__read_trips(paths,service_ids, trip_ids, route_ids, check_files=check_files)
+        self.lf = self.__read_trips(paths,service_ids, trip_ids, route_ids, check_files=check_files, min_file_id=min_file_id)
         if (service_ids is not None) or (route_ids is not None):
             self.trip_ids = (
                 self.lf.select("trip_id").unique().collect()["trip_id"].to_list()
@@ -59,7 +64,8 @@ class Trips:
         service_ids: Optional[List[str]],
         trip_ids: Optional[List[str]],
         route_ids: Optional[List[str]],
-        check_files=False
+        check_files=False,
+        min_file_id=0
     ) -> pl.LazyFrame:
         """
         Reads the trips data from one or more `trips.txt` files and applies optional filters.
@@ -83,7 +89,7 @@ class Trips:
 
 
         schema_dict = utils.get_df_schema_dict(trip_paths[0])
-        trips = utils.read_csv_list(trip_paths, schema_overrides=schema_dict, check_files=check_files)
+        trips = utils.read_csv_list(trip_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id)
 
         trips = utils.filter_by_id_column(trips, "service_id", service_ids)
         trips = utils.filter_by_id_column(trips, "trip_id", trip_ids)

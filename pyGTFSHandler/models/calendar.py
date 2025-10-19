@@ -9,7 +9,20 @@ from pathlib import Path
 import warnings
 
 class Calendar:
-    def __init__(
+    def __init__(self,lf=None,exceptions_lf=None,min_date=None,max_date=None,service_ids=None) -> None:
+        self.lf = lf 
+        self.exceptions_lf = exceptions_lf 
+        if (lf is not None) or (exceptions_lf is not None):
+            if min_date is None:
+                min_date, max_date = self.__get_min_max_dates(
+                    lf, exceptions_lf
+                )
+
+        self.min_date = min_date 
+        self.max_date = max_date 
+        self.service_ids = service_ids
+
+    def load(
         self,
         path: Union[str, Path, List[str], List[Path]],
         start_date: datetime | date | None = None,
@@ -18,7 +31,8 @@ class Calendar:
         lon: float | None = None,
         lat: float | None = None,
         service_ids: Optional[List[str]] | None = None,
-        check_files:bool=False
+        check_files:bool=False,
+        min_file_id=0
     ):
         """
         A class to manage GTFS calendar data, allowing filtering of active services
@@ -51,8 +65,8 @@ class Calendar:
                 sid[:-6] if sid.endswith("_night") else sid for sid in service_ids
             ]
 
-        self.lf = self.__read_calendar(paths, service_ids, check_files=check_files)
-        self.exceptions_lf = self.__read_calendar_dates(paths, service_ids, check_files=check_files)
+        self.lf = self.__read_calendar(paths, service_ids, check_files=check_files, min_file_id=min_file_id)
+        self.exceptions_lf = self.__read_calendar_dates(paths, service_ids, check_files=check_files, min_file_id=min_file_id)
         self.min_date, self.max_date = self.__get_min_max_dates(
             self.lf, self.exceptions_lf
         )
@@ -109,7 +123,7 @@ class Calendar:
             self.service_ids = service_ids
 
     def __read_calendar(
-        self, paths, service_ids: Optional[List[str]], check_files=False
+        self, paths, service_ids: Optional[List[str]], check_files=False, min_file_id=0
     ) -> Optional[pl.LazyFrame]:
         """
         Reads the calendar.txt files from all paths using utils.read_csv_list.
@@ -131,7 +145,7 @@ class Calendar:
 
 
         schema_dict = utils.get_df_schema_dict(calendar_paths[0])  # assume same schema
-        calendar = utils.read_csv_list(calendar_paths, schema_overrides=schema_dict, check_files=check_files)
+        calendar = utils.read_csv_list(calendar_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id)
 
         if calendar is None:
             return None
@@ -196,7 +210,7 @@ class Calendar:
         return calendar
 
     def __read_calendar_dates(
-        self, paths, service_ids: Optional[List[str]], check_files=False
+        self, paths, service_ids: Optional[List[str]], check_files=False, min_file_id=0
     ) -> Optional[pl.LazyFrame]:
         """
         Reads the calendar_dates.txt files from all paths using utils.read_csv_list.
@@ -218,7 +232,7 @@ class Calendar:
 
         schema_dict = utils.get_df_schema_dict(calendar_dates_paths[0])
         calendar_dates = utils.read_csv_list(
-            calendar_dates_paths, schema_overrides=schema_dict, check_files=check_files
+            calendar_dates_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id
         )
 
         if calendar_dates is None:

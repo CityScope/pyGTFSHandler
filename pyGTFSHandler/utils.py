@@ -246,7 +246,7 @@ def read_csv_lazy(
 
 
 def read_csv_list(
-    path_list: List[str], schema_overrides: Optional[dict] = None, check_files:bool=False, search_files:bool=False
+    path_list: List[str], schema_overrides: Optional[dict] = None, check_files:bool=False, search_files:bool=False, min_file_id:int=0
 ) -> pl.LazyFrame:
     """
     Lazily reads a list of CSV (GTFS) files into a single concatenated Polars LazyFrame.
@@ -285,7 +285,7 @@ def read_csv_list(
         for i in range(len(path_list))
         if (
             res := read_csv_lazy(
-                path_list[i], schema_overrides=schema_overrides, file_id=i, check_files=check_files
+                path_list[i], schema_overrides=schema_overrides, file_id=i+min_file_id, check_files=check_files
             )
         )
         is not None

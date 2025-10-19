@@ -59,9 +59,87 @@ from datetime import datetime, time, date
 from typing import Optional, Union, List
 import geopandas as gpd
 import polars as pl
+import pandas as pd 
 
 SECS_PER_DAY: int = 86400
 
+
+def concat_feeds(
+    feeds,
+    stop_group_distance=0
+):  
+    if isinstance(feeds,Feed):
+        return feeds
+
+    result = feeds[0]
+    if len(feeds) == 0:
+        return result
+    
+    calendar_lf = []
+    calendar_exceptions_lf = []
+    routes_lf = []
+    #shapes_lf = []
+    #shapes_stop_shapes = []
+    #shapes_gdf = []
+    stop_times_lf = []
+    stop_times_frequencies = []
+    stops_lf = []
+    stops_gdf = []
+    trips_lf = [] 
+    #lf = []
+    for feed in feeds:
+        calendar_lf.append(feed.calendar.lf)
+        calendar_exceptions_lf.append(feed.calendar.exceptions_lf)
+        routes_lf.append(feed.routes.lf)
+        #shapes_lf.append(feed.shapes.lf)
+        #shapes_stop_shapes.append(feed.shapes.stop_shapes)
+        #shapes_gdf.append(feed.shapes.gdf)
+        stop_times_lf.append(feed.stop_times.lf)
+        stop_times_frequencies.append(feed.stop_times.frequencies)
+        stops_lf.append(feed.stops.lf)
+        stops_gdf.append(feed.stops.gdf)
+        trips_lf.append(feed.trips.lf)
+        #lf.append(feed.lf)
+
+    calendar_lf = pl.concat(calendar_lf)
+    calendar_exceptions_lf = pl.concat(calendar_exceptions_lf)
+    calendar = Calendar(lf=calendar_lf,exceptions_lf=calendar_exceptions_lf)
+
+    routes_lf = pl.concat(routes_lf)
+    routes = Routes(lf=routes_lf)
+
+    #shapes_lf = pl.concat(shapes_lf)
+    #shapes_stop_shapes = pl.concat(shapes_stop_shapes)
+    #shapes_gdf = pd.concat(shapes_gdf)
+    #shapes = Shapes(lf=shapes_lf,stop_shapes=shapes_stop_shapes,gdf=shapes_gdf)
+
+    stop_times_lf = pl.concat(stop_times_lf)
+    stop_times_frequencies = pl.concat(stop_times_frequencies)
+    stop_times = StopTimes(lf=stop_times_lf,frequencies=stop_times_frequencies,fixed_times=False)
+
+    stops_lf = pl.concat(stops_lf)
+    stops_gdf = pd.concat(stops_gdf)
+    stops = Stops(lf=stops_lf,gdf=stops_gdf)
+
+    trips_lf = pl.concat(trips_lf)
+    trips = Trips(lf=trips_lf)
+
+    #lf = pl.concat(lf)
+
+    result.calendar = calendar 
+    result.routes = routes 
+    result.stop_times = stop_times 
+    result.stops = stops 
+    result.trips = trips 
+
+    if stop_group_distance > 0:
+        result.stops.lf, result.stops.gdf = result.stops.group_stops(stop_group_distance)
+
+    result.shapes, result.trip_shape_ids_lf = result.load_shapes(result.stops,result.stop_times)
+ 
+    result.lf = result.build_lf(result.calendar, result.routes, result.shapes, result.stop_times, result.stops, result.trips, result.trip_shape_ids_lf)
+
+    return result
 
 class Feed:
     """
@@ -98,7 +176,56 @@ class Feed:
         trip_ids: Optional[List[str]] = None,
         stop_ids: Optional[List[str]] = None,
         route_ids: Optional[List[str]] = None,
-        check_files:bool=True
+        check_files:bool=True,
+        min_file_id=0
+    ):
+        self.calendar, self.routes, _, self.stop_times, self.stops, self.trips = self.load(
+            gtfs_dirs=gtfs_dirs,
+            aoi=aoi,
+            stop_group_distance=stop_group_distance,
+            start_date=start_date,
+            end_date=end_date,
+            date_type=date_type,
+            start_time=start_time,
+            end_time=end_time,
+            route_types=route_types,
+            service_ids=service_ids,
+            trip_ids=trip_ids,
+            stop_ids=stop_ids,
+            route_ids=route_ids,
+            check_files=check_files,
+            min_file_id=min_file_id
+        )
+
+        self.shapes, self.trip_shape_ids_lf = self.load_shapes(self.stops,self.stop_times)
+
+        self.lf = self.build_lf(
+            self.calendar, 
+            self.routes, 
+            self.shapes, 
+            self.stop_times, 
+            self.stops, 
+            self.trips,
+            self.trip_shape_ids_lf
+        )
+
+    def load(
+        self,
+        gtfs_dirs: Union[List[Union[str, Path]], str, Path],
+        aoi: Optional[Union[gpd.GeoDataFrame, gpd.GeoSeries]] = None,
+        stop_group_distance: float = 0,
+        start_date: Optional[datetime | date] = None,
+        end_date: Optional[datetime | date] = None,
+        date_type: Optional[list[str] | str] = None,
+        start_time: Optional[datetime | time] = None,
+        end_time: Optional[datetime | time] = None,
+        route_types: Optional[list[int] | list[str] | int | str] = None,
+        service_ids: Optional[List[str]] = None,
+        trip_ids: Optional[List[str]] = None,
+        stop_ids: Optional[List[str]] = None,
+        route_ids: Optional[List[str]] = None,
+        check_files:bool=True,
+        min_file_id:int=0
     ):
         """
         Initializes a Feed instance by loading, filtering, and integrating GTFS data.
@@ -129,9 +256,9 @@ class Feed:
         if not isinstance(gtfs_dirs, list):
             gtfs_dirs = [gtfs_dirs]
 
-        self.gtfs_dir: List[Path] = [Path(p) for p in gtfs_dirs]
+        gtfs_dir: List[Path] = [Path(p) for p in gtfs_dirs]
 
-        for p in self.gtfs_dir:
+        for p in gtfs_dir:
             if not p.is_dir():
                 raise ValueError(f"{p} is not a valid directory.")
 
@@ -148,26 +275,30 @@ class Feed:
         aoi_print = f"aoi {aoi.geometry.union_all()}" if aoi is not None else ""
         error_msg = f"No trips with your id filters and filters {route_types_print} {time_range_print} {aoi_print}".strip()
 
-        self.stops = Stops(
-            self.gtfs_dir,
+        stops = Stops()
+        stops.load(
+            gtfs_dir,
             aoi=aoi,
             stop_group_distance=stop_group_distance,
             stop_ids=stop_ids,
-            check_files=check_files
+            check_files=check_files,
+            min_file_id=min_file_id
         )
 
-        if (self.stops.stop_ids is not None) and (len(self.stops.stop_ids) == 0):
+        if (stops.stop_ids is not None) and (len(stops.stop_ids) == 0):
             raise Exception(f"No stops found inside your aoi")
 
-        self.calendar = Calendar(
-            self.gtfs_dir,
+        calendar = Calendar()
+        calendar.load(
+            gtfs_dir,
             start_date=start_date,
             end_date=end_date,
             date_type=date_type,
             service_ids=service_ids,
-            lon=self.stops.mean_lon,
-            lat=self.stops.mean_lat,
-            check_files=check_files
+            lon=stops.mean_lon,
+            lat=stops.mean_lat,
+            check_files=check_files,
+            min_file_id=min_file_id
         )
 
         if route_types is not None:
@@ -176,60 +307,71 @@ class Feed:
             else:
                 route_types = [utils.normalize_route_type(route_types)]
 
-        self.routes = Routes(
-            self.gtfs_dir, route_ids=route_ids, route_types=route_types, check_files=check_files
+        routes = Routes()
+        routes.load(
+            gtfs_dir, route_ids=route_ids, route_types=route_types, check_files=check_files, min_file_id=min_file_id
         )
 
-        if (self.routes.route_ids is not None) and (len(self.routes.route_ids) == 0):
+        if (routes.route_ids is not None) and (len(routes.route_ids) == 0):
             raise Exception(f"No routes found with filter {route_types}")
 
-        if (self.calendar.service_ids is not None) and (len(self.calendar.service_ids) == 0):
+        if (calendar.service_ids is not None) and (len(calendar.service_ids) == 0):
             raise Exception(f"No trips found in time range {start_date} - {end_date}")
 
-        self.trips = Trips(
-            self.gtfs_dir,
-            service_ids=self.calendar.service_ids,
+        trips = Trips()
+        trips.load(
+            gtfs_dir,
+            service_ids=calendar.service_ids,
             trip_ids=trip_ids,
-            route_ids=self.routes.route_ids,
-            check_files=check_files
+            route_ids=routes.route_ids,
+            check_files=check_files,
+            min_file_id=min_file_id
         )
 
-        if (self.trips.trip_ids is not None) and (len(self.trips.trip_ids) == 0):
+        if (trips.trip_ids is not None) and (len(trips.trip_ids) == 0):
             raise Exception(error_msg)
 
 
-        self.stop_times = StopTimes(
-            self.gtfs_dir,
-            trips=self.trips.lf,
+        stop_times = StopTimes()
+        stop_times.load(
+            gtfs_dir,
+            trips=trips.lf,
             start_time=start_time,
             end_time=end_time,
-            stop_ids=self.stops.stop_ids,
-            trip_ids=self.trips.trip_ids,
-            check_files=check_files
+            stop_ids=stops.stop_ids,
+            trip_ids=trips.trip_ids,
+            check_files=check_files,
+            min_file_id=min_file_id
         )
 
-        if self.stop_times.lf.select(pl.count()).collect().item() == 0:
+        if stop_times.lf.select(pl.count()).collect().item() == 0:
             raise Exception(error_msg)
 
-        self.trips.lf = self.stop_times.trips_lf
+        trips.lf = stop_times.trips_lf
 
         # Reload stops_lf so that at least in the lf the next stop of bordering trips is loaded
 
-        self.stops.reload_stops_lf(self.gtfs_dir, self.stop_times.lf.select("stop_id"))
+        stops.reload_stops_lf(gtfs_dir, stop_times.lf.select("stop_id"))
 
         # --- 3. Integrate Generated Trips from Frequencies ---
         # If StopTimes generated new trips from frequencies.txt, we need to add them
         # to the main trips table.
 
+        return calendar, routes, None, stop_times, stops, trips
+    
+    def load_shapes(self,stops,stop_times):
         # --- 4. Load Shapes and Perform Advanced Time Interpolation ---
-        self.trip_shape_ids_lf: pl.LazyFrame = (
-            self.stop_times.generate_shape_ids().collect().lazy()
+        trip_shape_ids_lf: pl.LazyFrame = (
+            stop_times.generate_shape_ids().collect().lazy()
         )
-        self.shapes = Shapes(self.gtfs_dir, self.trip_shape_ids_lf, self.stops.lf, check_files=check_files)
-
+        shapes = Shapes()
+        shapes.load(None, trip_shape_ids_lf, stops.lf, check_files=False, min_file_id=0)
+        return shapes, trip_shape_ids_lf
+    
+    def build_lf(self, calendar, routes, shapes, stop_times, stops, trips, trip_shape_ids_lf):
         # --- 5. Build the Main Integrated LazyFrame (`lf`) ---
         # Start with the core stop_times data.
-        self.lf: pl.LazyFrame = self.stop_times.lf.select(
+        lf: pl.LazyFrame = stop_times.lf.select(
             [
                 "trip_id",
                 "stop_id",
@@ -246,10 +388,10 @@ class Feed:
         )
 
         # Join with frequency data if it exists.
-        if self.stop_times.frequencies is not None:
-            self.lf = (
-                self.lf.join(
-                    self.stop_times.frequencies.select(
+        if stop_times.frequencies is not None:
+            lf = (
+                lf.join(
+                    stop_times.frequencies.select(
                         [
                             "trip_id",
                             "start_time",
@@ -276,26 +418,26 @@ class Feed:
             )
         else:
             # If no frequencies file, all trips are individual trips.
-            self.lf = self.lf.with_columns(pl.lit(1, dtype=pl.UInt32).alias("n_trips"))
+            lf = lf.with_columns(pl.lit(1, dtype=pl.UInt32).alias("n_trips"))
 
         # Merge with trips, stops, routes, and shapes data to create the full view.
-        self.lf = self.lf.join(
-            self.trips.lf.filter(~pl.col("next_day")).select(
+        lf = lf.join(
+            trips.lf.filter(~pl.col("next_day")).select(
                 ["trip_id", "service_id", "route_id"]
             ),
             on="trip_id",
             how="left",
         )
-        self.lf = self.lf.join(
-            self.trip_shape_ids_lf.select(["trip_ids", "shape_id"])
+        lf = lf.join(
+            trip_shape_ids_lf.select(["trip_ids", "shape_id"])
             .explode("trip_ids")
             .rename({"trip_ids": "trip_id"}),
             on="trip_id",
             how="left",
         )
 
-        self.lf = self.lf.join(
-            self.stops.lf.select(["stop_id", "parent_station"]),
+        lf = lf.join(
+            stops.lf.select(["stop_id", "parent_station"]),
             on=["stop_id"],
             how="left",
         )
@@ -303,12 +445,12 @@ class Feed:
         # Ensure that every trip does not stop twice at the parent_station
 
         # Sort by trip_id and stop_sequence
-        self.lf = self.lf.sort(
+        lf = lf.sort(
             ["trip_id", "service_id", "route_id", "shape_id", "stop_sequence"]
         )
 
         # Create a new column with shifted parent_station per trip_id group
-        self.lf = self.lf.with_columns(
+        lf = lf.with_columns(
             [
                 pl.col("parent_station")
                 .shift(1)
@@ -318,7 +460,7 @@ class Feed:
         )
 
         # Replace duplicate consecutive parent_station with None
-        self.lf = self.lf.with_columns(
+        lf = lf.with_columns(
             [
                 pl.when(pl.col("parent_station") == pl.col("prev_parent_station"))
                 .then(None)
@@ -328,16 +470,16 @@ class Feed:
         )
 
         # Drop helper column if you don't want to keep it
-        self.lf = self.lf.drop("prev_parent_station")
+        lf = lf.drop("prev_parent_station")
 
-        self.lf = self.lf.join(
-            self.routes.lf.select(["route_id", "route_type"]),
+        lf = lf.join(
+            routes.lf.select(["route_id", "route_type"]),
             on=["route_id"],
             how="left",
         )
 
-        self.lf = self.lf.join(
-            self.shapes.stop_shapes.select(
+        lf = lf.join(
+            shapes.stop_shapes.select(
                 [
                     "shape_id",
                     "stop_id",
@@ -355,14 +497,14 @@ class Feed:
         # --- Perform Final Data Cleaning and Transformation ---
         # If any times were fixed with the simple method, run the advanced,
         # shape-based interpolation now that shape_dist_traveled is available.
-        if self.stop_times.fixed_times:
-            self.lf = self.__fix_null_times(self.lf)
+        if stop_times.fixed_times:
+            lf = self.__fix_null_times(lf)
 
-        self.lf = self.lf.drop("fixed_time")
+        lf = lf.drop("fixed_time")
 
         # For services running past midnight, create a unique "night" service_id
         # to distinguish them from the same service on the previous day.
-        self.lf = self.lf.with_columns(
+        lf = lf.with_columns(
             [
                 pl.when(pl.col("next_day"))
                 .then(pl.concat_str(pl.col("service_id"), pl.lit("_night")))
@@ -371,14 +513,16 @@ class Feed:
             ]
         ).drop("next_day")
 
-        self.lf = self.lf.unique()
+        lf = lf.unique()
 
-        self.lf = self.lf.join(
-            self.stops.lf.select(["stop_id"]).with_columns(pl.lit(True).alias("isin_aoi")),
+        lf = lf.join(
+            stops.lf.select(["stop_id"]).with_columns(pl.lit(True).alias("isin_aoi")),
             on="stop_id",
             how="left"
         )
-        self.lf = self.lf.with_columns(pl.col("isin_aoi").fill_null(False))
+        lf = lf.with_columns(pl.col("isin_aoi").fill_null(False))
+
+        return lf
 
     def __fix_null_times(self, stop_times: pl.LazyFrame) -> pl.LazyFrame:
         """
@@ -821,6 +965,7 @@ class Feed:
         end_date: Optional[datetime | date] = None,
         date_type: Optional[str | list[str]] = None,
         route_types: Optional[str | int | list[str] | list[int]] = None,
+        by_feed:bool=False
     ) -> pl.DataFrame:
         """
         Calculates the number of scheduled stop times per date within a given date range.
@@ -846,7 +991,30 @@ class Feed:
             lat=self.stops.mean_lat,
         )
 
-        gtfs_lf = self.lf
+        if by_feed:
+            ids = self.lf.select("file_id").unique().collect().to_series().to_list()
+            total_by_date = []
+            for id in ids:
+                gtfs_lf = self.lf.filter(pl.col("file_id") == id)
+                result = self.__service_intensity_in_date_range(gtfs_lf,route_types,date_df)
+                result = result.with_columns(
+                    pl.lit(id).alias("file_id")
+                )
+                total_by_date.append(result)
+
+            total_by_date = pl.concat(total_by_date)
+        else:
+            gtfs_lf = self.lf
+            total_by_date = self.__service_intensity_in_date_range(gtfs_lf,route_types,date_df)
+
+
+        total_by_date = self.calendar.add_holidays_and_weekends(
+            total_by_date, lon=self.stops.mean_lon, lat=self.stops.mean_lat
+        )
+
+        return total_by_date.sort("date")
+    
+    def __service_intensity_in_date_range(self,gtfs_lf,route_types,date_df):
         gtfs_lf = gtfs_lf.filter(pl.col("isin_aoi"))
         if route_types is not None:
             gtfs_lf = self.filter_by_route_type(gtfs_lf, route_types=route_types)
@@ -884,11 +1052,7 @@ class Feed:
             pl.col("num_stop_times").sum().alias("service_intensity"),
         )
 
-        total_by_date = self.calendar.add_holidays_and_weekends(
-            total_by_date, lon=self.stops.mean_lon, lat=self.stops.mean_lat
-        )
-
-        return total_by_date.sort("date")
+        return total_by_date
 
     def get_mean_intervall_at_stops(
         self,

@@ -23,13 +23,33 @@ class Stops:
         paths (List[Path]): List of GTFS paths (directories).
     """
 
-    def __init__(
+    def __init__(self,lf=None,gdf=None,stop_ids=None, mean_lon=None, mean_lat=None):
+        self.lf = lf
+        self.gdf = gdf 
+        self.stop_ids = stop_ids
+        if (mean_lon is None) or (mean_lat is None):
+            if lf is not None: 
+                mean_coords = lf.select(
+                    [
+                        pl.col("stop_lon").mean().alias("mean_lon"),
+                        pl.col("stop_lat").mean().alias("mean_lat"),
+                    ]
+                ).collect()
+
+                mean_lon = mean_coords["mean_lon"][0]
+                mean_lat = mean_coords["mean_lat"][0]
+
+        self.mean_lon = mean_lon 
+        self.mean_lat = mean_lat 
+
+    def load(
         self,
         path: Union[str, Path, List[Union[str, Path]]],
         aoi: Union[gpd.GeoDataFrame, gpd.GeoSeries, None] = None,
         stop_group_distance: float = 0,
         stop_ids: Union[List[str], pl.DataFrame | pl.LazyFrame] = None,
-        check_files:bool=False
+        check_files:bool=False,
+        min_file_id:int=0,
     ):
         """
         Initialize Stops instance and load GTFS stops from one or more files.
@@ -44,7 +64,7 @@ class Stops:
         else:
             paths = [Path(p) for p in path]
 
-        self.lf = self.__read_stops(paths, stop_ids, check_files=check_files)
+        self.lf = self.__read_stops(paths, stop_ids, check_files=check_files, min_file_id=min_file_id)
 
         if aoi is None:
             df = self.lf.select(
@@ -87,7 +107,7 @@ class Stops:
         self.mean_lat = mean_coords["mean_lat"][0]
 
     def __read_stops(
-        self, paths, stop_ids: Union[List[str], None] = None, check_files=False
+        self, paths, stop_ids: Union[List[str], None] = None, check_files=False, min_file_id=0
     ) -> pl.LazyFrame:
         """
         Read GTFS stops.txt files and filter by stop IDs if provided.
@@ -110,7 +130,7 @@ class Stops:
                 stop_paths.append(new_p)
 
         schema_dict = utils.get_df_schema_dict(stop_paths[0])
-        lf = utils.read_csv_list(stop_paths, schema_overrides=schema_dict, check_files=check_files)
+        lf = utils.read_csv_list(stop_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id)
 
         lf = utils.filter_by_id_column(lf, "stop_id", stop_ids)
 

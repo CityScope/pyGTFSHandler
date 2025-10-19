@@ -1,55 +1,122 @@
 import matplotlib.pyplot as plt
 import pandas as pd
 from datetime import time, datetime
-
+import matplotlib.patches as mpatches
+import folium
 
 def plot_service_intensity(service_intensity):
-    # Convert to pandas and parse dates
-    if isinstance(service_intensity, pd.DataFrame):
-        pdf = service_intensity.copy()
-    else:
+    # Convert to pandas if it's Polars
+    if not isinstance(service_intensity, pd.DataFrame):
         pdf = service_intensity.to_pandas()
+    else:
+        pdf = service_intensity.copy()
 
     pdf["date"] = pd.to_datetime(pdf["date"])
 
     plt.figure(figsize=(12, 6))
     bar_width = 0.8
 
-    # Plot each date individually, coloring by type based on holiday/weekend flags
-    for _, row in pdf.iterrows():
-        row_date = row["date"]
-        value = row["service_intensity"]
+    # Color and hatching setup
+    weekend_hatch = "xx"
+    holiday_hatch = "//"
 
-        if row["holiday"]:
-            color = "green"
-            # label = "Holiday"
-        elif row["weekend"]:
-            color = "red"
-            # label = "Weekend"
-        else:
-            color = "blue"
-            # label = "Weekday"
+    # --- CASE 1: file_id present ---
+    if "file_id" in pdf.columns:
+        unique_files = sorted(pdf["file_id"].unique())
+        color_cycle = plt.cm.tab20.colors  # large qualitative palette
+        color_map = {fid: color_cycle[i % len(color_cycle)] for i, fid in enumerate(unique_files)}
 
-        plt.bar(row_date, value, width=bar_width, color=color, align="center")
+        grouped = pdf.groupby("date")
+        for date, group in grouped:
+            bottom = 0
+            for _, row in group.iterrows():
+                value = row["service_intensity"]
+                fid = row["file_id"]
+                color = color_map[fid]
 
-    # Avoid duplicate legend entries
-    handles = [
-        plt.Line2D([], [], color="blue", label="Weekday", linewidth=10),
-        plt.Line2D([], [], color="red", label="Weekend", linewidth=10),
-        plt.Line2D([], [], color="green", label="Holiday", linewidth=10),
-    ]
-    plt.legend(handles=handles)
+                # Determine hatch pattern (weekend or holiday)
+                if row.get("holiday", False):
+                    hatch = holiday_hatch
+                elif row.get("weekend", False):
+                    hatch = weekend_hatch
+                else:
+                    hatch = None
 
+                plt.bar(
+                    date,
+                    value,
+                    width=bar_width,
+                    bottom=bottom,
+                    color=color,
+                    hatch=hatch,
+                    edgecolor="black",
+                )
+                bottom += value
+
+        # --- Legend setup ---
+        file_handles = [
+            plt.Line2D([], [], color=color_map[fid], label=f"File {fid}", linewidth=10)
+            for fid in unique_files
+        ]
+        pattern_handles = [
+            mpatches.Patch(facecolor="white", hatch=weekend_hatch, edgecolor="black", label="Weekend"),
+            mpatches.Patch(facecolor="white", hatch=holiday_hatch, edgecolor="black", label="Holiday"),
+        ]
+
+        plt.legend(
+            handles=file_handles + pattern_handles,
+            title="Legend",
+            bbox_to_anchor=(1.05, 1),
+            loc="upper left",
+        )
+
+    # --- CASE 2: no file_id column ---
+    else:
+        base_color = "#a6c8ff"  # lighter blue
+        for _, row in pdf.iterrows():
+            row_date = row["date"]
+            value = row["service_intensity"]
+
+            if row.get("holiday", False):
+                hatch = holiday_hatch
+            elif row.get("weekend", False):
+                hatch = weekend_hatch
+            else:
+                hatch = None
+
+            plt.bar(
+                row_date,
+                value,
+                width=bar_width,
+                color=base_color,
+                hatch=hatch,
+                edgecolor="black",
+            )
+
+        pattern_handles = [
+            plt.Line2D([], [], color=base_color, label="Weekday", linewidth=10),
+            mpatches.Patch(facecolor=base_color, hatch=weekend_hatch, edgecolor="black", label="Weekend"),
+            mpatches.Patch(facecolor=base_color, hatch=holiday_hatch, edgecolor="black", label="Holiday"),
+        ]
+        plt.legend(
+            handles=pattern_handles,
+            title="Legend",
+            bbox_to_anchor=(1.05, 1),
+            loc="upper left",
+        )
+
+    # --- Plot styling ---
     plt.xlabel("Date")
     plt.ylabel("Service Intensity")
-    plt.title("Service Intensity Over Time (Weekday, Weekend, Holiday)")
-    plt.grid(True)
+    plt.title("Service Intensity Over Time")
+    plt.grid(True, axis="y", linestyle="--", alpha=0.5)
     plt.tight_layout()
     plt.xticks(rotation=45)
     plt.show()
 
 
-def service_quality_map(stops_gdf, start_time, end_time):
+
+def service_quality_map(stops_gdf, start_time, end_time, cmap="RdYlGn_r"):
     if isinstance(start_time, (datetime, time)):
         start_int = start_time.hour
     elif isinstance(start_time, str):
@@ -79,7 +146,7 @@ def service_quality_map(stops_gdf, start_time, end_time):
         ]
     ].explore(
         column=f"service_quality_{start_int}h_{end_int}h",
-        cmap="RdYlGn_r",
+        cmap=cmap,
         vmin=1,
         vmax=6,
         style_kwds={

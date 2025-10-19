@@ -20,13 +20,17 @@ class Routes:
         paths (List[Path]): List of directory paths containing `routes.txt` files.
         lf (pl.LazyFrame): A Polars LazyFrame containing the (optionally filtered) routes data.
     """
+    def __init__(self,lf=None,route_ids=None) -> None:
+        self.lf = lf 
+        self.route_ids = route_ids
 
-    def __init__(
+    def load(
         self,
         path: Union[str, Path, List[Union[str, Path]]],
         route_ids: Optional[List[str] | pl.LazyFrame | pl.DataFrame] = None,
         route_types: Optional[List[int]] = None,
-        check_files:bool=False
+        check_files:bool=False,
+        min_file_id=0
     ):
         """
         Initializes the Routes class by reading and filtering the routes data.
@@ -40,7 +44,7 @@ class Routes:
         else:
             paths = [Path(p) for p in path]
 
-        self.lf = self.__read_routes(paths, route_ids, route_types, check_files=check_files)
+        self.lf = self.__read_routes(paths, route_ids, route_types, check_files=check_files, min_file_id=min_file_id)
         if (route_ids is not None) or (route_types is not None):
             self.route_ids = (
                 self.lf.select("route_id").unique().collect()["route_id"].to_list()
@@ -51,7 +55,7 @@ class Routes:
             self.route_ids = None
 
     def __read_routes(
-        self, paths, route_ids: Optional[List[str]], route_types: Optional[List[int]], check_files=False
+        self, paths, route_ids: Optional[List[str]], route_types: Optional[List[int]], check_files=False, min_file_id=0
     ) -> pl.LazyFrame:
         """
         Reads the routes data from one or more `routes.txt` files and applies optional filters.
@@ -73,7 +77,7 @@ class Routes:
 
 
         schema_dict = utils.get_df_schema_dict(route_paths[0])
-        routes = utils.read_csv_list(route_paths, schema_overrides=schema_dict, check_files=check_files)
+        routes = utils.read_csv_list(route_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id)
         # Identify values that cannot be converted to int
         non_convertible = routes.filter(
             pl.col("route_type").cast(pl.Int64, strict=False).is_null()

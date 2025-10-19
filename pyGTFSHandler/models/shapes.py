@@ -16,22 +16,27 @@ class Shapes:
     Manage GTFS shapes.txt data using Polars LazyFrames.
 
     """
+    def __init__(self,lf=None,stop_shapes=None,gdf=None) -> None:
+        self.lf = lf 
+        self.stop_shapes = stop_shapes 
+        self.gdf = gdf
 
-    def __init__(
+    def load(
         self,
-        path: Union[str, Path, List[Union[str, Path]]],
+        path: Union[str, Path, List[Union[str, Path]], None],
         trip_shape_ids_lf,
         stops_lf,
-        check_files:bool=False
+        check_files:bool=False,
+        min_file_id=0
     ):
         """
         Initialize the Shapes instance.
 
         """
-        if isinstance(path, (str, Path)):
-            self.paths = [Path(path)]
-        else:
-            self.paths = [Path(p) for p in path]
+        # if isinstance(path, (str, Path)):
+        #     paths = [Path(path)]
+        # else:
+        #     paths = [Path(p) for p in path]
 
         self.lf = self.__generate_shapes_file(stops_lf, trip_shape_ids_lf)
         self.lf = self.lf.collect().lazy()
