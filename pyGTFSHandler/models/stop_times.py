@@ -73,11 +73,14 @@ all stop times, including those generated from frequencies, ready for advanced a
 TRIP_ROUND_TIME: int = 600
 SECS_PER_DAY: int = 86400
 
+
 def normalize_time_expr(col: str) -> pl.Expr:
     """
     Normalize GTFS-style times into HH:MM:SS.
+    Empty strings or nulls are left as is.
     Invalid times become "None" as string.
     """
+    # Cast to Utf8 and remove unwanted characters
     cleaned = pl.col(col).cast(pl.Utf8).str.replace_all(r'[^0-9:]', '')
 
     # Split into exactly 3 parts → struct
@@ -88,11 +91,16 @@ def normalize_time_expr(col: str) -> pl.Expr:
     m = parts_struct.struct.field("field_1").fill_null("0").cast(pl.Utf8).str.zfill(2)
     s = parts_struct.struct.field("field_2").fill_null("0").cast(pl.Utf8).str.zfill(2)
 
-    # Valid pattern
+    # Valid pattern: 1-2 digits, optional :1-2 digits, optional :1-2 digits
     is_valid = cleaned.str.contains(r'^\d{1,2}(:\d{1,2}){0,2}$')
 
+    # Handle empty strings or nulls
+    is_empty_or_null = pl.col(col).is_null() | (pl.col(col) == "")
+
     # Combine parts safely
-    result = pl.when(is_valid).then(h + ":" + m + ":" + s).otherwise(pl.lit("None"))
+    result = pl.when(is_empty_or_null).then(pl.lit(None)) \
+               .when(is_valid).then(h + ":" + m + ":" + s) \
+               .otherwise(pl.lit("None"))
 
     return result
 
@@ -323,6 +331,28 @@ class StopTimes:
             normalize_time_expr("departure_time").alias("departure_time"),
         ])
 
+        # Lazily count rows with invalid (null) times
+        null_count_expr = (
+            ((pl.col("departure_time") == pl.lit("None")) | (pl.col("arrival_time") == pl.lit("None")))
+            .sum()
+            .alias("num_invalid_rows")
+        )
+
+        null_count_df = stop_times.select(null_count_expr).collect()
+        num_invalid_rows = null_count_df.item()  # extract scalar
+
+        # Warn (in Python, after the lazy step)
+        if num_invalid_rows > 0:
+            warnings.warn(f"{num_invalid_rows} rows dropped due to invalid time values in stop_times.", UserWarning)
+
+
+        stop_times = stop_times.filter(
+            pl.col("arrival_time") != pl.lit("None")
+        )
+
+        stop_times = stop_times.filter(
+            pl.col("departure_time") != pl.lit("None")
+        )
 
         stop_times = stop_times.with_columns(
             [
@@ -353,25 +383,6 @@ class StopTimes:
 
             pl.lit(False).alias("next_day"),
         ])
-
-        # Lazily count rows with invalid (null) times
-        null_count_expr = (
-            (pl.col("departure_time").is_null() | pl.col("arrival_time").is_null())
-            .sum()
-            .alias("num_invalid_rows")
-        )
-
-        null_count_df = stop_times.select(null_count_expr).collect()
-        num_invalid_rows = null_count_df.item()  # extract scalar
-
-        # Drop invalid rows (still lazy)
-        stop_times = stop_times.filter(
-            pl.col("departure_time").is_not_null() & pl.col("arrival_time").is_not_null()
-        )
-
-        # Warn (in Python, after the lazy step)
-        if num_invalid_rows > 0:
-            warnings.warn(f"{num_invalid_rows} rows dropped due to invalid time values.", UserWarning)
 
         return stop_times
 
@@ -663,6 +674,28 @@ class StopTimes:
             normalize_time_expr("end_time").alias("end_time"),
         ])
 
+        # Lazily count rows with invalid (null) times
+        null_count_expr = (
+            ((pl.col("start_time") == pl.lit("None")) | (pl.col("end_time") == pl.lit("None")))
+            .sum()
+            .alias("num_invalid_rows")
+        )
+
+        null_count_df = frequencies.select(null_count_expr).collect()
+        num_invalid_rows = null_count_df.item()  # extract scalar
+
+        # Warn (in Python, after the lazy step)
+        if num_invalid_rows > 0:
+            warnings.warn(f"{num_invalid_rows} rows dropped due to invalid time values in frequencies.", UserWarning)
+
+
+        frequencies = frequencies.filter(
+            pl.col("start_time") != pl.lit("None")
+        )
+
+        frequencies = frequencies.filter(
+            pl.col("end_time") != pl.lit("None")
+        )
         # frequencies = frequencies.with_columns(
         #     [
         #         ("0" + pl.col("start_time").cast(str))
