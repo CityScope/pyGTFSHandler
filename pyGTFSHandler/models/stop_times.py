@@ -650,6 +650,9 @@ class StopTimes:
             else:
                 frequencies_paths.append(new_p)
 
+        if len(frequencies_paths) == 0:
+            return None
+
         schema_dict: Dict[str, pl.DataType] = utils.get_df_schema_dict(
             frequencies_paths[0]
         )
