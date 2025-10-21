@@ -4,7 +4,7 @@ import random
 import zipfile
 import logging
 from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional, Union, Tuple
+from typing import List, Dict, Any, Optional, Union, Tuple, Set
 import itertools 
 
 import requests
@@ -380,16 +380,18 @@ class MobilityDatabaseClient:
         if limit is not None:
             if not (0 <= limit <= 2500):
                 logger.warning(f"Limit {limit} is outside typical range [0,2500].")
-            base_params['limit'] = limit
+            # Convert limit to string
+            base_params['limit'] = str(limit) 
         if offset is not None:
             if offset < 0:
                 raise ValueError("Offset cannot be negative.")
-            base_params['offset'] = offset
+            # Convert offset to string
+            base_params['offset'] = str(offset) 
         if is_official is not None:
             base_params['is_official'] = str(is_official).lower()
 
         # AOI bounding box
-        if aoi:
+        if aoi is not None:
             if isinstance(aoi, (gpd.GeoDataFrame, gpd.GeoSeries)):
                 if aoi.empty:
                     raise ValueError("AOI is empty.")
@@ -401,6 +403,7 @@ class MobilityDatabaseClient:
             else:
                 raise TypeError("Invalid AOI type.")
 
+
             min_lon, min_lat, max_lon, max_lat = bounds_geom.bounds
             base_params['dataset_latitudes'] = f"{min_lat},{max_lat}"
             base_params['dataset_longitudes'] = f"{min_lon},{max_lon}"
@@ -408,6 +411,7 @@ class MobilityDatabaseClient:
             valid_methods = ["completely_enclosed", "partially_enclosed", "disjoint"]
             if bounding_filter_method not in valid_methods:
                 raise ValueError(f"Invalid bounding_filter_method: {bounding_filter_method}")
+            # Only include bounding_filter_method if coordinates are present:
             base_params['bounding_filter_method'] = bounding_filter_method
 
         all_results_set: Set[str] = set()
