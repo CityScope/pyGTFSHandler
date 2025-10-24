@@ -139,12 +139,12 @@ class Calendar:
         for p in paths:
             new_p = utils.search_file(p, file=file)
             if new_p is None:
-                continue
+                calendar_paths.append(None)
             else:
                 calendar_paths.append(new_p)
 
 
-        schema_dict = utils.get_df_schema_dict(calendar_paths[0])  # assume same schema
+        schema_dict = utils.get_df_schema_dict("calendar.txt")  # assume same schema
         calendar = utils.read_csv_list(calendar_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id)
 
         if calendar is None:
@@ -226,11 +226,11 @@ class Calendar:
         for p in paths:
             new_p = utils.search_file(p, file=file)
             if new_p is None:
-                continue
+                calendar_dates_paths.append(None)
             else:
                 calendar_dates_paths.append(new_p)
 
-        schema_dict = utils.get_df_schema_dict(calendar_dates_paths[0])
+        schema_dict = utils.get_df_schema_dict("calendar_dates.txt")
         calendar_dates = utils.read_csv_list(
             calendar_dates_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id
         )

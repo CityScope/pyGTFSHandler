@@ -125,11 +125,12 @@ class Stops:
         for p in paths:
             new_p = utils.search_file(p, file=file)
             if new_p is None:
+                stop_paths.append(None)
                 warnings.warn(f"File {file} does not exist in {p}", UserWarning)
             else:
                 stop_paths.append(new_p)
 
-        schema_dict = utils.get_df_schema_dict(stop_paths[0])
+        schema_dict = utils.get_df_schema_dict("stops.txt")
         lf = utils.read_csv_list(stop_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id)
 
         lf = utils.filter_by_id_column(lf, "stop_id", stop_ids)
@@ -323,11 +324,11 @@ class Stops:
         for p in paths:
             new_p = utils.search_file(p, file=file)
             if new_p is None:
-                continue
+                stop_paths.append(None)
             else:
                 stop_paths.append(new_p)
 
-        schema_dict = utils.get_df_schema_dict(stop_paths[0])
+        schema_dict = utils.get_df_schema_dict("stops.txt")
         stops = utils.read_csv_list(stop_paths, schema_overrides=schema_dict, check_files=True)
 
         if isinstance(stop_ids, list):

@@ -83,12 +83,13 @@ class Trips:
         for p in paths:
             new_p = utils.search_file(p, file=file)
             if new_p is None:
+                trip_paths.append(None)
                 warnings.warn(f"File {file} does not exist in {p}", UserWarning)
             else:
                 trip_paths.append(new_p)
 
 
-        schema_dict = utils.get_df_schema_dict(trip_paths[0])
+        schema_dict = utils.get_df_schema_dict("trips.txt")
         trips = utils.read_csv_list(trip_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id)
 
         trips = utils.filter_by_id_column(trips, "service_id", service_ids)

@@ -310,13 +310,12 @@ class StopTimes:
         for p in paths:
             new_p = utils.search_file(p, file=file)
             if new_p is None:
+                stop_times_paths.append(None)
                 warnings.warn(f"File {file} does not exist in {p}", UserWarning)
             else:
                 stop_times_paths.append(new_p)
 
-        schema_dict: Dict[str, pl.DataType] = utils.get_df_schema_dict(
-            stop_times_paths[0]
-        )
+        schema_dict: Dict[str, pl.DataType] = utils.get_df_schema_dict("stop_times.txt")
         stop_times: pl.LazyFrame = utils.read_csv_list(
             stop_times_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id
         )
@@ -652,16 +651,14 @@ class StopTimes:
         for p in paths:
             new_p = utils.search_file(p, file=file)
             if new_p is None:
-                continue
+                frequencies_paths.append(None)
             else:
                 frequencies_paths.append(new_p)
 
         if len(frequencies_paths) == 0:
             return None
 
-        schema_dict: Dict[str, pl.DataType] = utils.get_df_schema_dict(
-            frequencies_paths[0]
-        )
+        schema_dict: Dict[str, pl.DataType] = utils.get_df_schema_dict("frequencies.txt")
         frequencies: pl.LazyFrame = utils.read_csv_list(
             frequencies_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id
         )

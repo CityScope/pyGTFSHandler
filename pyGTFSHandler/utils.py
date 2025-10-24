@@ -152,7 +152,7 @@ def read_csv_lazy(
             A lazily loaded Polars LazyFrame with applied schema overrides and a new column `gtfs_name`
             containing the GTFS directory name inferred from the path.
     """
-    if not os.path.isfile(path):
+    if (path is None) or (not os.path.isfile(path)):
         return None
 
     if check_files:
@@ -271,6 +271,9 @@ def read_csv_list(
     if search_files:
         new_path_list = []
         for path in path_list:
+            if path is None:
+                new_path_list.append(None)
+
             folder, file = os.path.split(path)
             new_path = search_file(folder,file)
             if new_path is None:
