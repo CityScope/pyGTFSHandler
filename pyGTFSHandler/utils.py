@@ -16,6 +16,8 @@ import tempfile
 import shutil
 from collections import Counter
 from itertools import islice
+import logging 
+import gtfs_checker 
 
 # import pygeohash
 
@@ -23,8 +25,13 @@ from itertools import islice
 
 EPOCH = date(1970, 1, 1)
 
-id_cols = ["trip_id", "service_id", "route_id", "stop_id", "shape_id", "parent_station"]
-mandatory_cols = ["trip_id", "service_id", "stop_id"]
+ID_COLS = ["trip_id", "service_id", "route_id", "stop_id", "shape_id", "parent_station"]
+MANDATORY_COLS = ["trip_id", "service_id", "stop_id"]
+
+# Configure logging for better output control
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 
 def datetime_to_days_since_epoch(dt: datetime | date) -> int:
     if type(dt) is datetime:
@@ -42,95 +49,203 @@ def time_to_seconds(t: datetime | time) -> int:
     return t.hour * 3600 + t.minute * 60 + t.second
 
 
-def get_df_schema_dict(path) -> dict:
+def get_city_geometry(city_name: str) -> gpd.GeoDataFrame:
     """
-    Returns a dictionary specifying the expected data types for mandatory columns
-    in a GTFS (General Transit Feed Specification) file.
+    Download city boundary geometry from OpenStreetMap.
 
-    This is useful for consistent schema enforcement when reading GTFS .txt files.
+    Parameters
+    ----------
+    city_name : str
+        Name of the city (e.g., "Berlin, Germany").
 
-    Parameters:
-    -----------
-    path : str
-        The file path or file name of a GTFS component (e.g., 'stops.txt').
+    Returns
+    -------
+    gdf : geopandas.GeoDataFrame
+        GeoDataFrame containing the city boundary polygon in EPSG:4326.
+    """
+    # Query OSM for place boundary
+    gdf = ox.geocode_to_gdf(city_name)
+
+    # Ensure CRS is WGS84
+    gdf = gdf.to_crs(epsg=4326)
+    return gdf
+
+
+def get_geographic_suggestions_from_string(
+    query: str,
+    user_agent: str = "MobilityDatabaseClient",
+    max_results: int = 25
+) -> Dict[str, List[str]]:
+    """
+    Suggests all possible country codes, subdivisions, and municipalities
+    for a given string using OpenStreetMap's Nominatim service.
+    
+    This version collects all relevant fields without skipping any.
+    Counties are always included in municipalities.
+    """
+    geolocator = Nominatim(user_agent=user_agent, timeout=10)
+
+    suggested_country_codes = set()
+    suggested_subdivision_names = set()
+    suggested_municipalities = set()
+
+    try:
+        locations = geolocator.geocode(
+            query,
+            addressdetails=True,
+            language='en',
+            exactly_one=False,
+            limit=max_results
+        )
+        if locations:
+            for location in locations:
+                address = location.raw.get('address', {})
+
+                # Country code
+                country_code = address.get('country_code')
+                if country_code:
+                    suggested_country_codes.add(country_code.upper())
+
+                # Collect all possible subdivisions
+                for key in ['state', 'province', 'region', 'county']:
+                    value = address.get(key)
+                    if value:
+                        suggested_subdivision_names.add(value)
+
+                # Collect all possible municipalities
+                for key in ['city', 'town', 'village', 'county']:
+                    value = address.get(key)
+                    if value:
+                        suggested_municipalities.add(value)
+
+    except (GeocoderTimedOut, GeocoderServiceError) as e:
+        print(f"Geocoding failed: {e}")
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+
+    return {
+        'country_codes': sorted(suggested_country_codes),
+        'subdivision_names': sorted(suggested_subdivision_names),
+        'municipalities': sorted(suggested_municipalities),
+    }
+
+def get_geographic_suggestions_from_aoi(
+    aoi: Union[Polygon, MultiPolygon, gpd.GeoDataFrame, gpd.GeoSeries],
+    num_points: int = 1, # Number of points to sample for geocoding
+    user_agent: str = "MobilityDatabaseClient" # Required by Nominatim
+) -> Dict[str, List[str]]:
+    """
+    Suggests country codes, subdivisions, and municipalities for a given
+    Area of Interest (AOI) by performing reverse geocoding.
+    This simplified version generates sample points within the AOI's *bounding box*.
+
+    This function uses OpenStreetMap's Nominatim service via geopy.
+    Please be respectful of Nominatim's usage policy (one request per second).
+    It's recommended to set a specific `user_agent` for your application.
+
+    Args:
+        aoi: An Area of Interest, which can be a shapely.geometry.Polygon,
+             shapely.geometry.MultiPolygon, geopandas.GeoDataFrame, or
+             geopandas.GeoSeries.
+        num_points: The number of random points to sample within the AOI's
+                    bounding box for reverse geocoding. More points can provide broader
+                    coverage for large AOIs, but increases the number of Nominatim requests.
+                    Defaults to 1 (representative point).
+        user_agent: A unique user agent string for Nominatim requests. This is required.
 
     Returns:
-    --------
-    dict
-        A dictionary mapping mandatory column names to their expected data types.
+        A dictionary containing lists of suggested 'country_codes',
+        'subdivision_names', and 'municipalities'. Example:
+        {
+            'country_codes': ['US', 'CA'],
+            'subdivision_names': ['California', 'Québec'],
+            'municipalities': ['Los Angeles', 'Montreal']
+        }
+        Returns lists that might be empty if geocoding fails or no relevant info is found.
+
+    Raises:
+        ImportError: If geopandas or geopy are not installed.
+        TypeError: If `aoi` is not a supported geospatial object.
+        ValueError: If the AOI is empty or invalid.
     """
-    if "stops.txt" in str(path):
-        schema_dict = {
-            "stop_id": str,
-            "stop_name": str,
-            "stop_lat": float,
-            "stop_lon": float,
-        }
-    elif "trips.txt" in str(path):
-        schema_dict = {
-            "route_id": str,
-            "service_id": str,
-            "trip_id": str,
-        }
-    elif "stop_times.txt" in str(path):
-        schema_dict = {
-            "trip_id": str,
-            "arrival_time": str,
-            "departure_time": str,
-            "stop_id": str,
-            "stop_sequence": int,
-        }
-    elif "routes.txt" in str(path):
-        schema_dict = {
-            "route_id": str,
-            "agency_id": str,
-            "route_short_name": str,
-            "route_long_name": str,
-            "route_type": str,
-        }
-    elif "calendar.txt" in str(path):
-        schema_dict = {
-            "service_id": str,
-            "monday": int,
-            "tuesday": int,
-            "wednesday": int,
-            "thursday": int,
-            "friday": int,
-            "saturday": int,
-            "sunday": int,
-            "start_date": int,
-            "end_date": int,
-        }
-    elif "calendar_dates.txt" in str(path):
-        schema_dict = {"service_id": str, "date": int, "exception_type": str}
-    elif "frequencies.txt" in str(path):
-        schema_dict = {
-            "trip_id": str,
-            "start_time": str,
-            "end_time": str,
-            "headway_secs": int,
-        }
-    elif "shapes.txt" in str(path):
-        schema_dict = {
-            "shape_id": str,
-            "shape_pt_sequence": int,
-            "shape_pt_lat": float,
-            "shape_pt_lon": float,
-            "shape_dist_traveled": float,
-        }
-    elif "agency.txt" in str(path):
-        schema_dict = {
-            "agency_id": str,
-        }
+    if gpd is None or Nominatim is None or random is None:
+        raise ImportError("geopandas, geopy, and random must be available to use get_geographic_suggestions_from_aoi. Please run 'pip install geopandas geopy'.")
 
+    target_geometry: Union[Polygon, MultiPolygon]
+    if isinstance(aoi, (gpd.GeoDataFrame, gpd.GeoSeries)):
+        if aoi.empty:
+            raise ValueError("Provided GeoDataFrame/GeoSeries is empty.")
+        target_geometry = aoi.to_crs(4326).union_all() # Combine all geometries
+    elif isinstance(aoi, (Polygon, MultiPolygon)):
+        target_geometry = aoi
     else:
-        raise Exception(f"File {path} not implemented.")
+        raise TypeError("aoi must be a shapely.geometry.Polygon, MultiPolygon, geopandas.GeoDataFrame, or geopandas.GeoSeries object.")
 
-    return schema_dict
+    if target_geometry.is_empty:
+        raise ValueError("AOI geometry is empty.")
+
+    geolocator = Nominatim(user_agent=user_agent, timeout=10)
+
+    suggested_country_codes = set()
+    suggested_subdivision_names = set()
+    suggested_municipalities = set()
+
+    points_to_geocode: List[Point] = []
+    if num_points <= 0:
+        num_points = 1 # Ensure at least one point is sampled
+
+    # Calculate bounding box once
+    min_lon, min_lat, max_lon, max_lat = target_geometry.bounds
+
+    if num_points == 1:
+        # For a single point, representative_point is often more meaningful than bbox center
+        points_to_geocode.append(target_geometry.representative_point())
+    else:
+        # Generate random points within the bounding box
+        for _ in range(num_points):
+            rand_lon = random.uniform(min_lon, max_lon)
+            rand_lat = random.uniform(min_lat, max_lat)
+            points_to_geocode.append(Point(rand_lon, rand_lat))
+
+    for i, point in enumerate(points_to_geocode):
+        lat, lon = point.y, point.x
+        logger.debug(f"Geocoding point {i+1}/{len(points_to_geocode)}: ({lat}, {lon}) (sampled from bbox)")
+        try:
+            location = geolocator.reverse((lat, lon), language='en')
+            if location and location.raw:
+                address = location.raw.get('address', {})
+                
+                # Country code (ISO 3166-1 alpha-2)
+                country_code_long = address.get('country_code')
+                if country_code_long:
+                    suggested_country_codes.add(country_code_long.upper())
+
+                # Subdivision name (state, province, region, etc.)
+                # Ordered by common usage/specificity
+                subdivision = address.get('state') or address.get('province') or address.get('region') or address.get('county')
+                if subdivision:
+                    suggested_subdivision_names.add(subdivision)
+
+                # Municipality (city, town, village)
+                municipality = address.get('city') or address.get('town') or address.get('village')
+                if municipality:
+                    suggested_municipalities.add(municipality)
+            else:
+                logger.warning(f"No location data found for point ({lat}, {lon}).")
+        except (GeocoderTimedOut, GeocoderServiceError) as e:
+            logger.error(f"Geocoding failed for point ({lat}, {lon}): {e}")
+        except Exception as e:
+            logger.error(f"An unexpected error occurred during geocoding for point ({lat}, {lon}): {e}")
+
+    return {
+        'country_codes': sorted(list(suggested_country_codes)), # Sort for consistent output
+        'subdivision_names': sorted(list(suggested_subdivision_names)),
+        'municipalities': sorted(list(suggested_municipalities))
+    }
 
 
 def read_csv_lazy(
-    path: str, schema_overrides: dict | None = None, file_id: int | None = None, check_files:bool=False, raise_errors:bool=False
+    path: str, schema_overrides: dict | None = None, file_id: int | None = None, check_files:bool=True, mandatory_cols=MANDATORY_COLS, id_cols=ID_COLS
 ) -> pl.LazyFrame | None:
     """
     Lazily reads a CSV file into a Polars LazyFrame with optional schema overrides and column filtering.
@@ -156,62 +271,44 @@ def read_csv_lazy(
         return None
 
     if check_files:
-        # Open the CSV file and create a CSV reader object
-        with open(path, 'r') as file:
-            row_count = len(list(csv.reader(file)))
+        infer_schema = False 
+    else:
+        infer_schema = True
 
-        if row_count > 0:
-            row_count -= 1
-
-    # Lazily scan CSV with optional column selection
-    if check_files:
+    try:
+        # Try lazy scan first
+        lf = pl.scan_csv(
+            path,
+            infer_schema=infer_schema,
+            raise_if_empty=False,
+            truncate_ragged_lines=check_files
+        )
+    except Exception as e:
+        # Show exception as a warning
+        warnings.warn(f"scan_csv failed with error: {e}. Falling back to read_csv with ignore_errors.")
+        
+        # Fallback: read_csv with ignore_errors and convert to lazy
         try:
             lf = pl.read_csv(
                 path,
-                infer_schema=False,          # don’t try to infer types
-                ignore_errors=True,          # skip parsing errors
-                truncate_ragged_lines=True   # handle lines with missing columns
+                infer_schema=infer_schema,          # don’t try to infer types
+                ignore_errors=check_files,          # skip parsing errors
+                truncate_ragged_lines=check_files   # handle lines with missing columns
             ).lazy()
         except Exception as e:
             warnings.warn(f"Failed to load CSV {path}: {e}")
             return None
-    else:
-        try:
-            # Try lazy scan first
-            lf = pl.scan_csv(
-                path,
-                infer_schema=False,
-                raise_if_empty=False,
-                truncate_ragged_lines=True
-            )
-        except Exception as e:
-            # Show exception as a warning
-            warnings.warn(f"scan_csv failed with error: {e}. Falling back to read_csv with ignore_errors.")
-            
-            # Fallback: read_csv with ignore_errors and convert to lazy
-            try:
-                lf = pl.read_csv(
-                    path,
-                    infer_schema=False,          # don’t try to infer types
-                    ignore_errors=True,          # skip parsing errors
-                    truncate_ragged_lines=True   # handle lines with missing columns
-                ).lazy()
-            except Exception as e:
-                warnings.warn(f"Failed to load CSV {path}: {e}")
-                return None
 
-    # Apply custom normalization (assuming normalize_df is defined elsewhere)
-    lf = normalize_df(lf)
+    if check_files:
+        # Apply custom normalization (assuming normalize_df is defined elsewhere)
+        lf = gtfs_checker.normalize_df(lf)
 
-    # Apply schema overrides if specified
-    if schema_overrides:
-        for col, dtype in schema_overrides.items():
-            if col in lf.collect_schema().names():
-                # Cast non-strictly so that parsing errors become null
-                lf = lf.with_columns(pl.col(col).cast(dtype, strict=False))
-                # Drop rows where casting failed (i.e., nulls)
-                if "stop_times" not in path:
-                    lf = lf.filter(pl.col(col).is_not_null())
+        # Apply schema overrides if specified
+        if schema_overrides:
+            for col, dtype in schema_overrides.items():
+                if col in lf.collect_schema().names():
+                    # Cast non-strictly so that parsing errors become null
+                    lf = lf.with_columns(pl.col(col).cast(dtype, strict=False))
 
     # Extract GTFS directory name from path (e.g., 'gtfs_file' from '/home/xyz/gtfs_file/stops.txt')
     gtfs_name = os.path.basename(os.path.dirname(path))
@@ -222,31 +319,38 @@ def read_csv_lazy(
     )
 
     columns = lf.collect_schema().names()
-    for col in id_cols:
-        if col in columns:
-            lf = lf.with_columns(
-                pl.when(pl.col(col).is_null() | (pl.col(col) == ""))
-                .then(pl.lit(None))
-                .otherwise(
-                    pl.concat_str([pl.col(col), pl.lit("_file_"), pl.col("file_id")])
-                )
-                .alias(col)
-            )
-            if col in mandatory_cols:
-                lf = lf.filter(pl.col(col).is_not_null())
-
     if check_files:
-        lf = lf.collect()
-        if row_count != len(lf):
-            warnings.warn(f"{row_count - len(lf)} rows of the file {path} are invalid and have been skipped.")
-        
-        lf = lf.lazy()
-
+        for col in id_cols:
+            if col in columns:
+                lf = lf.with_columns(
+                    pl.when(pl.col(col).is_null() | (pl.col(col) == ""))
+                    .then(pl.lit(None))
+                    .otherwise(
+                        pl.concat_str([pl.col(col), pl.lit("_file_"), pl.col("file_id")])
+                    )
+                    .alias(col)
+                )
+                if col in mandatory_cols:
+                    lf = lf.filter(pl.col(col).is_not_null())
+    else:
+        for col in id_cols:
+            if col in columns:
+                lf = lf.with_columns(
+                    pl.col(col).cast(str).alias(col)
+                )
+                lf = lf.with_columns(
+                    pl.when(pl.col(col).is_null())
+                    .then(pl.lit(None))
+                    .otherwise(
+                        pl.concat_str([pl.col(col), pl.lit("_file_"), pl.col("file_id")])
+                    )
+                    .alias(col)
+                )
     return lf
 
 
 def read_csv_list(
-    path_list: List[str], schema_overrides: Optional[dict] = None, check_files:bool=False, search_files:bool=False, min_file_id:int=0
+    path_list: List[str], schema_overrides: Optional[dict] = None, search_files:bool=False, min_file_id:int=0, check_files:bool=True, mandatory_cols = MANDATORY_COLS, id_cols=ID_COLS
 ) -> pl.LazyFrame:
     """
     Lazily reads a list of CSV (GTFS) files into a single concatenated Polars LazyFrame.
@@ -275,7 +379,7 @@ def read_csv_list(
                 new_path_list.append(None)
 
             folder, file = os.path.split(path)
-            new_path = search_file(folder,file)
+            new_path = gtfs_checker.search_file(folder,file)
             if new_path is None:
                 print(f"File {file} not found in path {folder}")
             else:
@@ -288,7 +392,7 @@ def read_csv_list(
         for i in range(len(path_list))
         if (
             res := read_csv_lazy(
-                path_list[i], schema_overrides=schema_overrides, file_id=i+min_file_id, check_files=check_files
+                path_list[i], schema_overrides=schema_overrides, file_id=i+min_file_id, check_files=check_files, mandatory_cols=mandatory_cols, id_cols=id_cols
             )
         )
         is not None
@@ -301,107 +405,6 @@ def read_csv_list(
         file_lfs,
         how="diagonal_relaxed",
     )
-
-
-def normalize_string(s: str) -> str:
-    """
-    Normalize a string by:
-    - Converting accented characters to their ASCII equivalents.
-    - Lowercasing all characters.
-    - Removing whitespace.
-    - Removing all non-alphanumeric characters except underscores.
-
-    This function is used to normalize column names.
-
-    Parameters:
-        s (str): The input string.
-
-    Returns:
-        str: The normalized string.
-    """
-    s = unicodedata.normalize("NFKD", s)  # Decompose Unicode characters
-    s = s.encode("ascii", "ignore").decode("ascii")  # Remove non-ASCII characters
-    s = s.lower()  # Convert to lowercase
-    s = re.sub(r"\s+", "", s)  # Remove all whitespace
-    s = re.sub(r"[^a-z0-9_]", "", s)  # Keep only a-z, 0-9, and underscore
-    return s
-
-
-def search_file(path, file):
-    """
-    Recursively searches for the first file that matches the given filename
-    in the directory and its subdirectories.
-
-    Args:
-        path (str): The root directory to start searching from.
-        file (str): The filename to search for (case-sensitive).
-
-    Returns:
-        str | None: The full path of the first matching file, or None if not found.
-    """
-    for root, dirs, files in os.walk(path):
-        if file in files:
-            return os.path.join(root, file)
-    return None
-
-
-def normalize_df(lf: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame:
-    """
-    Normalize both column names and string values in a Polars LazyFrame or DataFrame.
-
-    Column names:
-    - Lowercased, stripped of spaces and special characters.
-
-    String columns (pl.Utf8):
-    - Strip leading/trailing whitespace.
-    - Remove diacritical marks (accents) from characters.
-    - Optionally preserve uppercase (used here to keep valid URL casing).
-    - Retain all valid URL characters.
-    - Remove invalid characters.
-
-    Parameters:
-        lf (pl.LazyFrame | pl.DataFrame): Input LazyFrame or DataFrame.
-
-    Returns:
-        pl.LazyFrame | pl.DataFrame: The normalized LazyFrame or DataFrame.
-    """
-    # Get the schema to avoid triggering expensive computation in lazy mode
-    schema = lf.collect_schema()
-    column_names = schema.names()
-
-    # Normalize all column names
-    normalized_column_names = [normalize_string(col) for col in column_names]
-    rename_map = dict(zip(column_names, normalized_column_names))
-    lf = lf.rename(rename_map)
-
-    # Normalize string column values (for columns with Utf8 type)
-    for old_name, new_name in zip(column_names, normalized_column_names):
-        dtype = schema.get(old_name)
-        if dtype == pl.Utf8:
-            expr = (
-                pl.col(new_name)
-                .str.strip_chars()  # Trim leading/trailing whitespace
-                # .str.to_lowercase()  # Uncomment to force lowercase values
-                # Remove diacritics from characters (accented letters)
-                .str.replace_all(r"[áàãâäåāÁÀÃÂÄÅĀ]", "a")
-                .str.replace_all(r"[éèêëēėęÉÈÊËĒĖĘ]", "e")
-                .str.replace_all(r"[íìîïīįıÍÌÎÏĪĮ]", "i")
-                .str.replace_all(r"[óòõôöøōÓÒÕÔÖØŌ]", "o")
-                .str.replace_all(r"[úùûüūÚÙÛÜŪ]", "u")
-                .str.replace_all(r"[çćčÇĆČ]", "c")
-                .str.replace_all(r"[ñńÑŃ]", "n")
-                .str.replace_all(r"[ß]", "ss")
-                .str.replace_all(r"[ÿŸ]", "y")
-                .str.replace_all(r"[žźżŽŹŻ]", "z")
-                .str.replace_all(
-                    r"\s+", "_"
-                )  # Replace internal spaces with underscores
-                # Keep only valid URL characters
-                .str.replace_all(r"[^a-zA-Z0-9\-_.~:/?#\[\]@!$&'()*+,;=]", "")
-            )
-            lf = lf.with_columns(expr.alias(new_name))
-
-    return lf
 
 
 def get_country_region(lat, lon):
@@ -551,86 +554,6 @@ def get_holidays(year, country_code, subdivision_code=None):
 
     return df
 
-# def geohash(
-#     df: pl.DataFrame, lat_col: str, lon_col: str, precision: int = 7
-# ) -> pl.DataFrame:
-#     """
-#     Add a geohash column to a Polars DataFrame based on latitude and longitude columns.
-
-#     Parameters
-#     ----------
-#     df : pl.DataFrame
-#         The input Polars DataFrame containing latitude and longitude data.
-#     lat_col : str
-#         The name of the latitude column in the DataFrame.
-#     lon_col : str
-#         The name of the longitude column in the DataFrame.
-#     precision : int, optional
-#         The precision (length) of the geohash string. Default is 7.
-
-#     Returns
-#     -------
-#     pl.DataFrame
-#         A new DataFrame with an additional 'geohash' column containing geohash strings.
-#     """
-#     df = df.with_columns(
-#         pl.struct([lat_col, lon_col])
-#         .map_elements(
-#             lambda point: pygeohash.encode(
-#                 point[lat_col], point[lon_col], precision=precision
-#             ),
-#             return_dtype=pl.String,
-#         )
-#         .alias("geohash")
-#     )
-#     return df
-
-
-def normalize_route_type(route_type):
-    if isinstance(route_type, int):
-        return route_type
-    elif isinstance(route_type, str):
-        if route_type == "tram":
-            route_type = 0
-
-        elif route_type == "subway":
-            route_type = 1
-
-        elif route_type == "rail":
-            route_type = 2
-
-        elif route_type == "bus":
-            route_type = 3
-
-        elif route_type == "ferry":
-            route_type = 4
-
-        elif (
-            (route_type == "cable car")
-            or (route_type == "cable_car")
-            or (route_type == "cable-car")
-            or (route_type == "cablecar")
-        ):
-            route_type = 5
-
-        elif route_type == "gondola":
-            route_type = 6
-
-        elif route_type == "funicular":
-            route_type = 7
-        else:
-            raise Exception(
-                f"Got route_type {route_type} but accepted values are tram, subway, rail, bus, ferry, cable car, gondola and funicular"
-            )
-
-    else:
-        raise Exception(
-            f"Route type {route_type} with dtype {type(route_type)} not implemented"
-        )
-
-    return route_type
-
-
 def filter_by_id_column(lf, column, ids: list | None = []):
     "TODO: Deal with _file_id in ids and column"
     if ids is None:
@@ -752,3 +675,39 @@ def hash_path(path, chunk_size=8192):
 def compare_paths(path1, path2):
     """Compare any two paths by content."""
     return hash_path(path1) == hash_path(path2)
+
+
+
+# def geohash(
+#     df: pl.DataFrame, lat_col: str, lon_col: str, precision: int = 7
+# ) -> pl.DataFrame:
+#     """
+#     Add a geohash column to a Polars DataFrame based on latitude and longitude columns.
+
+#     Parameters
+#     ----------
+#     df : pl.DataFrame
+#         The input Polars DataFrame containing latitude and longitude data.
+#     lat_col : str
+#         The name of the latitude column in the DataFrame.
+#     lon_col : str
+#         The name of the longitude column in the DataFrame.
+#     precision : int, optional
+#         The precision (length) of the geohash string. Default is 7.
+
+#     Returns
+#     -------
+#     pl.DataFrame
+#         A new DataFrame with an additional 'geohash' column containing geohash strings.
+#     """
+#     df = df.with_columns(
+#         pl.struct([lat_col, lon_col])
+#         .map_elements(
+#             lambda point: pygeohash.encode(
+#                 point[lat_col], point[lon_col], precision=precision
+#             ),
+#             return_dtype=pl.String,
+#         )
+#         .alias("geohash")
+#     )
+#     return df

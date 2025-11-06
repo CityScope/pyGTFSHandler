@@ -1,321 +1,139 @@
 import os
 import json
-import random
-import zipfile
+import itertools
 import logging
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional, Union, Tuple, Set
-import itertools 
 
 import requests
 import geopandas as gpd
-import osmnx as ox
 from shapely.geometry import Point, Polygon, MultiPolygon
-from geopy.geocoders import Nominatim
-from geopy.exc import GeocoderTimedOut, GeocoderServiceError
 from tqdm import tqdm
 
 from .. import utils
-# Configure logging for better output control
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# -------------------------------------------------------------------
+# Logging configuration
+# -------------------------------------------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(name)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
 
-
-def get_city_geometry(city_name: str) -> gpd.GeoDataFrame:
-    """
-    Download city boundary geometry from OpenStreetMap.
-
-    Parameters
-    ----------
-    city_name : str
-        Name of the city (e.g., "Berlin, Germany").
-
-    Returns
-    -------
-    gdf : geopandas.GeoDataFrame
-        GeoDataFrame containing the city boundary polygon in EPSG:4326.
-    """
-    # Query OSM for place boundary
-    gdf = ox.geocode_to_gdf(city_name)
-
-    # Ensure CRS is WGS84
-    gdf = gdf.to_crs(epsg=4326)
-    return gdf
-
-
-def get_geographic_suggestions_from_string(
-    query: str,
-    user_agent: str = "MobilityDatabaseClient",
-    max_results: int = 25
-) -> Dict[str, List[str]]:
-    """
-    Suggests all possible country codes, subdivisions, and municipalities
-    for a given string using OpenStreetMap's Nominatim service.
-    
-    This version collects all relevant fields without skipping any.
-    Counties are always included in municipalities.
-    """
-    geolocator = Nominatim(user_agent=user_agent, timeout=10)
-
-    suggested_country_codes = set()
-    suggested_subdivision_names = set()
-    suggested_municipalities = set()
-
-    try:
-        locations = geolocator.geocode(
-            query,
-            addressdetails=True,
-            language='en',
-            exactly_one=False,
-            limit=max_results
-        )
-        if locations:
-            for location in locations:
-                address = location.raw.get('address', {})
-
-                # Country code
-                country_code = address.get('country_code')
-                if country_code:
-                    suggested_country_codes.add(country_code.upper())
-
-                # Collect all possible subdivisions
-                for key in ['state', 'province', 'region', 'county']:
-                    value = address.get(key)
-                    if value:
-                        suggested_subdivision_names.add(value)
-
-                # Collect all possible municipalities
-                for key in ['city', 'town', 'village', 'county']:
-                    value = address.get(key)
-                    if value:
-                        suggested_municipalities.add(value)
-
-    except (GeocoderTimedOut, GeocoderServiceError) as e:
-        print(f"Geocoding failed: {e}")
-    except Exception as e:
-        print(f"Unexpected error: {e}")
-
-    return {
-        'country_codes': sorted(suggested_country_codes),
-        'subdivision_names': sorted(suggested_subdivision_names),
-        'municipalities': sorted(suggested_municipalities),
-    }
-
-def get_geographic_suggestions_from_aoi(
-    aoi: Union[Polygon, MultiPolygon, gpd.GeoDataFrame, gpd.GeoSeries],
-    num_points: int = 1, # Number of points to sample for geocoding
-    user_agent: str = "MobilityDatabaseClient" # Required by Nominatim
-) -> Dict[str, List[str]]:
-    """
-    Suggests country codes, subdivisions, and municipalities for a given
-    Area of Interest (AOI) by performing reverse geocoding.
-    This simplified version generates sample points within the AOI's *bounding box*.
-
-    This function uses OpenStreetMap's Nominatim service via geopy.
-    Please be respectful of Nominatim's usage policy (one request per second).
-    It's recommended to set a specific `user_agent` for your application.
-
-    Args:
-        aoi: An Area of Interest, which can be a shapely.geometry.Polygon,
-             shapely.geometry.MultiPolygon, geopandas.GeoDataFrame, or
-             geopandas.GeoSeries.
-        num_points: The number of random points to sample within the AOI's
-                    bounding box for reverse geocoding. More points can provide broader
-                    coverage for large AOIs, but increases the number of Nominatim requests.
-                    Defaults to 1 (representative point).
-        user_agent: A unique user agent string for Nominatim requests. This is required.
-
-    Returns:
-        A dictionary containing lists of suggested 'country_codes',
-        'subdivision_names', and 'municipalities'. Example:
-        {
-            'country_codes': ['US', 'CA'],
-            'subdivision_names': ['California', 'Québec'],
-            'municipalities': ['Los Angeles', 'Montreal']
-        }
-        Returns lists that might be empty if geocoding fails or no relevant info is found.
-
-    Raises:
-        ImportError: If geopandas or geopy are not installed.
-        TypeError: If `aoi` is not a supported geospatial object.
-        ValueError: If the AOI is empty or invalid.
-    """
-    if gpd is None or Nominatim is None or random is None:
-        raise ImportError("geopandas, geopy, and random must be available to use get_geographic_suggestions_from_aoi. Please run 'pip install geopandas geopy'.")
-
-    target_geometry: Union[Polygon, MultiPolygon]
-    if isinstance(aoi, (gpd.GeoDataFrame, gpd.GeoSeries)):
-        if aoi.empty:
-            raise ValueError("Provided GeoDataFrame/GeoSeries is empty.")
-        target_geometry = aoi.to_crs(4326).union_all() # Combine all geometries
-    elif isinstance(aoi, (Polygon, MultiPolygon)):
-        target_geometry = aoi
-    else:
-        raise TypeError("aoi must be a shapely.geometry.Polygon, MultiPolygon, geopandas.GeoDataFrame, or geopandas.GeoSeries object.")
-
-    if target_geometry.is_empty:
-        raise ValueError("AOI geometry is empty.")
-
-    geolocator = Nominatim(user_agent=user_agent, timeout=10)
-
-    suggested_country_codes = set()
-    suggested_subdivision_names = set()
-    suggested_municipalities = set()
-
-    points_to_geocode: List[Point] = []
-    if num_points <= 0:
-        num_points = 1 # Ensure at least one point is sampled
-
-    # Calculate bounding box once
-    min_lon, min_lat, max_lon, max_lat = target_geometry.bounds
-
-    if num_points == 1:
-        # For a single point, representative_point is often more meaningful than bbox center
-        points_to_geocode.append(target_geometry.representative_point())
-    else:
-        # Generate random points within the bounding box
-        for _ in range(num_points):
-            rand_lon = random.uniform(min_lon, max_lon)
-            rand_lat = random.uniform(min_lat, max_lat)
-            points_to_geocode.append(Point(rand_lon, rand_lat))
-
-    for i, point in enumerate(points_to_geocode):
-        lat, lon = point.y, point.x
-        logger.debug(f"Geocoding point {i+1}/{len(points_to_geocode)}: ({lat}, {lon}) (sampled from bbox)")
-        try:
-            location = geolocator.reverse((lat, lon), language='en')
-            if location and location.raw:
-                address = location.raw.get('address', {})
-                
-                # Country code (ISO 3166-1 alpha-2)
-                country_code_long = address.get('country_code')
-                if country_code_long:
-                    suggested_country_codes.add(country_code_long.upper())
-
-                # Subdivision name (state, province, region, etc.)
-                # Ordered by common usage/specificity
-                subdivision = address.get('state') or address.get('province') or address.get('region') or address.get('county')
-                if subdivision:
-                    suggested_subdivision_names.add(subdivision)
-
-                # Municipality (city, town, village)
-                municipality = address.get('city') or address.get('town') or address.get('village')
-                if municipality:
-                    suggested_municipalities.add(municipality)
-            else:
-                logger.warning(f"No location data found for point ({lat}, {lon}).")
-        except (GeocoderTimedOut, GeocoderServiceError) as e:
-            logger.error(f"Geocoding failed for point ({lat}, {lon}): {e}")
-        except Exception as e:
-            logger.error(f"An unexpected error occurred during geocoding for point ({lat}, {lon}): {e}")
-
-    return {
-        'country_codes': sorted(list(suggested_country_codes)), # Sort for consistent output
-        'subdivision_names': sorted(list(suggested_subdivision_names)),
-        'municipalities': sorted(list(suggested_municipalities))
-    }
 
 class MobilityDatabaseClient:
     """
     A client for interacting with the Mobility Database API.
 
-    Handles OAuth2 authentication with refresh tokens and provides methods for
-    searching and downloading GTFS feeds.
+    Handles OAuth2 authentication via a refresh token and provides
+    methods to search for and download GTFS feeds.
     """
+
     BASE_URL = "https://api.mobilitydatabase.org/v1"
     TOKEN_ENDPOINT = f"{BASE_URL}/tokens"
     GTFS_FEEDS_ENDPOINT = f"{BASE_URL}/gtfs_feeds"
 
+    # -------------------------------------------------------------------
+    # Initialization and Authentication
+    # -------------------------------------------------------------------
+
     def __init__(self, refresh_token: str):
         """
-        Initializes the MobilityDatabaseClient and obtains an initial access token.
+        Initialize the Mobility Database client.
 
         Args:
-            refresh_token: Your long-lived refresh token for the Mobility Database API.
-                           (You'll need to obtain this from the Mobility Database website,
-                           as indicated by "Your refresh token is hidden" in the documentation.)
+            refresh_token: Long-lived refresh token obtained from
+                the Mobility Database website.
+
+        Raises:
+            ValueError: If refresh_token is empty.
         """
         if not refresh_token:
             raise ValueError("Refresh token cannot be empty.")
+
         self.refresh_token = refresh_token
         self._access_token: Optional[str] = None
         self._token_expires_at: Optional[datetime] = None
-        self._get_access_token() # Acquire initial token
+
+        # Get initial access token
+        self._get_access_token()
 
     def _get_access_token(self) -> None:
         """
-        Obtains or refreshes an access token.
-        Tokens are valid for one hour, so this method refreshes it if it's
-        expired or close to expiration (within a 5-minute buffer).
+        Obtain or refresh the access token using the refresh token.
+
+        Tokens typically expire after one hour. This method automatically
+        refreshes them when necessary.
         """
-        # Refresh token if it's expired or will expire in less than 5 minutes
+        # Skip refresh if still valid for >5 minutes
         if self._access_token and self._token_expires_at and \
            datetime.now() < self._token_expires_at - timedelta(minutes=5):
-            logger.debug("Access token is still valid.")
+            logger.debug("Access token is still valid; skipping refresh.")
             return
 
-        logger.info("Obtaining/refreshing access token...")
-        headers = {
-            'Content-Type': 'application/json'
-        }
-        data = {
-            "refresh_token": self.refresh_token
-        }
+        logger.info("Obtaining or refreshing access token...")
+        headers = {"Content-Type": "application/json"}
+        data = {"refresh_token": self.refresh_token}
+
         try:
             response = requests.post(self.TOKEN_ENDPOINT, headers=headers, data=json.dumps(data))
-            response.raise_for_status() # Raise an exception for HTTP errors (4xx or 5xx)
-            token_data = response.json()
-            self._access_token = token_data.get('access_token')
-            if not self._access_token:
-                raise ValueError("Access token not found in response.")
+            response.raise_for_status()
 
-            # Access tokens are valid for one hour (3600 seconds) as per documentation.
-            # 'expires_in' field might be present in the response for a specific duration.
-            expires_in_seconds = token_data.get('expires_in', 3600)
-            self._token_expires_at = datetime.now() + timedelta(seconds=expires_in_seconds)
-            logger.info("Access token obtained/refreshed successfully.")
+            token_data = response.json()
+            self._access_token = token_data.get("access_token")
+            if not self._access_token:
+                raise ValueError("Access token missing in response.")
+
+            expires_in = token_data.get("expires_in", 3600)
+            self._token_expires_at = datetime.now() + timedelta(seconds=expires_in)
+            logger.info("Access token obtained successfully.")
         except requests.exceptions.RequestException as e:
-            logger.error(f"Error obtaining access token: {e}")
-            if hasattr(e, 'response') and e.response is not None:
-                logger.error(f"Response status: {e.response.status_code}, content: {e.response.text}")
+            logger.exception("Failed to obtain access token.")
             raise ConnectionError(f"Failed to obtain access token: {e}") from e
         except ValueError as e:
             logger.error(f"Invalid token response: {e}")
             raise
 
+    # -------------------------------------------------------------------
+    # HTTP Request Handling
+    # -------------------------------------------------------------------
+
     def _authorized_request(self, method: str, url: str, **kwargs) -> requests.Response:
         """
-        Makes an HTTP request with the Authorization header.
-        Ensures the access token is fresh before making the request.
+        Make an authorized HTTP request with a valid access token.
 
         Args:
-            method: The HTTP method (e.g., "GET", "POST").
-            url: The URL for the request.
-            **kwargs: Additional keyword arguments to pass to requests.request.
+            method: HTTP method (GET, POST, etc.)
+            url: Target endpoint URL.
+            **kwargs: Additional arguments for requests.request().
 
         Returns:
-            The requests.Response object.
+            requests.Response: The HTTP response.
 
         Raises:
-            ConnectionError: If unable to get a valid access token.
-            requests.exceptions.RequestException: For HTTP errors during the request.
+            requests.exceptions.RequestException: On network or HTTP errors.
         """
-        self._get_access_token() # Ensure token is fresh before any request
-        
-        headers = kwargs.pop('headers', {})
-        headers['Authorization'] = f'Bearer {self._access_token}'
-        
+        self._get_access_token()  # Refresh token if needed
+
+        headers = kwargs.pop("headers", {})
+        headers["Authorization"] = f"Bearer {self._access_token}"
+
         try:
             response = requests.request(method, url, headers=headers, **kwargs)
-            response.raise_for_status() # Raise an exception for HTTP errors (4xx or 5xx)
+            response.raise_for_status()
             return response
         except requests.exceptions.RequestException as e:
-            logger.error(f"API request failed: {e}")
-            if hasattr(e, 'response') and e.response is not None:
-                logger.error(f"Request URL: {e.response.request.url}")
-                logger.error(f"Response status: {e.response.status_code}")
-                logger.error(f"Response content: {e.response.text}")
+            logger.error(f"Request to {url} failed: {e}")
+            if e.response is not None:
+                logger.error(
+                    f"Response {e.response.status_code}: {e.response.text}"
+                )
             raise
+
+    # -------------------------------------------------------------------
+    # Parameter Preparation
+    # -------------------------------------------------------------------
 
     def _prepare_list_param_for_api(
         self,
@@ -323,8 +141,14 @@ class MobilityDatabaseClient:
         value: Optional[Union[str, List[Optional[str]]]]
     ) -> Tuple[Optional[List[str]], bool]:
         """
-        Process list-based query parameters.
-        Returns a list of strings and a flag if None was included.
+        Prepare list-based query parameters for API requests.
+
+        Args:
+            param_name: Parameter name (for error messages).
+            value: Single string, list of strings, or list including None.
+
+        Returns:
+            Tuple[list_of_valid_strings or None, bool flag_if_None_included]
         """
         if value is None:
             return None, False
@@ -333,18 +157,26 @@ class MobilityDatabaseClient:
             return [value], False
 
         if isinstance(value, list):
-            has_none_in_list = False
-            valid_string_items = []
+            valid_items = []
+            has_none = False
             for item in value:
                 if item is None:
-                    has_none_in_list = True
+                    has_none = True
                 elif isinstance(item, str):
-                    valid_string_items.append(item)
+                    valid_items.append(item)
                 else:
-                    raise TypeError(f"All items in the list for '{param_name}' must be strings or None, got {type(item)}")
-            return valid_string_items or None, has_none_in_list
+                    raise TypeError(
+                        f"All items in '{param_name}' must be strings or None; got {type(item)}"
+                    )
+            return valid_items or None, has_none
 
-        raise TypeError(f"Expected string, list of strings (potentially including None), or None for '{param_name}', got {type(value)}")
+        raise TypeError(
+            f"Expected string, list[str|None], or None for '{param_name}', got {type(value)}"
+        )
+
+    # -------------------------------------------------------------------
+    # Search Feeds
+    # -------------------------------------------------------------------
 
     def search_gtfs_feeds(
         self,
@@ -360,182 +192,209 @@ class MobilityDatabaseClient:
         is_official: Optional[bool] = None
     ) -> List[Dict[str, Any]]:
         """
-        Searches for GTFS feeds. Supports lists of values per parameter
-        by making separate API calls for each combination of values.
-        Handles None values client-side.
+        Search for GTFS feeds matching specified filters.
+
+        Supports multiple values per parameter and handles client-side
+        merging of results across combinations.
+
+        Args:
+            aoi: Polygon or GeoDataFrame defining geographic area.
+            limit: Number of feeds to return (max 2500).
+            offset: Offset for pagination.
+            provider, producer_url, country_code, subdivision_name, municipality:
+                Filter fields (accept list or single value).
+            bounding_filter_method: Spatial inclusion rule.
+            is_official: Whether to filter by official feeds.
+
+        Returns:
+            A list of feed metadata dictionaries.
         """
-        # Prepare parameters
+        # Prepare parameter combinations
         param_requests = {
-            'provider': self._prepare_list_param_for_api('provider', provider),
-            'producer_url': self._prepare_list_param_for_api('producer_url', producer_url),
-            'country_code': self._prepare_list_param_for_api('country_code', country_code),
-            'subdivision_name': self._prepare_list_param_for_api('subdivision_name', subdivision_name),
-            'municipality': self._prepare_list_param_for_api('municipality', municipality),
+            "provider": self._prepare_list_param_for_api("provider", provider),
+            "producer_url": self._prepare_list_param_for_api("producer_url", producer_url),
+            "country_code": self._prepare_list_param_for_api("country_code", country_code),
+            "subdivision_name": self._prepare_list_param_for_api("subdivision_name", subdivision_name),
+            "municipality": self._prepare_list_param_for_api("municipality", municipality),
         }
 
-        needs_none_filter_pass = any(include_none_flag for _, include_none_flag in param_requests.values())
-
-        # Base parameters
+        needs_none_pass = any(flag for _, flag in param_requests.values())
         base_params: Dict[str, Any] = {}
+
         if limit is not None:
             if not (0 <= limit <= 2500):
-                logger.warning(f"Limit {limit} is outside typical range [0,2500].")
-            # Convert limit to string
-            base_params['limit'] = str(limit) 
+                logger.warning(f"Unusual limit: {limit} (expected 0–2500)")
+            base_params["limit"] = str(limit)
+
         if offset is not None:
             if offset < 0:
                 raise ValueError("Offset cannot be negative.")
-            # Convert offset to string
-            base_params['offset'] = str(offset) 
-        if is_official is not None:
-            base_params['is_official'] = str(is_official).lower()
+            base_params["offset"] = str(offset)
 
-        # AOI bounding box
+        if is_official is not None:
+            base_params["is_official"] = str(is_official).lower()
+
+        # AOI bounding box setup
         if aoi is not None:
             if isinstance(aoi, (gpd.GeoDataFrame, gpd.GeoSeries)):
                 if aoi.empty:
                     raise ValueError("AOI is empty.")
                 bounds_geom = aoi.geometry.to_crs(4326).union_all()
                 if bounds_geom.is_empty:
-                    raise ValueError("AOI geometry is empty after union.")
+                    raise ValueError("AOI geometry empty after transformation.")
             elif isinstance(aoi, (Polygon, MultiPolygon)):
                 bounds_geom = aoi
             else:
-                raise TypeError("Invalid AOI type.")
-
+                raise TypeError("AOI must be Polygon, MultiPolygon, GeoDataFrame, or GeoSeries.")
 
             min_lon, min_lat, max_lon, max_lat = bounds_geom.bounds
-            base_params['dataset_latitudes'] = f"{min_lat},{max_lat}"
-            base_params['dataset_longitudes'] = f"{min_lon},{max_lon}"
+            base_params["dataset_latitudes"] = f"{min_lat},{max_lat}"
+            base_params["dataset_longitudes"] = f"{min_lon},{max_lon}"
 
             valid_methods = ["completely_enclosed", "partially_enclosed", "disjoint"]
             if bounding_filter_method not in valid_methods:
                 raise ValueError(f"Invalid bounding_filter_method: {bounding_filter_method}")
-            # Only include bounding_filter_method if coordinates are present:
-            base_params['bounding_filter_method'] = bounding_filter_method
+            base_params["bounding_filter_method"] = bounding_filter_method
 
-        all_results_set: Set[str] = set()
+        # Collect results
+        all_feed_ids: Set[str] = set()
         final_results: List[Dict[str, Any]] = []
 
-        # --- Generate all combinations of non-None values ---
-        non_none_values = {k: v[0] for k, v in param_requests.items() if v[0]}  # dict of lists
+        # Non-None combinations
+        non_none_values = {k: v[0] for k, v in param_requests.items() if v[0]}
         keys, lists = zip(*non_none_values.items()) if non_none_values else ([], [])
 
         for combination in itertools.product(*lists):
             query_params = {**base_params, **dict(zip(keys, combination))}
-            logger.info(f"API Call for combination: {query_params}")
+            logger.info(f"Searching with params: {query_params}")
             try:
-                results = self._authorized_request("GET", self.GTFS_FEEDS_ENDPOINT, params=query_params).json()
+                response = self._authorized_request("GET", self.GTFS_FEEDS_ENDPOINT, params=query_params)
+                results = response.json()
             except Exception as e:
-                logger.warning(f"API call failed for {query_params}: {e}")
+                logger.warning(f"API request failed for {query_params}: {e}")
                 continue
 
             for feed in results:
-                feed_id = feed.get('id')
-                if feed_id and feed_id not in all_results_set:
+                feed_id = feed.get("id")
+                if feed_id and feed_id not in all_feed_ids:
                     final_results.append(feed)
-                    all_results_set.add(feed_id)
+                    all_feed_ids.add(feed_id)
 
-        # --- Second API Call for None fields if needed ---
-        if needs_none_filter_pass:
-            # Build query excluding parameters requesting None
+        # Handle fields with None
+        if needs_none_pass:
+            logger.info("Performing additional search for feeds with None fields...")
             omitted_values = {k: v[0] for k, v in param_requests.items() if v[0] and not v[1]}
             keys_omit, lists_omit = zip(*omitted_values.items()) if omitted_values else ([], [])
             for combination in itertools.product(*lists_omit) if lists_omit else [()]:
                 query_params = {**base_params, **dict(zip(keys_omit, combination))}
-                logger.info(f"API Call for None fields: {query_params}")
                 try:
-                    results = self._authorized_request("GET", self.GTFS_FEEDS_ENDPOINT, params=query_params).json()
+                    response = self._authorized_request("GET", self.GTFS_FEEDS_ENDPOINT, params=query_params)
+                    results = response.json()
                 except Exception as e:
-                    logger.warning(f"API call failed for {query_params}: {e}")
+                    logger.warning(f"API request failed for {query_params}: {e}")
                     continue
 
                 for feed in results:
-                    feed_id = feed.get('id')
-                    if feed_id in all_results_set:
+                    feed_id = feed.get("id")
+                    if not feed_id or feed_id in all_feed_ids:
                         continue
 
-                    matches_none_criteria = True
+                    # Check if feed matches None criteria
+                    matches_none = True
                     for param_name, (_, include_none_flag) in param_requests.items():
                         if include_none_flag:
                             field_value = None
-                            if param_name in ['provider', 'producer_url']:
+                            if param_name in ["provider", "producer_url"]:
                                 field_value = feed.get(param_name)
-                            elif param_name in ['country_code', 'subdivision_name', 'municipality']:
-                                locations = feed.get('locations')
-                                if locations and isinstance(locations, list) and len(locations) > 0:
-                                    field_value = locations[0].get(param_name)
+                            elif param_name in ["country_code", "subdivision_name", "municipality"]:
+                                locs = feed.get("locations")
+                                if locs and isinstance(locs, list) and len(locs) > 0:
+                                    field_value = locs[0].get(param_name)
                             if field_value is not None:
-                                matches_none_criteria = False
+                                matches_none = False
                                 break
-
-                    if matches_none_criteria:
+                    if matches_none:
                         final_results.append(feed)
-                        all_results_set.add(feed_id)
+                        all_feed_ids.add(feed_id)
 
         logger.info(f"Total unique feeds found: {len(final_results)}")
         return final_results
 
-    def download_feeds(self,feeds: List[Dict], download_folder: str, overwrite: bool = False) -> List[str]:
+    # -------------------------------------------------------------------
+    # Download Feeds
+    # -------------------------------------------------------------------
+
+    def download_feeds(
+        self,
+        feeds: List[Dict],
+        download_folder: str,
+        overwrite: bool = False
+    ) -> List[str]:
+        """
+        Download GTFS feed ZIP files from the Mobility Database.
+
+        Args:
+            feeds: List of feed dictionaries (from search_gtfs_feeds()).
+            download_folder: Directory to store the ZIP files.
+            overwrite: If True, re-download and replace existing ZIPs.
+
+        Returns:
+            List of absolute paths to downloaded ZIP files.
+        """
         os.makedirs(download_folder, exist_ok=True)
-        extracted_paths = []
+        zip_paths: List[str] = []
 
         for feed in tqdm(feeds, desc="Downloading feeds"):
-            feed_id = feed.get('id', '')
-            feed_name = feed.get('feed_name', '')
-            feed_provider = feed.get('provider', '')
-            # Ensure each component is at most x characters
+            feed_id = feed.get("id", "")
+            feed_name = feed.get("feed_name", "")
+            feed_provider = feed.get("provider", "")
+
+            # Normalize and truncate filenames
             max_chars = 10
             feed_id_short = feed_id[:max_chars]
             feed_name_short = feed_name[:max_chars]
             feed_provider_short = feed_provider[:max_chars]
-
-            # Combine and normalize
-            feed_filename = utils.normalize_string(f"{feed_id_short}_{feed_name_short}_{feed_provider_short}")
-
-            latest_dataset = feed.get('latest_dataset')
-            if not latest_dataset:
-                print(f"Feed '{feed_filename}' has no 'latest_dataset'. Skipping.")
-                continue
-
-            hosted_url = latest_dataset.get('hosted_url')
-            if not hosted_url:
-                print(f"Feed '{feed_filename}' has no 'hosted_url'. Skipping.")
-                continue
-
-            extraction_folder = os.path.join(download_folder, feed_filename)
-            if os.path.exists(extraction_folder) and os.listdir(extraction_folder) and not overwrite:
-                print(f"Feed '{feed_filename}' already exists. Skipping.")
-                extracted_paths.append(os.path.abspath(extraction_folder))
-                continue
-
-            if os.path.exists(extraction_folder) and overwrite:
-                import shutil
-                shutil.rmtree(extraction_folder)
+            feed_filename = utils.normalize_string(
+                f"{feed_id_short}_{feed_name_short}_{feed_provider_short}"
+            )
 
             zip_path = os.path.join(download_folder, f"{feed_filename}.zip")
+
+            latest_dataset = feed.get("latest_dataset")
+            if not latest_dataset:
+                logger.warning(f"Feed '{feed_filename}' has no 'latest_dataset'. Skipping.")
+                continue
+
+            hosted_url = latest_dataset.get("hosted_url")
+            if not hosted_url:
+                logger.warning(f"Feed '{feed_filename}' has no 'hosted_url'. Skipping.")
+                continue
+
+            # Skip or overwrite existing files
+            if os.path.exists(zip_path):
+                if overwrite:
+                    logger.info(f"Overwriting existing ZIP: {zip_path}")
+                else:
+                    logger.info(f"Feed '{feed_filename}' already downloaded. Skipping.")
+                    zip_paths.append(os.path.abspath(zip_path))
+                    continue
+
             try:
-                # Public download — no Authorization header
-                with requests.get(hosted_url, stream=True) as r:
+                logger.info(f"Downloading feed '{feed_filename}' from {hosted_url}")
+                with requests.get(hosted_url, stream=True, timeout=60) as r:
                     r.raise_for_status()
-                    with open(zip_path, 'wb') as f:
+                    with open(zip_path, "wb") as f:
                         for chunk in r.iter_content(chunk_size=8192):
                             f.write(chunk)
 
-                # Extract the ZIP
-                os.makedirs(extraction_folder, exist_ok=True)
-                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                    zip_ref.extractall(extraction_folder)
-
-                #print(f"Extracted '{feed_filename}' to '{extraction_folder}'.")
-                extracted_paths.append(os.path.abspath(extraction_folder))
+                logger.info(f"Downloaded '{feed_filename}' to {zip_path}")
+                zip_paths.append(os.path.abspath(zip_path))
 
             except requests.exceptions.RequestException as e:
-                print(f"Error downloading feed '{feed_filename}': {e}")
-            except (OSError, zipfile.BadZipFile) as e:
-                print(f"Error extracting feed '{feed_filename}': {e}")
-            finally:
+                logger.error(f"Error downloading '{feed_filename}': {e}")
                 if os.path.exists(zip_path):
                     os.remove(zip_path)
+                continue
 
-        return extracted_paths
+        logger.info(f"Successfully downloaded {len(zip_paths)} feeds.")
+        return zip_paths
