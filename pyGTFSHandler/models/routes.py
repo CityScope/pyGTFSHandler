@@ -1,7 +1,7 @@
 from pathlib import Path
 import polars as pl
 from typing import Optional, List, Union
-from .. import utils
+from .. import utils, gtfs_checker
 import os
 import warnings 
 
@@ -69,7 +69,7 @@ class Routes:
         route_paths: List[Path] = []
         file = "routes.txt"
         for p in paths:
-            new_p = utils.search_file(p, file=file)
+            new_p = gtfs_checker.search_file(p, file=file)
             if new_p is None:
                 route_paths.append(None)
                 warnings.warn(f"File {file} does not exist in {p}", UserWarning)
@@ -77,7 +77,7 @@ class Routes:
                 route_paths.append(new_p)
 
 
-        schema_dict = utils.get_df_schema_dict("routes.txt")
+        schema_dict, _ = gtfs_checker.get_df_schema_dict("routes.txt")
         routes = utils.read_csv_list(route_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id)
         # Identify values that cannot be converted to int
         non_convertible = routes.filter(

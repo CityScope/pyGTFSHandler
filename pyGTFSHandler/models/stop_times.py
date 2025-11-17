@@ -2,7 +2,7 @@
 import polars as pl
 from pathlib import Path
 from typing import Union, List, Tuple, Optional, Dict
-from .. import utils
+from .. import utils, gtfs_checker
 from datetime import datetime, time
 import warnings
 import os
@@ -308,14 +308,14 @@ class StopTimes:
         stop_times_paths: List[Path] = []
         file = "stop_times.txt"
         for p in paths:
-            new_p = utils.search_file(p, file=file)
+            new_p = gtfs_checker.search_file(p, file=file)
             if new_p is None:
                 stop_times_paths.append(None)
                 warnings.warn(f"File {file} does not exist in {p}", UserWarning)
             else:
                 stop_times_paths.append(new_p)
 
-        schema_dict: Dict[str, pl.DataType] = utils.get_df_schema_dict("stop_times.txt")
+        schema_dict, _ = gtfs_checker.get_df_schema_dict("stop_times.txt")
         stop_times: pl.LazyFrame = utils.read_csv_list(
             stop_times_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id
         )
@@ -649,7 +649,7 @@ class StopTimes:
         frequencies_paths: List[Path] = []
         file = "frequencies.txt"
         for p in paths:
-            new_p = utils.search_file(p, file=file)
+            new_p = gtfs_checker.search_file(p, file=file)
             if new_p is None:
                 frequencies_paths.append(None)
             else:
@@ -658,7 +658,7 @@ class StopTimes:
         if len(frequencies_paths) == 0:
             return None
 
-        schema_dict: Dict[str, pl.DataType] = utils.get_df_schema_dict("frequencies.txt")
+        schema_dict, _ = gtfs_checker.get_df_schema_dict("frequencies.txt")
         frequencies: pl.LazyFrame = utils.read_csv_list(
             frequencies_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id
         )

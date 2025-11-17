@@ -51,8 +51,13 @@ the direction with less remaining stops
 - TODO If in a trip_id a stop_id is repeated divide it into 2 trip ids check if this is really needed
 """
 
+"""TODO: revise filter_by_time_range with frequencies
+TODO: revise interval func to work with all possible by, at and hows especially 'shape_direction' 'all' instead of 'max'
+"""
+
 from .models import StopTimes, Stops, Trips, Calendar, Routes, Shapes
 from . import utils
+from . import gtfs_checker
 
 from pathlib import Path
 from datetime import datetime, time, date
@@ -60,6 +65,8 @@ from typing import Optional, Union, List
 import geopandas as gpd
 import polars as pl
 import pandas as pd 
+import warnings 
+import numpy as np 
 
 SECS_PER_DAY: int = 86400
 
@@ -258,9 +265,14 @@ class Feed:
 
         gtfs_dir: List[Path] = [Path(p) for p in gtfs_dirs]
 
-        for p in gtfs_dir:
-            if not p.is_dir():
-                raise ValueError(f"{p} is not a valid directory.")
+        for i in range(len(gtfs_dir)):
+            if gtfs_dir[i].is_file():
+                orig_file = gtfs_dir[i]
+                gtfs_dir[i] = Path(gtfs_checker.unzip(gtfs_dir[i],delete=False))
+                warnings.warn(f"Extracting {orig_file} to {gtfs_dir[i]}")
+
+            if not gtfs_dir[i].is_dir():
+                raise ValueError(f"{gtfs_dir[i]} is not a valid directory.")
 
         # --- 2. Load Individual GTFS Components with Filtering ---
         # The loading is done in a logical order to allow for cascading filters.
@@ -303,9 +315,9 @@ class Feed:
 
         if route_types is not None:
             if route_types is list:
-                route_types = [utils.normalize_route_type(i) for i in route_types]
+                route_types = [gtfs_checker.normalize_route_type(i) for i in route_types]
             else:
-                route_types = [utils.normalize_route_type(route_types)]
+                route_types = [gtfs_checker.normalize_route_type(route_types)]
 
         routes = Routes()
         routes.load(
@@ -351,6 +363,12 @@ class Feed:
 
         # Reload stops_lf so that at least in the lf the next stop of bordering trips is loaded
 
+        self.stop_ids_in_aoi = (
+            stops.lf.select(pl.col("stop_id").unique())
+            .collect()
+            .to_series()
+            .to_list()
+        )
         stops.reload_stops_lf(gtfs_dir, stop_times.lf.select("stop_id"))
 
         # --- 3. Integrate Generated Trips from Frequencies ---
@@ -423,7 +441,7 @@ class Feed:
         # Merge with trips, stops, routes, and shapes data to create the full view.
         lf = lf.join(
             trips.lf.filter(~pl.col("next_day")).select(
-                ["trip_id", "service_id", "route_id"]
+                ["trip_id", "service_id", "route_id", "direction_id"]
             ),
             on="trip_id",
             how="left",
@@ -516,10 +534,18 @@ class Feed:
         lf = lf.unique()
 
         lf = lf.join(
-            stops.lf.select(["stop_id"]).with_columns(pl.lit(True).alias("isin_aoi")),
+            stops.lf.select(["stop_id"]),
             on="stop_id",
             how="left"
         )
+
+        lf = lf.join(
+            stops.lf.select(["stop_id"]),
+            on="stop_id",
+            how="left"
+        )
+        stop_ids_in_aoi_lf = pl.LazyFrame({'stop_id': self.stop_ids_in_aoi}).with_columns(pl.lit(True).alias("isin_aoi"))
+        lf = lf.join(stop_ids_in_aoi_lf, on='stop_id', how="left")
         lf = lf.with_columns(pl.col("isin_aoi").fill_null(False))
 
         return lf
@@ -645,6 +671,47 @@ class Feed:
 
         return stop_times
 
+    def __service_intensity_in_date_range(self,gtfs_lf,route_types,date_df):
+        gtfs_lf = gtfs_lf.filter(pl.col("isin_aoi"))
+        if route_types is not None:
+            gtfs_lf = self._filter_by_route_type(gtfs_lf, route_types=route_types)
+
+        if self.stop_times.frequencies is None:
+            gtfs_lf: pl.LazyFrame = gtfs_lf.unique(
+                ["service_id", "stop_id", "departure_time"]
+            ).select("trip_id", "service_id", "n_trips")
+        else:
+            gtfs_lf: pl.LazyFrame = gtfs_lf.unique(
+                ["service_id", "stop_id", "departure_time", "start_time", "end_time"]
+            ).select("trip_id", "service_id", "n_trips")
+
+        # Count the number of trips associated with each service_id.
+        stop_time_counts_df: pl.DataFrame = (
+            gtfs_lf.group_by("service_id")
+            .agg(pl.col("n_trips").sum().alias("num_stop_times"))
+            .collect()
+        )
+
+        # Explode the date_df so each row is a (date, service_id) pair.
+        exploded: pl.DataFrame = date_df.explode("service_ids").rename(
+            {"service_ids": "service_id"}
+        )
+
+        # Join the daily services with their trip counts.
+        joined: pl.DataFrame = exploded.join(
+            stop_time_counts_df, on="service_id", how="left"
+        )
+        joined = joined.with_columns(pl.col("num_stop_times").fill_null(0))
+
+        # Group by date to sum up the trip counts for total daily intensity.
+        total_by_date: pl.DataFrame = joined.group_by("date").agg(
+            pl.col("weekday").first(),
+            pl.col("num_stop_times").sum().alias("service_intensity"),
+        )
+
+        return total_by_date
+    
+
     def _frequencies_to_stop_times(self, gtfs_lf):
         gtfs_lf = gtfs_lf.collect()
         frequencies_exist = (self.stop_times.frequencies is not None) and (
@@ -729,64 +796,12 @@ class Feed:
 
         return gtfs_lf
 
-    def calendar_new_end_date(self, new_end_date: datetime | date, file_id=None,gtfs_name=None):
-        end_date = int(utils.datetime_to_days_since_epoch(new_end_date))
-        if self.calendar.lf is not None:
-            if file_id is not None:
-                self.calendar.lf = self.calendar.lf.with_columns(
-                    pl.when(
-                        pl.col("file_id") == pl.lit(file_id)
-                    ).then(
-                    pl.lit(end_date)
-                    ).otherwise(pl.col("end_date")
-                    ).alias("end_date")
-                )
-            elif gtfs_name is not None:
-                self.calendar.lf = self.calendar.lf.with_columns(
-                    pl.when(
-                        pl.col("gtfs_name") == pl.lit(gtfs_name)
-                    ).then(
-                    pl.lit(end_date)
-                    ).otherwise(pl.col("end_date")
-                    ).alias("end_date")
-                )
-            else:
-                self.calendar.lf = self.calendar.lf.with_columns(
-                    pl.lit(end_date).alias("end_date")
-                )
-
-    def calendar_new_start_date(self, new_start_date: datetime | date, file_id=None,gtfs_name=None):
-        start_date = int(utils.datetime_to_days_since_epoch(new_start_date))
-        if self.calendar.lf is not None:
-            if file_id is not None:
-                self.calendar.lf = self.calendar.lf.with_columns(
-                    pl.when(
-                        pl.col("file_id") == pl.lit(file_id)
-                    ).then(
-                    pl.lit(start_date)
-                    ).otherwise(pl.col("start_date")
-                    ).alias("start_date")
-                )
-            elif gtfs_name is not None:
-                self.calendar.lf = self.calendar.lf.with_columns(
-                    pl.when(
-                        pl.col("gtfs_name") == pl.lit(gtfs_name)
-                    ).then(
-                    pl.lit(start_date)
-                    ).otherwise(pl.col("start_date")
-                    ).alias("start_date")
-                )
-            else:
-                self.calendar.lf = self.calendar.lf.with_columns(
-                    pl.lit(start_date).alias("start_date")
-                )
-                
-    def filter_by_date_range(
+    def _filter_by_date_range(
         self,
         data: pl.LazyFrame,
-        start_date: datetime | date = None,
-        end_date: datetime | date = None,
-        date_type: str | list[str] = None,
+        start_date: datetime | date | None = None,
+        end_date: datetime | date | None = None,
+        date_type: str | list[str] | None = None,
     ) -> pl.LazyFrame:
         """
         Filters a LazyFrame based on a date range.
@@ -816,7 +831,7 @@ class Feed:
         )
         return data
 
-    def filter_by_date(
+    def _filter_by_date(
         self,
         data: pl.LazyFrame,
         date: datetime | date,
@@ -846,7 +861,7 @@ class Feed:
         )
         return data
 
-    def filter_by_time_range(
+    def _filter_by_time_range(
         self,
         data: pl.LazyFrame,
         start_time: datetime | time = datetime.min,
@@ -947,17 +962,181 @@ class Feed:
 
         return data
 
-    def filter_by_route_type(
-        self, data: pl.LazyFrame, route_types: list | int | str
+    def _filter_by_route_type(
+        self, data: pl.LazyFrame, route_types: list | int | str | None
     ) -> pl.LazyFrame:
+        if (route_types == 'all') or (route_types is None):
+            return data 
+        
         if isinstance(route_types, list):
-            route_types = [utils.normalize_route_type(i) for i in route_types]
+            if 'all' in route_types:
+                return data 
+            
+            route_types = [gtfs_checker.normalize_route_type(i) for i in route_types]
         else:
-            route_types = [utils.normalize_route_type(route_types)]
+            route_types = [gtfs_checker.normalize_route_type(route_types)]
 
         route_types_df = pl.DataFrame({"route_type": route_types})
         data = data.join(route_types_df.lazy(), on="route_type", how="semi")
         return data
+    
+    def filter_by_date_range(
+        self,
+        start_date: datetime | date | None = None,
+        end_date: datetime | date | None = None,
+        date_type: str | list[str] | None = None,
+    ) -> pl.LazyFrame:
+        """
+        Filters a LazyFrame based on a date range.
+
+        It uses the `Calendar` object to find all `service_id`s active within
+        the specified date range and then semi-joins the input data with these
+        service IDs.
+
+        Args:
+            start_date (datetime): The start of the date range (inclusive).
+            end_date (datetime): The end of the date range (inclusive).
+
+        Returns:
+            pl.LazyFrame: The filtered LazyFrame.
+        """
+        return self._filter_by_date_range(self.lf,start_date,end_date,date_type)
+
+    def filter_by_date(
+        self,
+        date: datetime | date,
+    ) -> pl.LazyFrame:
+        """
+        Filters a LazyFrame based on a date.
+
+        It uses the `Calendar` object to find all `service_id`s active within
+        the specified date range and then semi-joins the input data with these
+        service IDs.
+
+        Args:
+            date (datetime): The desired date.
+
+        Returns:
+            pl.LazyFrame: The filtered LazyFrame.
+        """
+
+        return self._filter_by_date(self.lf,date)
+
+    def filter_by_time_range(
+        self,
+        start_time: datetime | time = datetime.min,
+        end_time: datetime | time = datetime.max,
+    ) -> pl.LazyFrame:
+        """
+        Filters a LazyFrame based on a time-of-day range.
+
+        It handles trips defined by `frequencies.txt` differently from those with
+        explicit schedules.
+
+        Args:
+            start_time (datetime): The start of the time range. Defaults to 00:00:00.
+            end_time (datetime): The end of the time range. Defaults to 23:59:59.
+
+        Returns:
+            pl.LazyFrame: The filtered LazyFrame.
+        """
+        return self._filter_by_time_range(self.lf,start_time,end_time)
+
+    def filter_by_route_type(
+        self, route_types: list | int | str
+    ) -> pl.LazyFrame:
+        return self._filter_by_route_type(self.lf,route_types)
+
+    def filter(
+            self,
+            start_date: datetime | date | None = None,
+            end_date: datetime | date | None = None,
+            date: datetime | date | None = None,
+            date_type: str | list[str] | None = None,
+            start_time: datetime | time = datetime.min,
+            end_time: datetime | time = datetime.max,
+            route_types: list | int | str | None = None,
+            frequencies:bool = True,
+            in_aoi:bool = False, 
+            delete_last_stop:bool = False
+        ):
+        lf = self.lf
+        if in_aoi:
+            lf = lf.filter(pl.col("isin_aoi"))
+
+        if delete_last_stop:
+            lf = lf.filter(pl.col("stop_sequence") != pl.col("stop_sequence").max().over("trip_id"))
+
+        if route_types is not None:
+            lf = self._filter_by_route_type(lf, route_types)
+
+        if date is not None:
+            lf = self._filter_by_date(lf, date)
+        elif (start_date is not None) | (end_date is not None):
+            lf = self._filter_by_date_range(lf, start_date,end_date,date_type)
+
+        if (start_time is not None) | (end_time is not None):
+            lf = self._filter_by_time_range(lf, start_time, end_time)
+
+        if not frequencies:
+            lf = self._frequencies_to_stop_times(lf)
+            lf = self._filter_by_time_range(lf, start_time, end_time)
+
+        lf = lf.collect().lazy()
+
+        return lf 
+    
+    def calendar_new_end_date(self, new_end_date: datetime | date, file_id=None,gtfs_name=None):
+        end_date = int(utils.datetime_to_days_since_epoch(new_end_date))
+        if self.calendar.lf is not None:
+            if file_id is not None:
+                self.calendar.lf = self.calendar.lf.with_columns(
+                    pl.when(
+                        pl.col("file_id") == pl.lit(file_id)
+                    ).then(
+                    pl.lit(end_date)
+                    ).otherwise(pl.col("end_date")
+                    ).alias("end_date")
+                )
+            elif gtfs_name is not None:
+                self.calendar.lf = self.calendar.lf.with_columns(
+                    pl.when(
+                        pl.col("gtfs_name") == pl.lit(gtfs_name)
+                    ).then(
+                    pl.lit(end_date)
+                    ).otherwise(pl.col("end_date")
+                    ).alias("end_date")
+                )
+            else:
+                self.calendar.lf = self.calendar.lf.with_columns(
+                    pl.lit(end_date).alias("end_date")
+                )
+
+    def calendar_new_start_date(self, new_start_date: datetime | date, file_id=None,gtfs_name=None):
+        start_date = int(utils.datetime_to_days_since_epoch(new_start_date))
+        if self.calendar.lf is not None:
+            if file_id is not None:
+                self.calendar.lf = self.calendar.lf.with_columns(
+                    pl.when(
+                        pl.col("file_id") == pl.lit(file_id)
+                    ).then(
+                    pl.lit(start_date)
+                    ).otherwise(pl.col("start_date")
+                    ).alias("start_date")
+                )
+            elif gtfs_name is not None:
+                self.calendar.lf = self.calendar.lf.with_columns(
+                    pl.when(
+                        pl.col("gtfs_name") == pl.lit(gtfs_name)
+                    ).then(
+                    pl.lit(start_date)
+                    ).otherwise(pl.col("start_date")
+                    ).alias("start_date")
+                )
+            else:
+                self.calendar.lf = self.calendar.lf.with_columns(
+                    pl.lit(start_date).alias("start_date")
+                )
 
     def get_service_intensity_in_date_range(
         self,
@@ -1013,165 +1192,107 @@ class Feed:
         )
 
         return total_by_date.sort("date")
-    
-    def __service_intensity_in_date_range(self,gtfs_lf,route_types,date_df):
-        gtfs_lf = gtfs_lf.filter(pl.col("isin_aoi"))
-        if route_types is not None:
-            gtfs_lf = self.filter_by_route_type(gtfs_lf, route_types=route_types)
 
-        if self.stop_times.frequencies is None:
-            gtfs_lf: pl.LazyFrame = gtfs_lf.unique(
-                ["service_id", "stop_id", "departure_time"]
-            ).select("trip_id", "service_id", "n_trips")
-        else:
-            gtfs_lf: pl.LazyFrame = gtfs_lf.unique(
-                ["service_id", "stop_id", "departure_time", "start_time", "end_time"]
-            ).select("trip_id", "service_id", "n_trips")
-
-        # Count the number of trips associated with each service_id.
-        stop_time_counts_df: pl.DataFrame = (
-            gtfs_lf.group_by("service_id")
-            .agg(pl.col("n_trips").sum().alias("num_stop_times"))
-            .collect()
-        )
-
-        # Explode the date_df so each row is a (date, service_id) pair.
-        exploded: pl.DataFrame = date_df.explode("service_ids").rename(
-            {"service_ids": "service_id"}
-        )
-
-        # Join the daily services with their trip counts.
-        joined: pl.DataFrame = exploded.join(
-            stop_time_counts_df, on="service_id", how="left"
-        )
-        joined = joined.with_columns(pl.col("num_stop_times").fill_null(0))
-
-        # Group by date to sum up the trip counts for total daily intensity.
-        total_by_date: pl.DataFrame = joined.group_by("date").agg(
-            pl.col("weekday").first(),
-            pl.col("num_stop_times").sum().alias("service_intensity"),
-        )
-
-        return total_by_date
-
-    def get_mean_intervall_at_stops(
+    def get_mean_interval_at_stops(
         self,
         date: datetime | date,
         start_time: datetime | time = time.min,
         end_time: datetime | time = time.max,
-        route_types: list | int | str | None = None,
-        on: str = "parent_station",
-        method: str = "route",
+        route_types: list[int] | int | str | None = None,
+        by: str = "route_id",
+        at: str = "parent_station",
+        how: str = "all",
         n_divisions: int = 1,
+        mix_directions:bool = False,
     ) -> pl.LazyFrame:
         """
-        Calculates the mean interval (headway) between services at stops.
+        Compute the mean headway (service interval) within a time window.
 
-        This method computes the headway for a given time window using the harmonic
-        mean, which is the appropriate method for averaging rates like service
-        frequencies. The calculation can be performed in several ways depending on
-        the `method` parameter.
+        Headway is computed using the harmonic mean of inter-departure intervals.
+        Data may be aggregated by route or by directional clusters.
 
-        Args:
-            date: The specific date to filter the data for. If None, data for all
-                dates in the feed will be used.
-            start_time: The start of the time window for the analysis. Defaults to
-                        the beginning of the day (00:00:00).
-            end_time: The end of the time window for the analysis. Defaults to
-                    the end of the day (23:59:59.999999).
-            method: The aggregation method. Must be one of ['route', 'max', 'agg'].
-                    - 'route': (Default) Calculates mean interval per route and
-                    direction at each stop.
-                    - 'max': For each stop, finds the route with the best (i.e.,
-                    minimum) interval and returns only that result for the stop.
-                    - 'agg': Aggregates all services at a stop to calculate a
-                    single combined interval. It groups services by direction,
-                    finds the best service per direction, and then combines the
-                    headways of the different directions.
-            n_divisions: The number of direction pairs (e.g., N/S, E/W) to
-                        consider when `method` is 'agg'. For example, `n_divisions=2`
-                        would create four directional sectors (e.g., N, E, S, W).
-                        Only used when `method` is 'agg'. Defaults to 1.
+        Parameters
+        ----------
+        date : datetime | date
+            Date for filtering service.
+        start_time : datetime | time, default time.min
+            Start of the analysis window.
+        end_time : datetime | time, default time.max
+            End of the analysis window.
+        route_types : list[int] | int | str | None
+            Filter by GTFS route types.
+        by : str, {"route_id", "shape_direction"}
+            Determines how services are grouped before headway computation.
+        at : str, {"parent_station", "stop_id"}
+            Spatial unit for the interval calculation.
+        how : {"all", "best", "mean"}
+            Post-aggregation method:
+            - "all": return all route/direction combinations  
+            - "best": pick the service with smallest interval  
+            - "mean": harmonic mean of all service intervals
+        n_divisions : int, default 1
+            Number of directional bins when using `shape_direction`.
+        mix_directions : bool, default False 
+            For how 'mean' mix outbound and inbound directions of same route as different routes
 
-        Returns:
-            A Polars LazyFrame with mean interval calculations. The schema depends
-            on the chosen `method`:
-            - 'route': ["parent_station", "route_id", "direction_id", "mean_interval", ...]
-            - 'max': ["parent_station", "route_id", "direction_id", "mean_interval", ...]
-            - 'agg': ["parent_station", "mean_interval", "shape_directions", "shape_ids", "route_ids"]
+        Returns
+        -------
+        pl.LazyFrame
+            A lazy frame containing headway metrics.
 
-        Raises:
-            ValueError: If an unimplemented `method` is provided.
+        Raises
+        ------
+        ValueError
+            If unsupported combination of parameters is passed.
         """
-        # --- 1. Pre-computation and Filtering ---
 
-        if on == "stop_id":
-            on = ["stop_id", "gtfs_name"]  # to avoid duplicated stop ids
-        else:
-            on = [on]
-
-        # Fail early for invalid methods.
-        valid_methods = ["route", "max", "agg"]
-        if method not in valid_methods:
-            raise ValueError(
-                f"Method '{method}' is not implemented. Choose from {valid_methods}."
-            )
-
-        gtfs_lf = self.lf
-
-        gtfs_lf = gtfs_lf.filter(pl.col("isin_aoi"))
-
-        gtfs_lf = gtfs_lf.filter(
-            pl.col("stop_sequence") != pl.col("stop_sequence").max().over("trip_id")
+        # --------------------
+        # Base GTFS filtering
+        # --------------------
+        lf = self.filter(
+            date=date,
+            start_time=start_time,
+            end_time=end_time,
+            route_types=route_types,
+            in_aoi=True,
+            frequencies=False,
+            delete_last_stop=True
         )
 
-        if route_types is not None:
-            gtfs_lf = self.filter_by_route_type(gtfs_lf, route_types=route_types)
+        start_sec = utils.time_to_seconds(start_time)
+        end_sec = utils.time_to_seconds(end_time)
 
-        # Filter the GTFS data by the specified date and time window.
-        gtfs_lf = self.filter_by_date(gtfs_lf, date)
 
-        gtfs_lf = self.filter_by_time_range(gtfs_lf, start_time, end_time)
+        # =====================================================================
+        # CASE 1: Group by explicit route/direction (NOT shape-direction method)
+        # =====================================================================
+        if by != "shape_direction":
 
-        gtfs_lf = self._frequencies_to_stop_times(gtfs_lf)
+            # Collect columns required for grouping
+            groupby = list(np.unique([at, by, "direction_id"]))
 
-        gtfs_lf = self.filter_by_time_range(gtfs_lf, start_time, end_time)
+            # Schema validation
+            missing = [col for col in groupby if col not in lf.collect_schema().names()]
+            if missing:
+                raise Exception(f"Missing required columns {missing} in GTFS schema.")
 
-        # Convert time objects to total seconds from midnight for interval calculations.
-        start_time_sec = utils.time_to_seconds(start_time)
-        end_time_sec = utils.time_to_seconds(end_time)
-
-        gtfs_lf = gtfs_lf.collect().lazy()
-        # Per-Route Interval Calculation ('route' and 'max' methods)
-
-        if method in ("max", "route"):
-            # This block calculates the mean interval for each distinct service,
-            # defined by a unique combination of stop, route, and direction.
-            gtfs_lf = (
-                gtfs_lf.sort("departure_time")
-                .group_by([*on, "route_id", "direction_id"])
+            # ---- Compute per-route headway ----
+            lf = (
+                lf.sort("departure_time")
+                .group_by(groupby)
                 .agg(
-                    [
-                        # Collect all departure times into a list for each service group.
-                        pl.col("departure_time").sort().alias("departure_times"),
-                        # Get a representative direction (in degrees) for the service.
-                        utils.mean_angle("shape_direction").alias("shape_direction"),
-                        utils.mean_angle("shape_direction_backwards").alias(
-                            "shape_direction_backwards"
-                        ),
-                        (
-                            (pl.col("departure_time").min() - start_time_sec)
-                            + (end_time_sec - pl.col("departure_time").max())
-                        ).alias("initial_interval"),
-                    ]
+                    pl.col("departure_time").sort().alias("departure_times"),
+                    utils.mean_angle("shape_direction").alias("shape_direction"),
+                    utils.mean_angle("shape_direction_backwards").alias("shape_direction_backwards"),
+                    (
+                        (pl.col("departure_time").min() - start_sec)
+                        + (end_sec - pl.col("departure_time").max())
+                    ).alias("initial_interval"),      
                 )
             )
 
-            gtfs_lf = (
-                gtfs_lf.with_columns(
-                    # Calculate the harmonic mean of the intervals.
-                    # Harmonic Mean = N / sum(1/x_i), where x_i are the intervals.
-                    # This is the correct way to average rates (like service frequency).
+            lf = (
+                lf.with_columns(
                     (
                         (
                             (pl.col("departure_times").list.diff(null_behavior="drop"))
@@ -1179,62 +1300,93 @@ class Feed:
                             .list.sum()
                             + pl.col("initial_interval") ** 2
                         )
-                        / (end_time_sec - start_time_sec)
-                    ).alias("mean_interval"),
+                        / (end_sec - start_sec)
+                    ).alias("mean_interval")
                 )
                 .drop("initial_interval")
-                # Another optimization fence after the first major aggregation.
+                .with_columns(
+                    pl.col("direction_id").cast(int).alias("direction_id")
+                )
                 .collect()
                 .lazy()
             )
 
-        # Method-Specific Aggregation
+            # ----------------------------------------------------------
+            # HOW-aggregation for route-based method (grouped at bottom)
+            # ----------------------------------------------------------
+            if how == "best":
+                lf = lf.group_by(at).agg(
+                    [
+                        pl.col(by).sort_by("mean_interval").first().alias(by),
+                        pl.col("shape_direction").sort_by("mean_interval").first().alias("shape_direction"),
+                        pl.col("direction_id").sort_by("mean_interval").first().cast(int).alias("direction_id"),
+                        pl.col("mean_interval").min().alias("mean_interval"),
+                    ]
+                )
 
-        if method == "max":
-            # For each stop, find the single service (route/direction) that has
-            # the minimum mean interval (i.e., the highest frequency).
-            gtfs_lf = gtfs_lf.group_by(on).agg(
-                [
-                    # Find the minimum interval at the stop.
-                    pl.col("route_id")
-                    .sort_by("mean_interval")
-                    .first()
-                    .alias("route_id"),
-                    pl.col("direction_id")
-                    .sort_by("mean_interval")
-                    .first()
-                    .alias("direction_id"),
-                    pl.col("departure_times")
-                    .sort_by("mean_interval")
-                    .first()
-                    .alias("departure_times"),
-                    pl.col("mean_interval").min().alias("mean_interval"),
-                ]
+            elif how == "mean":
+                if mix_directions == False:
+                    # Pick best headway within each directional group
+                    lf = lf.group_by([at, "direction_id"]).agg(
+                        [
+                            pl.col(by).sort_by("mean_interval").first().alias(by),
+                            pl.col("shape_direction").sort_by("mean_interval").first().alias("shape_direction"),
+                            pl.col("mean_interval").min().alias("mean_interval"),
+                        ]
+                    )
+
+                lf = lf.group_by(at).agg(
+                    [
+                        (1 / (1 / pl.col("mean_interval")).sum()).alias("mean_interval"),
+                        pl.col("shape_direction").flatten().unique().alias("shape_directions"),
+                        pl.col("direction_id")
+                            .flatten()
+                            .unique()
+                            .drop_nulls()
+                            .cast(int)
+                            .alias("direction_ids"),
+                        pl.col(by).flatten().unique().alias(by+"s"),
+                    ]
+                )
+
+
+            else:  # how == "all"
+                lf = lf.drop("departure_times").with_columns(
+                    pl.col("direction_id").cast(int).alias("direction_id")
+                )
+
+            lf = lf.with_columns(
+                (pl.col("mean_interval") / 60).alias("mean_interval")
             )
+            return lf.collect()
 
-        elif method == "agg":
-            # This method provides a single, combined headway for all services at a stop.
-            # It works by grouping services into directional corridors, finding the
-            # best headway in each corridor, and then combining these headways.
+        # =====================================================================
+        # CASE 2: Shape-direction method (directional clustering)
+        # =====================================================================
+        # Number of angular bins (forward + backward)
+        n_sectors = n_divisions * 2
 
-            # Create sectors for each direction and its opposite (e.g., N/S are one pair).
-            # E.g., n_divisions=2 -> 4 sectors (N, E, S, W).
-            n_sectors = n_divisions * 2
-            # Bin services into directional sectors.shape_direction_backwards
-
-            gtfs_lf = (
-                gtfs_lf.with_columns(  # This ensures a separation between both shape directions of exactly 180º
-                    (
-                        pl.when(
+        # Adjust shape directions to ensure proper forward/backward separation
+        lf = (
+            lf.with_columns(
+                (
+                    pl.when(
+                        (
                             (
-                                (
-                                    pl.col("shape_direction")
-                                    + 360
-                                    - pl.col("shape_direction_backwards")
-                                )
-                                % 360
-                            )
-                            > (
+                                pl.col("shape_direction") + 360 - pl.col("shape_direction_backwards")
+                            ) % 360
+                        )
+                        > (
+                            (
+                                pl.col("shape_direction_backwards") + 360 - pl.col("shape_direction")
+                            ) % 360
+                        )
+                    )
+                    .then(
+                        -1
+                        * (
+                            180
+                            - (
                                 (
                                     pl.col("shape_direction_backwards")
                                     + 360
@@ -1243,171 +1395,470 @@ class Feed:
                                 % 360
                             )
                         )
-                        .then(
-                            -1
-                            * (
-                                180
-                                - (
-                                    (
-                                        pl.col("shape_direction_backwards")
-                                        + 360
-                                        - pl.col("shape_direction")
-                                    )
-                                    % 360
-                                )
-                            )
-                            / 2
-                        )
-                        .otherwise(
-                            (
-                                180
-                                - (
-                                    (
-                                        pl.col("shape_direction")
-                                        + 360
-                                        - pl.col("shape_direction_backwards")
-                                    )
-                                    % 360
-                                )
-                            )
-                            / 2
-                        )
-                    ).alias("shape_diff")
-                )
-                .with_columns(
-                    (
-                        pl.when(
-                            pl.col("shape_diff").is_null()
-                            | pl.col("shape_diff").is_nan()
-                        )
-                        .then(pl.lit(0))
-                        .otherwise(pl.col("shape_diff"))
-                    ).alias("shape_diff")
-                )
-                .with_columns(
-                    (
-                        (pl.col("shape_direction") + 360 + pl.col("shape_diff")) % 360
-                    ).alias("shape_direction"),
-                )
-                .drop("shape_diff")
-            )
-            gtfs_lf = gtfs_lf.group_by(on).agg(pl.all())
-
-            gtfs_lf = gtfs_lf.collect()
-            gtfs_lf = gtfs_lf.with_columns(
-                utils.max_separation_angle(gtfs_lf, "shape_direction").alias(
-                    "shape_split_direction"
-                )
-            ).explode(pl.exclude([*on, "shape_split_direction"]))
-
-            gtfs_lf = gtfs_lf.lazy()
-
-            if n_divisions % 2 == 0:
-                gtfs_lf = gtfs_lf.with_columns(
-                    pl.col("shape_split_direction") + 90 / n_divisions
-                )
-
-            gtfs_lf = gtfs_lf.with_columns(pl.col("shape_split_direction") % 360)
-
-            gtfs_lf = (
-                gtfs_lf.with_columns(
-                    (
-                        (
-                            pl.col("shape_direction")
-                            - pl.col("shape_split_direction")
-                            + 360
-                        )
-                        % 360
-                    ).alias("angle")
-                )
-                .with_columns(
-                    ((pl.col("angle") * n_sectors / 360).floor().cast(pl.Int32)).alias(
-                        "shape_direction_id"
+                        / 2
                     )
-                )
-                .drop("angle")
-            )
-
-            # Assign each service to a directional sector ID (0 to n_sectors-1)
-            # based on its angle relative to the stop's mean direction.
-            # Build chained when/then expression
-
-            # Calculate headway for each directional bin.
-            gtfs_lf = (
-                gtfs_lf.sort("departure_time")
-                .group_by([*on, "shape_direction_id"])
-                .agg(
-                    [
-                        pl.col("departure_time").sort().alias("departure_times"),
-                        utils.mean_angle("shape_direction").alias("shape_direction"),
-                        pl.col("route_id").unique().alias("route_ids"),
-                        pl.col("shape_id").unique().alias("shape_ids"),
+                    .otherwise(
                         (
-                            (pl.col("departure_time").min() - start_time_sec)
-                            + (end_time_sec - pl.col("departure_time").max())
-                        ).alias("initial_interval"),
-                    ]
-                )
-            )
-
-            gtfs_lf = gtfs_lf.with_columns(
-                [
-                    (
-                        (
-                            (pl.col("departure_times").list.diff(null_behavior="drop"))
-                            .list.eval(pl.element().pow(2))
-                            .list.sum()
-                            + pl.col("initial_interval") ** 2
+                            180
+                            - (
+                                (
+                                    pl.col("shape_direction")
+                                    + 360
+                                    - pl.col("shape_direction_backwards")
+                                )
+                                % 360
+                            )
                         )
-                        / (end_time_sec - start_time_sec)
-                    ).alias("mean_interval"),
-                    (pl.col("shape_direction_id") % n_divisions).alias(
-                        "shape_direction_group_id"
-                    ),
+                        / 2
+                    )
+                ).alias("shape_diff")
+            )
+            .with_columns(
+                pl.when(pl.col("shape_diff").is_null() | pl.col("shape_diff").is_nan())
+                .then(pl.lit(0))
+                .otherwise(pl.col("shape_diff"))
+                .alias("shape_diff")
+            )
+            .with_columns(
+                ((pl.col("shape_direction") + 360 + pl.col("shape_diff")) % 360)
+                .alias("shape_direction")
+            )
+            .drop("shape_diff")
+        )
+
+        # Compute direction split per stop
+        lf = lf.group_by(at).agg(pl.all()).collect()
+        lf = lf.with_columns(
+            utils.max_separation_angle(lf, "shape_direction").alias("shape_split_direction")
+        )
+        lf = lf.explode(pl.exclude([at, "shape_split_direction"]))
+        lf = lf.lazy()
+
+        # Offset for even number of divisions
+        if n_divisions % 2 == 0:
+            lf = lf.with_columns(pl.col("shape_split_direction") + 90 / n_divisions)
+
+        lf = lf.with_columns(pl.col("shape_split_direction") % 360)
+
+        # Assign angular bins
+        lf = (
+            lf.with_columns(
+                (
+                    (pl.col("shape_direction") - pl.col("shape_split_direction") + 360) % 360
+                ).alias("angle")
+            )
+            .with_columns(
+                ((pl.col("angle") * n_sectors / 360).floor().cast(pl.Int32))
+                .alias("shape_direction_id")
+            )
+            .drop("angle")
+        )
+
+        # Compute headway per angular bin
+        lf = (
+            lf.sort("departure_time")
+            .group_by([at, "shape_direction_id"])
+            .agg(
+                [
+                    pl.col("departure_time").sort().alias("departure_times"),
+                    utils.mean_angle("shape_direction").alias("shape_direction"),
+                    pl.col("route_id").unique().alias("route_ids"),
+                    pl.col("shape_id").unique().alias("shape_ids"),
+                    (
+                        (pl.col("departure_time").min() - start_sec)
+                        + (end_sec - pl.col("departure_time").max())
+                    ).alias("initial_interval"),
                 ]
             )
+        )
 
-            # For each direction *group* (e.g., N/S), find the best headway.
-            # This selects the best-performing service from a set of parallel services.
-            gtfs_lf = gtfs_lf.group_by([*on, "shape_direction_group_id"]).agg(
+        lf = lf.with_columns(
+            [
+                (
+                    (
+                        (pl.col("departure_times").list.diff(null_behavior="drop"))
+                        .list.eval(pl.element().pow(2))
+                        .list.sum()
+                        + pl.col("initial_interval") ** 2
+                    )
+                    / (end_sec - start_sec)
+                ).alias("mean_interval"),
+                (pl.col("shape_direction_id") % n_divisions).alias("shape_direction_group_id"),
+            ]
+        )
+
+        # --------------------------------------------------------------
+        # HOW-aggregation for shape-direction method (grouped at bottom)
+        # --------------------------------------------------------------
+        if how == "best":
+            lf = lf.group_by(at).agg(
                 [
-                    # Keep the details of the service with the minimum interval.
-                    pl.col("shape_direction")
-                    .sort_by("mean_interval")
-                    .first()
-                    .alias("shape_direction"),
-                    pl.col("shape_ids")
-                    .sort_by("mean_interval")
-                    .first()
-                    .alias("shape_ids"),
-                    pl.col("route_ids")
-                    .sort_by("mean_interval")
-                    .first()
-                    .alias("route_ids"),
-                    pl.col("departure_times")
-                    .sort_by("mean_interval")
-                    .first()
-                    .alias("departure_times"),
-                    # The minimum interval for this direction group.
+                    pl.col("shape_direction").sort_by("mean_interval").first().alias("shape_direction"),
+                    pl.col("shape_ids").sort_by("mean_interval").first().alias("shape_ids"),
+                    pl.col("route_ids").sort_by("mean_interval").first().alias("route_ids"),
                     pl.col("mean_interval").min().alias("mean_interval"),
                 ]
             )
 
-            # Combine the best headways from all direction groups for each stop.
-            gtfs_lf = gtfs_lf.group_by(on).agg(
+        elif how == "mean":
+            if mix_directions == False:
+                # Pick best headway within each directional group
+                lf = lf.group_by([at, "shape_direction_group_id"]).agg(
+                    [
+                        pl.col("shape_direction").sort_by("mean_interval").first().alias("shape_direction"),
+                        pl.col("shape_ids").sort_by("mean_interval").first().alias("shape_ids"),
+                        pl.col("route_ids").sort_by("mean_interval").first().alias("route_ids"),
+                        pl.col("mean_interval").min().alias("mean_interval"),
+                    ]
+                )
+
+            lf = lf.group_by(at).agg(
                 [
-                    # The combined headway is the harmonic mean of the individual best headways.
-                    # Formula: 1 / (1/H_1 + 1/H_2 + ...), where H_i is the headway.
                     (1 / (1 / pl.col("mean_interval")).sum()).alias("mean_interval"),
-                    # Collect metadata from all contributing direction groups.
                     pl.col("shape_direction").alias("shape_directions"),
-                    # Flatten list[list[str]] -> list[str]
-                    (pl.col("shape_ids").flatten().unique()).alias("shape_ids"),
-                    (pl.col("departure_times").flatten().unique().sort()).alias(
-                        "departure_times"
-                    ),
-                    (pl.col("route_ids").flatten().unique()).alias("route_ids"),
+                    pl.col("shape_ids").flatten().unique().alias("shape_ids"),
+                    pl.col("route_ids").flatten().unique().alias("route_ids"),
                 ]
             )
+        else:
+            lf = lf.with_columns(
+                (pl.col("shape_direction_id") % 2).alias("shape_direction_id")
+            )
 
-        return gtfs_lf.collect()
+        lf = lf.with_columns(
+            (pl.col("mean_interval") / 60).alias("mean_interval")
+        )
+        return lf.collect()
+
+
+    def get_mean_speed_at_stops(
+            self,
+            date: datetime | date,
+            start_time: datetime | time = time.min,
+            end_time: datetime | time = time.max,
+            route_types: list | int | str | None = None,
+            by="route_id",
+            at="parent_station",
+            how="mean",
+            direction="both",
+            n_stops=1
+        ):
+        gtfs_lf = self.filter(
+            date=date,
+            start_time=start_time,
+            end_time=end_time,
+            route_types=route_types,
+            in_aoi=False,
+            frequencies=True,
+            delete_last_stop=False
+        )
+
+        if direction == "both":
+            backwards_stops = n_stops 
+            forward_stops = n_stops
+        elif direction == "forward":
+            backwards_stops = 0 
+            forward_stops = n_stops
+        elif direction == "backward":
+            backwards_stops = n_stops 
+            forward_stops = 0
+        else:
+            raise Exception(f"Direction {direction} not  implemented. Only 'both', 'forward' and 'backward' are valid.")
+
+        gtfs_lf = (
+            gtfs_lf
+            .sort(["trip_id", "stop_sequence"])
+            .with_columns(
+                (
+                    pl.col("shape_dist_traveled")
+                        .shift(-forward_stops)
+                        .over("trip_id")
+                    -
+                    pl.col("shape_dist_traveled")
+                        .shift(backwards_stops)
+                        .over("trip_id")
+                ).alias("distance_weight"),
+                (
+                    pl.col("shape_time_traveled")
+                        .shift(-forward_stops)
+                        .over("trip_id")
+                    -
+                    pl.col("shape_time_traveled")
+                        .shift(backwards_stops)
+                        .over("trip_id")
+                ).alias("time_weight")
+            )
+            .with_columns(
+                pl.when(
+                    pl.col("stop_sequence").max().over("trip_id") < forward_stops 
+                ).then(
+                    pl.col("shape_total_distance")
+                ).otherwise(
+                    pl.col("distance_weight")
+                ).alias("distance_weight"),
+                pl.when(
+                    pl.col("stop_sequence").max().over("trip_id") < forward_stops 
+                ).then(
+                    pl.col("shape_total_travel_time")
+                ).otherwise(
+                    pl.col("time_weight")
+                ).alias("time_weight")
+            )
+            .with_columns(
+                pl.when(
+                    pl.col("stop_sequence").max().over("trip_id") < backwards_stops 
+                ).then(
+                    pl.col("shape_total_distance")
+                ).otherwise(
+                    pl.col("distance_weight")
+                ).alias("distance_weight"),
+                pl.when(
+                    pl.col("stop_sequence").max().over("trip_id") < backwards_stops 
+                ).then(
+                    pl.col("shape_total_travel_time")
+                ).otherwise(
+                    pl.col("time_weight")
+                ).alias("time_weight"),
+            )
+            .with_columns(
+                pl.col("distance_weight").forward_fill().over("trip_id").alias("distance_weight"),
+                pl.col("time_weight").forward_fill().over("trip_id").alias("time_weight"),
+            )
+            .with_columns(
+                pl.col("distance_weight").backward_fill().over("trip_id").alias("distance_weight"),
+                pl.col("time_weight").backward_fill().over("trip_id").alias("time_weight"),
+            )
+            .with_columns(
+                (
+                    (pl.col("distance_weight") / 1000) / (pl.col("time_weight") / 3600)
+                ).alias("speed")
+            )
+        )
+
+        if how == "max":
+            gtfs_lf = gtfs_lf.with_columns(
+                pl.col("speed").fill_null(float('-inf'))
+            )
+            gtfs_lf = gtfs_lf.group_by(list(np.unique([by,at]))).agg(
+                pl.col("speed").sort_by("speed").last(),
+                pl.col("distance_weight").sort_by("speed").last(),
+                pl.col("time_weight").sort_by("speed").last(),
+                pl.col("n_trips").sort_by("n_trips").last(),
+                pl.col("isin_aoi").any().alias("isin_aoi")
+            )
+            gtfs_lf = gtfs_lf.with_columns(
+                pl.when(pl.col("speed") == pl.lit(float('-inf')))
+                .then(pl.lit(None))
+                .otherwise(pl.col("speed"))
+                .alias("speed")
+            )
+        elif how == "min":
+            gtfs_lf = gtfs_lf.with_columns(
+                pl.col("speed").fill_null(float('inf'))
+            )
+            gtfs_lf = gtfs_lf.group_by(list(np.unique([by,at]))).agg(
+                pl.col("speed").sort_by("speed").first(),
+                pl.col("distance_weight").sort_by("speed").first(),
+                pl.col("time_weight").sort_by("speed").first(),
+                pl.col("n_trips").sort_by("n_trips").first(),
+                pl.col("isin_aoi").any().alias("isin_aoi")
+            ) 
+            gtfs_lf = gtfs_lf.with_columns(
+                pl.when(pl.col("speed") == pl.lit(float('inf')))
+                .then(pl.lit(None))
+                .otherwise(pl.col("speed"))
+                .alias("speed")
+            )
+        elif how == "mean":
+            gtfs_lf = gtfs_lf.with_columns(
+                pl.when(pl.col("speed").is_null())
+                .then(pl.lit(0))
+                .otherwise(pl.col("n_trips"))
+                .alias("n_trips")
+            )
+            gtfs_lf = gtfs_lf.group_by(list(np.unique([by, at]))).agg(
+                (
+                    (pl.col("speed") * pl.col("n_trips")).sum()
+                    / pl.col("n_trips").sum()
+                ).alias("speed"),
+                (
+                    (pl.col("distance_weight") * pl.col("n_trips")).sum()
+                    / pl.col("n_trips").sum()
+                ).alias("distance_weight"),
+                (
+                    (pl.col("time_weight") * pl.col("n_trips")).sum()
+                    / pl.col("n_trips").sum()
+                ).alias("time_weight"),
+                pl.col("n_trips").sum().alias("n_trips"),
+                pl.col("isin_aoi").any().alias("isin_aoi")
+            )
+
+        return gtfs_lf.filter(pl.col("isin_aoi") == True).drop("isin_aoi").collect()
+    
+
+    def add_stop_coords(self,df:pd.DataFrame|pl.DataFrame|pl.LazyFrame):
+        if isinstance(df,pd.DataFrame):
+            lf = pl.from_pandas(df).lazy()
+        elif isinstance(df,pl.DataFrame):
+            lf = df.lazy()
+        else:
+            lf = df
+
+        column_priority = ['stop_id','parent_station']
+        column = None 
+        for c in column_priority:
+            if c in lf.collect_schema().names():
+                column = c 
+                break 
+
+        if column is None:
+            warnings.warn(f"The provided dataframe should have one of the following columns {column_priority}.")
+            return df
+        
+        if 'stop_lat' in lf.collect_schema().names():
+            lf = lf.drop('stop_lat')
+        if 'stop_lon' in lf.collect_schema().names():
+            lf = lf.drop('stop_lon')
+        if 'stop_name' in lf.collect_schema().names():
+            lf = lf.drop('stop_name')
+
+        if 'stop_name' in self.stops.lf.collect_schema().names():
+            stops_lf = (
+                self.stops.lf.select(["stop_id", "parent_station", "stop_lat", "stop_lon", "stop_name"])
+            ) 
+            if column == 'parent_station':
+                    stops_lf = (
+                        stops_lf
+                        .with_columns(
+                            pl.when(pl.col("parent_station") == pl.col('stop_id'))
+                            .then(pl.col('stop_name'))
+                            .otherwise(pl.lit(None))
+                            .alias('_stop_name')
+                        )
+                        .with_columns(
+                            pl.when(pl.col("_stop_name").is_null().over("parent_station").all())
+                            .then(pl.col("stop_name"))
+                            .otherwise(pl.col("_stop_name"))
+                            .alias("stop_name")
+                        ).drop("_stop_name")
+                        .with_columns([
+                            pl.col("stop_lat").mean().over("parent_station").alias("stop_lat"),
+                            pl.col("stop_lon").mean().over("parent_station").alias("stop_lon"),
+                            pl.col("stop_name").min().over("parent_station").alias("stop_name"),
+                        ])
+                        .drop("stop_id")
+                    )
+            else:
+                stops_lf = stops_lf.drop("parent_station")
+
+            stops_lf = stops_lf.unique(column)
+        else:
+            stops_lf = (
+                self.stops.lf.select([column, "stop_lat", "stop_lon"])
+            )
+            if column == 'parent_station':
+                stops_lf = (
+                    stops_lf
+                    .with_columns([
+                        pl.col("stop_lat").mean().over(column).alias("stop_lat"),
+                        pl.col("stop_lon").mean().over(column).alias("stop_lon"),
+                        pl.lit(None).alias("stop_name")
+                    ])
+                )
+            stops_lf = stops_lf.unique(column)
+
+        stops_lf = stops_lf.with_columns(
+            pl.when(pl.col("stop_name").is_null())
+            .then(pl.col(column).str.replace(r"_file_\d+$", ""))
+            .otherwise(
+                pl.col("stop_name")
+            )
+            .alias("stop_name")
+        )
+
+        lf = lf.join(stops_lf,on=column,how='left')
+        if isinstance(df,pd.DataFrame):
+            return lf.collect().to_pandas()
+        elif isinstance(df,pl.DataFrame):
+            return lf.collect()
+        else:
+            return lf.collect().lazy()
+
+
+    def add_route_names(self,df:pd.DataFrame|pl.DataFrame|pl.LazyFrame):
+        if isinstance(df,pd.DataFrame):
+            lf = pl.from_pandas(df).lazy()
+        elif isinstance(df,pl.DataFrame):
+            lf = df.lazy()
+        else:
+            lf = df
+
+        if ('route_id' not in lf.collect_schema().names()) and ('route_ids' not in lf.collect_schema().names()):
+            warnings.warn(f"The provided dataframe should have the column 'route_id' or 'route_ids'")
+            return df 
+          
+        if 'route_ids' in lf.collect_schema().names():
+            lf = lf.with_row_index("_row_number")
+            lf = lf.explode('route_ids')
+
+        routes_lf = self.routes.lf.with_columns(
+            pl.when(pl.col("route_short_name").is_not_null())
+            .then(pl.col("route_short_name"))
+            .when(pl.col("route_long_name").is_not_null())
+            .then(pl.col("route_long_name"))
+            .otherwise(
+                # remove '_file_<digits>' from route_id
+                pl.col("route_id").str.replace(r"_file_\d+$", "")
+            )
+            .alias("route_name")
+        )
+
+        routes_lf = routes_lf.select(['route_id','route_short_name','route_long_name','route_name','route_type'])
+        if 'route_id' in lf.collect_schema().names():
+            if 'route_short_name' in lf.collect_schema().names():
+                lf = lf.drop('route_short_name')
+            if 'route_long_name' in lf.collect_schema().names():
+                lf = lf.drop('route_long_name')
+            if 'route_name' in lf.collect_schema().names():
+                lf = lf.drop('route_name')
+            if 'route_type' in lf.collect_schema().names():
+                lf = lf.drop('route_type')
+                
+            lf = lf.join(routes_lf,on='route_id',how='left')
+        
+        if 'route_ids' in lf.collect_schema().names():
+            if 'route_short_names' in lf.collect_schema().names():
+                lf = lf.drop('route_short_names')
+            if 'route_long_names' in lf.collect_schema().names():
+                lf = lf.drop('route_long_names')
+            if 'route_names' in lf.collect_schema().names():
+                lf = lf.drop('route_names')
+            if 'route_types' in lf.collect_schema().names():
+                lf = lf.drop('route_types')
+
+            routes_lf = routes_lf.rename({
+                'route_id':'route_ids',
+                'route_short_name':'route_short_names',
+                'route_long_name':'route_long_names',
+                'route_name':'route_names',
+                'route_type':'route_types'
+            })
+            lf = lf.join(routes_lf,on='route_ids',how='left')
+            lf = (
+                lf.group_by("_row_number")
+                .agg([
+                    pl.exclude(["route_short_names", "route_long_names", "route_ids", "route_types"]).first(),
+                    pl.col("route_short_names").unique(),
+                    pl.col("route_long_names").unique(),
+                    pl.col("route_ids").unique(),
+                    pl.col("route_types").unique(),
+                ])
+                .drop("_row_number")
+            )
+
+        if isinstance(df,pd.DataFrame):
+            return lf.collect().to_pandas()
+        elif isinstance(df,pl.DataFrame):
+            return lf.collect()
+        else:
+            return lf.collect().lazy()

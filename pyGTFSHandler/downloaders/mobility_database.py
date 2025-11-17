@@ -10,7 +10,7 @@ import geopandas as gpd
 from shapely.geometry import Point, Polygon, MultiPolygon
 from tqdm import tqdm
 
-from .. import utils
+from .. import gtfs_checker
 
 # -------------------------------------------------------------------
 # Logging configuration
@@ -344,6 +344,8 @@ class MobilityDatabaseClient:
         os.makedirs(download_folder, exist_ok=True)
         zip_paths: List[str] = []
 
+        overwrite_message = True 
+
         for feed in tqdm(feeds, desc="Downloading feeds"):
             feed_id = feed.get("id", "")
             feed_name = feed.get("feed_name", "")
@@ -354,7 +356,7 @@ class MobilityDatabaseClient:
             feed_id_short = feed_id[:max_chars]
             feed_name_short = feed_name[:max_chars]
             feed_provider_short = feed_provider[:max_chars]
-            feed_filename = utils.normalize_string(
+            feed_filename = gtfs_checker.normalize_string(
                 f"{feed_id_short}_{feed_name_short}_{feed_provider_short}"
             )
 
@@ -373,21 +375,26 @@ class MobilityDatabaseClient:
             # Skip or overwrite existing files
             if os.path.exists(zip_path):
                 if overwrite:
-                    logger.info(f"Overwriting existing ZIP: {zip_path}")
+                    if overwrite_message:
+                        logger.info(f"Overwriting all existing feeds.")
+                        overwrite_message = False
                 else:
-                    logger.info(f"Feed '{feed_filename}' already downloaded. Skipping.")
+                    if overwrite_message:
+                        logger.info(f"Skipping all already donwloaded feeds.")
+                        overwrite_message = False
+                        
                     zip_paths.append(os.path.abspath(zip_path))
                     continue
 
             try:
-                logger.info(f"Downloading feed '{feed_filename}' from {hosted_url}")
+                #logger.info(f"Downloading feed '{feed_filename}' from {hosted_url}")
                 with requests.get(hosted_url, stream=True, timeout=60) as r:
                     r.raise_for_status()
                     with open(zip_path, "wb") as f:
                         for chunk in r.iter_content(chunk_size=8192):
                             f.write(chunk)
 
-                logger.info(f"Downloaded '{feed_filename}' to {zip_path}")
+                #logger.info(f"Downloaded '{feed_filename}' to {zip_path}")
                 zip_paths.append(os.path.abspath(zip_path))
 
             except requests.exceptions.RequestException as e:

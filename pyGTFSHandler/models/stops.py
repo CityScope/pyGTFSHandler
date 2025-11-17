@@ -3,7 +3,7 @@ import geopandas as gpd
 import pandas as pd
 from pathlib import Path
 from typing import Union, List
-from .. import utils
+from .. import utils, gtfs_checker
 import os
 import warnings
 
@@ -123,14 +123,14 @@ class Stops:
         stop_paths: List[Path] = []
         file = "stops.txt"
         for p in paths:
-            new_p = utils.search_file(p, file=file)
+            new_p = gtfs_checker.search_file(p, file=file)
             if new_p is None:
                 stop_paths.append(None)
                 warnings.warn(f"File {file} does not exist in {p}", UserWarning)
             else:
                 stop_paths.append(new_p)
 
-        schema_dict = utils.get_df_schema_dict("stops.txt")
+        schema_dict, _ = gtfs_checker.get_df_schema_dict("stops.txt")
         lf = utils.read_csv_list(stop_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id)
 
         lf = utils.filter_by_id_column(lf, "stop_id", stop_ids)
@@ -322,13 +322,13 @@ class Stops:
         stop_paths: List[Path] = []
         file = "stops.txt"
         for p in paths:
-            new_p = utils.search_file(p, file=file)
+            new_p = gtfs_checker.search_file(p, file=file)
             if new_p is None:
                 stop_paths.append(None)
             else:
                 stop_paths.append(new_p)
 
-        schema_dict = utils.get_df_schema_dict("stops.txt")
+        schema_dict, _ = gtfs_checker.get_df_schema_dict("stops.txt")
         stops = utils.read_csv_list(stop_paths, schema_overrides=schema_dict, check_files=True)
 
         if isinstance(stop_ids, list):

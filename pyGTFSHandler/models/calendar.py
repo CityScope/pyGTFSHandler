@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, date
 from typing import Tuple
 
 import polars as pl
-from .. import utils
+from .. import utils, gtfs_checker
 
 from typing import Union, Optional, List
 from pathlib import Path
@@ -137,14 +137,14 @@ class Calendar:
         calendar_paths: List[Path] = []
         file = "calendar.txt"
         for p in paths:
-            new_p = utils.search_file(p, file=file)
+            new_p = gtfs_checker.search_file(p, file=file)
             if new_p is None:
                 calendar_paths.append(None)
             else:
                 calendar_paths.append(new_p)
 
 
-        schema_dict = utils.get_df_schema_dict("calendar.txt")  # assume same schema
+        schema_dict, _ = gtfs_checker.get_df_schema_dict("calendar.txt")  # assume same schema
         calendar = utils.read_csv_list(calendar_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id)
 
         if calendar is None:
@@ -224,13 +224,13 @@ class Calendar:
         calendar_dates_paths: List[Path] = []
         file = "calendar_dates.txt"
         for p in paths:
-            new_p = utils.search_file(p, file=file)
+            new_p = gtfs_checker.search_file(p, file=file)
             if new_p is None:
                 calendar_dates_paths.append(None)
             else:
                 calendar_dates_paths.append(new_p)
 
-        schema_dict = utils.get_df_schema_dict("calendar_dates.txt")
+        schema_dict, _ = gtfs_checker.get_df_schema_dict("calendar_dates.txt")
         calendar_dates = utils.read_csv_list(
             calendar_dates_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id
         )
@@ -577,8 +577,12 @@ class Calendar:
         if date_type is not None:
             valid_date_types = {
                 "workday",
+                "weekday",
+                "businessday",
                 "holiday",
                 "non_workday",
+                "non_businessday",
+                "non_weekday",
                 "weekend",
                 "monday",
                 "tuesday",
@@ -593,33 +597,43 @@ class Calendar:
             if isinstance(date_type, str):
                 date_type = [date_type]
 
-            if "holiday" in date_type:
-                result = self.add_holidays_and_weekends(result, lon, lat)
-
             # Normalize and validate
             date_type = [dt.lower() for dt in date_type]
             invalid = [dt for dt in date_type if dt not in valid_date_types]
             if invalid:
                 raise Exception(f"Date type(s) not implemented: {invalid}")
 
+            if (
+                ("holiday" in date_type) or 
+                ("workday" in date_type) or 
+                ("businessday" in date_type) or 
+                ("non_workday" in date_type) or 
+                ("non_businessday" in date_type)               
+            ):
+                result = self.add_holidays_and_weekends(result, lon, lat)
+
             # Apply filters one by one (AND logic)
-            if "workday" in date_type:
+            if ("workday" in date_type) or ("businessday" in date_type):
                 result = result.filter(
-                    (not pl.col("holiday"))
-                    & (not pl.col("sunday"))
-                    & (not pl.col("saturday"))
+                    (~ pl.col("holiday"))
+                    & (~ pl.col("weekend"))
                 )
 
-            if "non_workday" in date_type:
+            if "weekday" in date_type:
                 result = result.filter(
-                    (pl.col("holiday")) | (pl.col("sunday")) | (pl.col("saturday"))
+                    (~ pl.col("weekend"))
+                )
+
+            if ("non_workday" in date_type) or ("non_businessday" in date_type):
+                result = result.filter(
+                    (pl.col("holiday")) | (pl.col("weekend"))
                 )
 
             if "holiday" in date_type:
                 result = result.filter(pl.col("holiday"))
 
-            if "weekend" in date_type:
-                result = result.filter((pl.col("sunday")) | (pl.col("saturday")))
+            if ("weekend" in date_type) or ("non_weekday" in date_type):
+                result = result.filter(pl.col("weekend"))
 
             for day in [
                 "monday",

@@ -10,9 +10,10 @@ import warnings
 import zipfile 
 import shutil 
 import unicodedata 
+import copy 
 
 MANDATORY_FILES = ["stops.txt","trips.txt","stop_times.txt",["calendar.txt","calendar_dates.txt"]]
-
+IMPLEMENTED_PARSERS = ["stops.txt","trips.txt","stop_times.txt","calendar.txt","calendar_dates.txt","agency.txt","routes.txt","frequencies.txt","shapes.txt"]
 # ------------------------------
 # DATE PARSER
 # ------------------------------
@@ -106,11 +107,13 @@ def parse_time(t: str) -> str:
 # SCHEMA DEFINITION
 # ------------------------------
 def get_df_schema_dict(path: str) -> Tuple[Dict[str, Any], List[str]]:
+    path = os.path.splitext(path)[0]
+    path += ".txt"
     if "stops.txt" in str(path):
         schema_dict = {"stop_id": str, "stop_name": str, "stop_lat": float, "stop_lon": float}
         mandatory_cols = ["stop_id", "stop_lat", "stop_lon"]
     elif "trips.txt" in str(path):
-        schema_dict = {"route_id": str, "service_id": str, "trip_id": str}
+        schema_dict = {"route_id": str, "service_id": str, "trip_id": str, "direction_id": int}
         mandatory_cols = ["route_id", "service_id", "trip_id"]
     elif "stop_times.txt" in str(path):
         schema_dict = {
@@ -203,8 +206,10 @@ def search_file(path, file):
         str | None: The full path of the first matching file, or None if not found.
     """
     for root, dirs, files in os.walk(path):
-        if file in files:
-            return os.path.join(root, file)
+        for f in files:
+            if os.path.splitext(file)[0] == os.path.splitext(f)[0]:
+                return os.path.join(root, f)
+            
     return None
 
 # ------------------------------
@@ -318,13 +323,19 @@ def normalize_df(lf: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame
 
 
 def normalize_route_type(route_type):
+    if isinstance(route_type,int):
+        if route_type in [i for i in range(0,8)]:
+            return route_type 
+        else:
+            raise Exception(f"route_type {route_type} is not in range 0-7")
+        
     if route_type in [str(i) for i in range(0, 8)]:
         return int(route_type)
     elif isinstance(route_type, str):
         if route_type == "tram":
             route_type = 0
 
-        elif route_type == "subway":
+        elif (route_type == "subway") or (route_type == "metro") or (route_type == "underground"):
             route_type = 1
 
         elif route_type == "rail":
@@ -586,38 +597,58 @@ def validate_and_load_csv(path: str, header: bool = True, csv_text=None):
     return parsed_cols_df, errors_df
 
 
+def unzip(file,output_path=None, delete:bool=False, overwrite:bool=True):
+    if os.path.isfile(file):
+        # Extract the ZIP
+        extraction_folder, ext = os.path.splitext(file)
+        if output_path is not None:
+            basename = os.path.basename(extraction_folder)
+            extraction_folder = os.path.join(output_path,basename)
+
+        if os.path.exists(extraction_folder):
+            if overwrite:
+                shutil.rmtree(extraction_folder)
+            else:
+                return extraction_folder
+            
+        os.makedirs(extraction_folder, exist_ok=True)
+        with zipfile.ZipFile(file, 'r') as zip_ref:
+            zip_ref.extractall(extraction_folder)
+
+        if delete:
+            shutil.rmtree(file)
+
+        return extraction_folder
+    else:
+        raise Exception(f"Invalid zip file {file}")
+    
 def preprocess_gtfs(path,output_folder, mandatory_files = MANDATORY_FILES):
     log = ""
     delete_path = None
     if os.path.isfile(path):
-        # Extract the ZIP
-        extraction_folder, ext = os.path.splitext(path)
-        os.makedirs(extraction_folder, exist_ok=True)
-        with zipfile.ZipFile(path, 'r') as zip_ref:
-            zip_ref.extractall(extraction_folder)
-
-        logs += f"Extracted file {path} to {extraction_folder} \n"
-        delete_path = extraction_folder
-        path = extraction_folder
-
-    # elif os.path.isdir(path):
-    #     found = False
-    #     for file_name in os.listdir(path):
-    #         file_path = os.path.join(path, file_name)
-    #         if os.path.isfile(file_path) and file_name.startswith(file_name):
-    #             found = True
-    #             break
-
-    #     if not found:
-    #         shutil.make_archive(base_name=path, format='zip', root_dir=path)
-
+        orig_path = copy.copy(path)
+        path = unzip(path)
+        log += f"Extracted file {orig_path} to {path} \n"
+        delete_path = path
     else:
         raise Exception(f"Path {path} does not exist")
     
     for file in MANDATORY_FILES:
-        if search_file(path,file) is None:
-            raise Exception(f"File {file} not found in folder path. This GTFS might be broken.")
-        
+        if isinstance(file,list):
+            any_file = False
+            for f in file:
+                if search_file(path,f) is not None:
+                    any_file = True 
+                    break 
+
+            if not any_file:
+                print(log)
+                raise Exception(f"None of the files {file} not found in folder path {path}. At least one file should exist. This GTFS might be broken.")
+        else:
+            if search_file(path,file) is None:
+                print(log)
+                raise Exception(f"File {file} not found in folder path {path}. This GTFS might be broken.")
+            
     gtfs = {}
     gtfs_errors = {}
     for root, dirs, files in os.walk(path):
@@ -626,21 +657,29 @@ def preprocess_gtfs(path,output_folder, mandatory_files = MANDATORY_FILES):
             if ext == ".txt" or ext == ".csv":  
                 file_path = os.path.join(root, file_name + ext)
             else:
-                log += f"Can't read file {file_path}. Not a txt file. \n"
+                log += f"Can't read file {file_path}. Not a text file. \n"
                 continue
 
+            if (file_name + ".txt") not in IMPLEMENTED_PARSERS:
+                basename = os.path.basename(path)
+                # Ensure the output folder exists
+                os.makedirs(os.path.join(output_folder, basename), exist_ok=True)
+                shutil.copy2(file_path, os.path.join(output_folder,basename,file_name + '.txt'))
+                log += f"File {file_name + ext} has no parser. Copying directly to the output folder."
+                continue
             try:
-                content, errors = validate_and_load_csv(file_name,header=True)
+                content, errors = validate_and_load_csv(file_path,header=True)
                 if (len(content) == 0) and (file_name + ".txt" in mandatory_files):
-                    warnings.warn(f"File {os.path.join(path,file_path+ext)} is empty")
-                    log += f"File {os.path.join(path,file_path+ext)} is empty. \n"
+                    warnings.warn(f"File {os.path.join(path,file_path)} is empty")
+                    log += f"File {os.path.join(path,file_path)} is empty. \n"
 
                 gtfs[file_name] = content 
                 gtfs_errors[file_name] = errors 
             except Exception as e:
                 log += f"Error reading file {file_path}. {e}. \n"
                 if (file_name + ".txt") in mandatory_files:
-                    raise Exception(f"Error reading file {os.path.join(path,file_path+ext)}. {e}. \n")
+                    print(log)
+                    raise Exception(f"Error reading file {os.path.join(path,file_path)}. {e}. \n")
 
     check_id_files_list = [["stops","stop_times"],["trips","stop_times"],["trips","routes"],["agency","routes"],["trips","shapes"]]
     check_id_col_list = ["stop_id","trip_id","route_id","agency_id","shape_id"]
@@ -685,7 +724,7 @@ def preprocess_gtfs(path,output_folder, mandatory_files = MANDATORY_FILES):
                 if len(not_in_id) > 0:
                     log += f"The id column {check_id_col} in {os.path.join(path,check_id_file)} has some ids not used elsewere. Excluding the following {check_id_col} values: \n" 
                     log += f"{not_in_id} \n" 
-                    warnings.warn(f"len{not_in_id} {check_id_col} ids in {os.path.join(path,check_id_file)} are not used elsewere and are being excluded.")
+                    # warnings.warn(f"len{not_in_id} {check_id_col} ids in {os.path.join(path,check_id_file)} are not used elsewere and are being excluded.")
                     gtfs[check_id_file] = gtfs[check_id_file].filter(pl.col(check_id_col).is_in(ids))
                     gtfs_errors[check_id_file] = gtfs_errors[check_id_file].join(gtfs[check_id_file],on="line_number",how="left")
 
@@ -698,12 +737,12 @@ def preprocess_gtfs(path,output_folder, mandatory_files = MANDATORY_FILES):
         base_path = os.path.join(output_folder, basename, f"{file_name}.txt")
         df.write_csv(
             base_path,
-            separator=",",          # use comma as field separator
-            quote_char='"',         # wrap strings with double quotes
-            decimal_separator=".",  # use '.' for decimals
+            separator=",",         # use comma as field separator
+            quote_char='"',        # wrap strings with double quotes
+            decimal_comma=False,   # False means use '.' as decimal separator
             include_header=True
         )
-        logs += f"Created file {base_path} \n"
+        log += f"Created file {base_path} \n"
 
     for file_name, df in gtfs_errors.items():
         error_path = os.path.join(output_folder, basename, f"{file_name}_errors.txt")
@@ -711,17 +750,17 @@ def preprocess_gtfs(path,output_folder, mandatory_files = MANDATORY_FILES):
             error_path,
             separator=",",
             quote_char='"',
-            decimal_separator=".",
+            decimal_comma=False,   # Use '.' for decimals
             include_header=True
         )
-        logs += f"Created file {error_path} \n"
+        log += f"Created file {error_path} \n"
 
     if delete_path is not None:
         shutil.rmtree(delete_path)
-        logs += f"Deleted file {delete_path} \n"
+        log += f"Deleted file {delete_path} \n"
 
     with open(os.path.join(output_folder, basename, "logs.txt"), "w", encoding="utf-8") as f:
-        f.write(logs)
+        f.write(log)
 
     return os.path.join(output_folder, basename)
     

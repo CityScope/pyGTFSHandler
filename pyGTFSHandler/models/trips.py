@@ -1,7 +1,7 @@
 from pathlib import Path
 import polars as pl
 from typing import Optional, List, Union
-from .. import utils
+from .. import utils, gtfs_checker
 import os
 import warnings
 
@@ -81,7 +81,7 @@ class Trips:
         trip_paths: List[Path] = []
         file = "trips.txt"
         for p in paths:
-            new_p = utils.search_file(p, file=file)
+            new_p = gtfs_checker.search_file(p, file=file)
             if new_p is None:
                 trip_paths.append(None)
                 warnings.warn(f"File {file} does not exist in {p}", UserWarning)
@@ -89,11 +89,15 @@ class Trips:
                 trip_paths.append(new_p)
 
 
-        schema_dict = utils.get_df_schema_dict("trips.txt")
+        schema_dict, _ = gtfs_checker.get_df_schema_dict("trips.txt")
         trips = utils.read_csv_list(trip_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id)
 
         trips = utils.filter_by_id_column(trips, "service_id", service_ids)
         trips = utils.filter_by_id_column(trips, "trip_id", trip_ids)
         trips = utils.filter_by_id_column(trips, "route_id", route_ids)
+        if "direction_id" not in trips.collect_schema().names():
+            trips = trips.with_columns(pl.lit(None).alias("direction_id"))
+
+        trips = trips.with_columns(pl.col("direction_id").cast(int).alias("direction_id"))
 
         return trips

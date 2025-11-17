@@ -6,7 +6,6 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "geopandas>=1.1.1",
-    "osmnx>=2.0.6",
     "pandas>=2.3.0",
     "polars>=1.31.0",
     "pyarrow>=20.0.0",
@@ -17,7 +16,27 @@ dependencies = [
     "scipy>=1.16.0",
     "shapely>=2.1.1",
     "tqdm>=4.67.1",
-    "geopy>=2.4.1",
+]
+
+# ---- Optional Dependencies (extras) ----
+[project.optional-dependencies]
+
+# OSM support 
+
+osm = [
+   "osmnx>=2.0.6", 
+]
+
+# All dependencies for visualization and mapping
+plot = [
+    "matplotlib>=3.10.7",
+    "contextily>=1.6.0",
+    "mapclassify>=2.10.0",
+    "folium>=0.20.0",
+    "streamlit-folium>=0.25.3",
+    "plotly>=5.24.0",
+    "seaborn>=0.13.2",
+    "streamlit>=1.50.0",
 ]
 
 [dependency-groups]
