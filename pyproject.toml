@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Handle GTFS files fast in python"
 readme = "README.md"
 requires-python = ">=3.10"
+
 dependencies = [
     "geopandas>=1.1.1",
     "pandas>=2.3.0",
@@ -21,7 +22,7 @@ dependencies = [
 [project.optional-dependencies]
 osm = ["osmnx>=2.0.6"]
 plot = [
-    "matplotlib>=3.10.7",
+    "matplotlib>=3.8",
     "contextily>=1.6.0",
     "mapclassify>=2.10.0",
     "folium>=0.20.0",
@@ -31,16 +32,22 @@ plot = [
     "streamlit>=1.50.0",
 ]
 
-[dependency-groups]
 dev = [
-    "furo>=2025.7.19",
-    "nbsphinx>=0.9.6",
     "pre-commit>=4.2.0",
     "pytest>=8.4.1",
-    "sphinx>=8.2.3",
+    "black>=24.8.0",
+    "ruff>=0.6.0",
 ]
 
-# REQUIRED FOR uv & pip modern builds
+docs = [
+    "sphinx>=7.3.0",
+    "myst-parser>=3.0.1",
+    "furo>=2024.8.0",
+]
+
 [build-system]
-requires = ["setuptools>=61", "wheel"]
+requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["pyGTFSHandler*"]
