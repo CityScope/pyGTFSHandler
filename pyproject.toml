@@ -1,9 +1,13 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "pyGTFSHandler"
 version = "0.1.0"
 description = "Handle GTFS files fast in python"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.10"
 dependencies = [
     "geopandas>=1.1.1",
     "pandas>=2.3.0",
@@ -18,18 +22,12 @@ dependencies = [
     "tqdm>=4.67.1",
 ]
 
-# ---- Optional Dependencies (extras) ----
 [project.optional-dependencies]
-
-# OSM support 
-
 osm = [
-   "osmnx>=2.0.6", 
+   "osmnx>=2.0.6",
 ]
-
-# All dependencies for visualization and mapping
 plot = [
-    "matplotlib>=3.10.7",
+    "matplotlib>=3.8",
     "contextily>=1.6.0",
     "mapclassify>=2.10.0",
     "folium>=0.20.0",
@@ -39,7 +37,7 @@ plot = [
     "streamlit>=1.50.0",
 ]
 
-[dependency-groups]
+[tool.uv.dependency-groups]
 dev = [
     "furo>=2025.7.19",
     "nbsphinx>=0.9.6",
