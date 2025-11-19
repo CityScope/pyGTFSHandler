@@ -458,8 +458,15 @@ class Feed:
             stops.lf.select(["stop_id", "parent_station"]),
             on=["stop_id"],
             how="left",
+        ).with_columns(
+            pl.when(
+                pl.col("parent_station").is_null()
+            ).then(
+                pl.col("stop_id")
+            ).otherwise(
+                pl.col("parent_station")
+            ).alias("parent_station")
         )
-
         # Ensure that every trip does not stop twice at the parent_station
 
         # Sort by trip_id and stop_sequence
@@ -1229,7 +1236,7 @@ class Feed:
             Post-aggregation method:
             - "all": return all route/direction combinations  
             - "best": pick the service with smallest interval  
-            - "mean": harmonic mean of all service intervals
+            - "add": harmonic mean of all service intervals together (route intervals are added together)
         n_divisions : int, default 1
             Number of directional bins when using `shape_direction`.
         mix_directions : bool, default False 
@@ -1249,7 +1256,7 @@ class Feed:
         # --------------------
         # Base GTFS filtering
         # --------------------
-        lf = self.filter(
+        gtfs_lf = self.filter(
             date=date,
             start_time=start_time,
             end_time=end_time,
@@ -1258,6 +1265,7 @@ class Feed:
             frequencies=False,
             delete_last_stop=True
         )
+        gtfs_lf = gtfs_lf.filter(pl.col(at).is_not_null())
 
         start_sec = utils.time_to_seconds(start_time)
         end_sec = utils.time_to_seconds(end_time)
@@ -1272,15 +1280,16 @@ class Feed:
             groupby = list(np.unique([at, by, "direction_id"]))
 
             # Schema validation
-            missing = [col for col in groupby if col not in lf.collect_schema().names()]
+            missing = [col for col in groupby if col not in gtfs_lf.collect_schema().names()]
             if missing:
                 raise Exception(f"Missing required columns {missing} in GTFS schema.")
 
             # ---- Compute per-route headway ----
-            lf = (
-                lf.sort("departure_time")
+            gtfs_lf = (
+                gtfs_lf.sort("stop_sequence")
                 .group_by(groupby)
                 .agg(
+                    pl.col("route_id").unique().alias("route_ids"),
                     pl.col("departure_time").sort().alias("departure_times"),
                     utils.mean_angle("shape_direction").alias("shape_direction"),
                     utils.mean_angle("shape_direction_backwards").alias("shape_direction_backwards"),
@@ -1291,8 +1300,8 @@ class Feed:
                 )
             )
 
-            lf = (
-                lf.with_columns(
+            gtfs_lf = (
+                gtfs_lf.with_columns(
                     (
                         (
                             (pl.col("departure_times").list.diff(null_behavior="drop"))
@@ -1315,50 +1324,69 @@ class Feed:
             # HOW-aggregation for route-based method (grouped at bottom)
             # ----------------------------------------------------------
             if how == "best":
-                lf = lf.group_by(at).agg(
+                gtfs_lf = gtfs_lf.group_by(at).agg(
                     [
-                        pl.col(by).sort_by("mean_interval").first().alias(by),
+                        pl.col("route_ids").sort_by("mean_interval").first().alias("route_ids"),
                         pl.col("shape_direction").sort_by("mean_interval").first().alias("shape_direction"),
                         pl.col("direction_id").sort_by("mean_interval").first().cast(int).alias("direction_id"),
                         pl.col("mean_interval").min().alias("mean_interval"),
                     ]
                 )
 
-            elif how == "mean":
+            elif how == "add":
                 if mix_directions == False:
                     # Pick best headway within each directional group
-                    lf = lf.group_by([at, "direction_id"]).agg(
+                    gtfs_lf = gtfs_lf.group_by(at,"direction_id").agg(
                         [
-                            pl.col(by).sort_by("mean_interval").first().alias(by),
-                            pl.col("shape_direction").sort_by("mean_interval").first().alias("shape_direction"),
+                            pl.col("route_ids").flatten().unique().alias("route_ids"),
+                            (1 / (1 / pl.col("mean_interval")).sum()).alias("mean_interval"),
+                            pl.col("shape_direction").flatten().unique().alias("shape_directions"),
+                        ]
+                    )
+                    gtfs_lf = gtfs_lf.group_by(at).agg(
+                        [
+                            pl.col("route_ids").sort_by("mean_interval").first().alias("route_ids"),
+                            pl.col("shape_directions").sort_by("mean_interval").first().alias("shape_directions"),
+                            pl.col("direction_id").sort_by("mean_interval").first().alias("direction_id"),
                             pl.col("mean_interval").min().alias("mean_interval"),
                         ]
                     )
-
-                lf = lf.group_by(at).agg(
-                    [
-                        (1 / (1 / pl.col("mean_interval")).sum()).alias("mean_interval"),
-                        pl.col("shape_direction").flatten().unique().alias("shape_directions"),
-                        pl.col("direction_id")
-                            .flatten()
-                            .unique()
-                            .drop_nulls()
-                            .cast(int)
-                            .alias("direction_ids"),
-                        pl.col(by).flatten().unique().alias(by+"s"),
-                    ]
-                )
+                else:
+                    gtfs_lf = gtfs_lf.group_by(at).agg(
+                        [
+                            pl.col("route_ids").flatten().unique().alias("route_ids"),
+                            (1 / (1 / pl.col("mean_interval")).sum()).alias("mean_interval"),
+                            pl.col("shape_direction").flatten().unique().alias("shape_directions"),
+                            pl.col("direction_id")
+                                .flatten()
+                                .unique()
+                                .drop_nulls()
+                                .cast(int)
+                                .alias("direction_ids"),
+                        ]
+                    )
 
 
             else:  # how == "all"
-                lf = lf.drop("departure_times").with_columns(
+                gtfs_lf = gtfs_lf.drop("departure_times").with_columns(
                     pl.col("direction_id").cast(int).alias("direction_id")
                 )
 
-            lf = lf.with_columns(
+            gtfs_lf = gtfs_lf.with_columns(
                 (pl.col("mean_interval") / 60).alias("mean_interval")
             )
-            return lf.collect()
+
+            if by == "route_id":
+                if how != "mean": 
+                    gtfs_lf = gtfs_lf.rename({"route_ids":"route_id"})
+                    gtfs_lf = gtfs_lf.with_columns(
+                        pl.col("route_id").list.first().alias("route_id")
+                    )
+            else: 
+                if how != "mean": 
+                    gtfs_lf = gtfs_lf.rename({"route_ids":"route_id"})
+
+            return gtfs_lf.collect()
 
         # =====================================================================
         # CASE 2: Shape-direction method (directional clustering)
@@ -1367,8 +1395,8 @@ class Feed:
         n_sectors = n_divisions * 2
 
         # Adjust shape directions to ensure proper forward/backward separation
-        lf = (
-            lf.with_columns(
+        gtfs_lf = (
+            gtfs_lf.with_columns(
                 (
                     pl.when(
                         (
@@ -1427,22 +1455,22 @@ class Feed:
         )
 
         # Compute direction split per stop
-        lf = lf.group_by(at).agg(pl.all()).collect()
-        lf = lf.with_columns(
-            utils.max_separation_angle(lf, "shape_direction").alias("shape_split_direction")
+        gtfs_lf = gtfs_lf.group_by(at).agg(pl.all()).collect()
+        gtfs_lf = gtfs_lf.with_columns(
+            utils.max_separation_angle(gtfs_lf, "shape_direction").alias("shape_split_direction")
         )
-        lf = lf.explode(pl.exclude([at, "shape_split_direction"]))
-        lf = lf.lazy()
+        gtfs_lf = gtfs_lf.explode(pl.exclude([at, "shape_split_direction"]))
+        gtfs_lf = gtfs_lf.lazy()
 
         # Offset for even number of divisions
         if n_divisions % 2 == 0:
-            lf = lf.with_columns(pl.col("shape_split_direction") + 90 / n_divisions)
+            gtfs_lf = gtfs_lf.with_columns(pl.col("shape_split_direction") + 90 / n_divisions)
 
-        lf = lf.with_columns(pl.col("shape_split_direction") % 360)
+        gtfs_lf = gtfs_lf.with_columns(pl.col("shape_split_direction") % 360)
 
         # Assign angular bins
-        lf = (
-            lf.with_columns(
+        gtfs_lf = (
+            gtfs_lf.with_columns(
                 (
                     (pl.col("shape_direction") - pl.col("shape_split_direction") + 360) % 360
                 ).alias("angle")
@@ -1455,8 +1483,8 @@ class Feed:
         )
 
         # Compute headway per angular bin
-        lf = (
-            lf.sort("departure_time")
+        gtfs_lf = (
+            gtfs_lf.sort("stop_sequence")
             .group_by([at, "shape_direction_id"])
             .agg(
                 [
@@ -1472,7 +1500,7 @@ class Feed:
             )
         )
 
-        lf = lf.with_columns(
+        gtfs_lf = gtfs_lf.with_columns(
             [
                 (
                     (
@@ -1491,7 +1519,7 @@ class Feed:
         # HOW-aggregation for shape-direction method (grouped at bottom)
         # --------------------------------------------------------------
         if how == "best":
-            lf = lf.group_by(at).agg(
+            gtfs_lf = gtfs_lf.group_by(at).agg(
                 [
                     pl.col("shape_direction").sort_by("mean_interval").first().alias("shape_direction"),
                     pl.col("shape_ids").sort_by("mean_interval").first().alias("shape_ids"),
@@ -1500,10 +1528,10 @@ class Feed:
                 ]
             )
 
-        elif how == "mean":
+        elif how == "add":
             if mix_directions == False:
                 # Pick best headway within each directional group
-                lf = lf.group_by([at, "shape_direction_group_id"]).agg(
+                gtfs_lf = gtfs_lf.group_by([at, "shape_direction_group_id"]).agg(
                     [
                         pl.col("shape_direction").sort_by("mean_interval").first().alias("shape_direction"),
                         pl.col("shape_ids").sort_by("mean_interval").first().alias("shape_ids"),
@@ -1512,7 +1540,7 @@ class Feed:
                     ]
                 )
 
-            lf = lf.group_by(at).agg(
+            gtfs_lf = gtfs_lf.group_by(at).agg(
                 [
                     (1 / (1 / pl.col("mean_interval")).sum()).alias("mean_interval"),
                     pl.col("shape_direction").alias("shape_directions"),
@@ -1521,14 +1549,14 @@ class Feed:
                 ]
             )
         else:
-            lf = lf.with_columns(
+            gtfs_lf = gtfs_lf.with_columns(
                 (pl.col("shape_direction_id") % 2).alias("shape_direction_id")
             )
 
-        lf = lf.with_columns(
+        gtfs_lf = gtfs_lf.with_columns(
             (pl.col("mean_interval") / 60).alias("mean_interval")
         )
-        return lf.collect()
+        return gtfs_lf.collect()
 
 
     def get_mean_speed_at_stops(
@@ -1552,6 +1580,7 @@ class Feed:
             frequencies=True,
             delete_last_stop=False
         )
+        gtfs_lf = gtfs_lf.filter(pl.col(at).is_not_null())
 
         if direction == "both":
             backwards_stops = n_stops 
@@ -1571,20 +1600,19 @@ class Feed:
             .with_columns(
                 (
                     pl.col("shape_dist_traveled")
-                        .shift(-forward_stops)
-                        .over("trip_id")
-                    -
+                        .shift(forward_stops)
+                        .over("trip_id") -
                     pl.col("shape_dist_traveled")
-                        .shift(backwards_stops)
+                        .shift(-backwards_stops)
                         .over("trip_id")
+                    
                 ).alias("distance_weight"),
                 (
-                    pl.col("shape_time_traveled")
-                        .shift(-forward_stops)
-                        .over("trip_id")
-                    -
-                    pl.col("shape_time_traveled")
-                        .shift(backwards_stops)
+                    pl.col("departure_time")
+                        .shift(forward_stops)
+                        .over("trip_id") - 
+                    pl.col("departure_time")
+                        .shift(-backwards_stops)
                         .over("trip_id")
                 ).alias("time_weight")
             )
@@ -1640,10 +1668,11 @@ class Feed:
                 pl.col("speed").fill_null(float('-inf'))
             )
             gtfs_lf = gtfs_lf.group_by(list(np.unique([by,at]))).agg(
+                pl.col("route_id").sort_by("speed").last().alias("route_ids"),
                 pl.col("speed").sort_by("speed").last(),
                 pl.col("distance_weight").sort_by("speed").last(),
                 pl.col("time_weight").sort_by("speed").last(),
-                pl.col("n_trips").sort_by("n_trips").last(),
+                pl.col("n_trips").sort_by("speed").last(),
                 pl.col("isin_aoi").any().alias("isin_aoi")
             )
             gtfs_lf = gtfs_lf.with_columns(
@@ -1657,10 +1686,11 @@ class Feed:
                 pl.col("speed").fill_null(float('inf'))
             )
             gtfs_lf = gtfs_lf.group_by(list(np.unique([by,at]))).agg(
+                pl.col("route_id").sort_by("speed").first().alias("route_ids"),
                 pl.col("speed").sort_by("speed").first(),
                 pl.col("distance_weight").sort_by("speed").first(),
                 pl.col("time_weight").sort_by("speed").first(),
-                pl.col("n_trips").sort_by("n_trips").first(),
+                pl.col("n_trips").sort_by("speed").first(),
                 pl.col("isin_aoi").any().alias("isin_aoi")
             ) 
             gtfs_lf = gtfs_lf.with_columns(
@@ -1677,6 +1707,7 @@ class Feed:
                 .alias("n_trips")
             )
             gtfs_lf = gtfs_lf.group_by(list(np.unique([by, at]))).agg(
+                pl.col("route_id").unique().alias("route_ids"),
                 (
                     (pl.col("speed") * pl.col("n_trips")).sum()
                     / pl.col("n_trips").sum()
@@ -1692,9 +1723,367 @@ class Feed:
                 pl.col("n_trips").sum().alias("n_trips"),
                 pl.col("isin_aoi").any().alias("isin_aoi")
             )
+    
+        if by == "route_id":
+            if "route_ids" in gtfs_lf.collect_schema().names():
+                gtfs_lf = gtfs_lf.drop("route_ids")
+        else: 
+            if how != "mean": 
+                if "route_id" not in gtfs_lf.collect_schema().names():
+                    gtfs_lf = gtfs_lf.rename({"route_ids":"route_id"})
 
         return gtfs_lf.filter(pl.col("isin_aoi") == True).drop("isin_aoi").collect()
-    
+
+    def get_mean_interval_at_edges(            
+            self,
+            date: datetime | date,
+            start_time: datetime | time = time.min,
+            end_time: datetime | time = time.max,
+            route_types: list | int | str | None = None,
+            by="edge_id",
+            at="parent_station",
+            how="mean",
+            min_trips:int=2,
+            mix_directions:bool=False,
+        ):
+
+        gtfs_lf = self.filter(
+            date=date,
+            start_time=start_time,
+            end_time=end_time,
+            route_types=route_types,
+            in_aoi=False,
+            frequencies=False,
+            delete_last_stop=False
+        )
+        gtfs_lf = gtfs_lf.filter(pl.col(at).is_not_null())
+
+        start_sec = utils.time_to_seconds(start_time)
+        end_sec = utils.time_to_seconds(end_time)
+
+        gtfs_lf = (
+            gtfs_lf
+            .sort(["trip_id","stop_sequence"])
+            .with_columns(
+                pl.col("stop_id").alias("stop_id_A"),
+                pl.col("stop_id").shift(1).over("trip_id").alias("stop_id_B"),
+                pl.col("parent_station").alias("parent_station_A"),
+                pl.col("parent_station").shift(1).over("trip_id").alias("parent_station_B"),
+                
+            )
+            .filter(pl.col("stop_id_B").is_not_null())
+            .select([
+                "stop_id_A",
+                "stop_id_B",
+                "parent_station_A",
+                "parent_station_B",
+                "trip_id",
+                "route_id",
+                "route_type",
+                "direction_id",
+                "shape_id",
+                "shape_direction",
+                "shape_direction_backwards",
+                "departure_time",
+                "arrival_time",
+                "stop_sequence",
+                "n_trips",
+            ])
+            .with_columns(
+                pl.when(pl.col(f"{at}_A") > pl.col(f"{at}_B")).then(
+                    pl.concat_str([
+                        pl.col(f"{at}_A").cast(pl.Utf8),
+                        pl.lit("_stop_A_-_"),
+                        pl.col(f"{at}_B").cast(pl.Utf8),
+                        pl.lit("_stop_B")
+                    ])
+                ).otherwise(
+                    pl.concat_str([
+                        pl.col(f"{at}_B").cast(pl.Utf8),
+                        pl.lit("_stop_A_-_"),
+                        pl.col(f"{at}_A").cast(pl.Utf8),
+                        pl.lit("_stop_B")
+                    ])
+                ).alias("edge_id"),
+                pl.when(pl.col(f"{at}_A") > pl.col(f"{at}_B")).then(
+                    pl.lit(0)
+                ).otherwise(
+                    pl.lit(1)
+                ).alias("direction_id"),
+            )
+        )
+
+        # Collect columns required for grouping
+        groupby = list(np.unique(["edge_id", by, "direction_id"]))
+
+        # Schema validation
+        missing = [col for col in groupby if col not in gtfs_lf.collect_schema().names()]
+        if missing:
+            raise Exception(f"Missing required columns {missing} in GTFS schema.")
+
+        # ---- Compute per-route headway ----
+        gtfs_lf = (
+            gtfs_lf.sort(["trip_id","stop_sequence"])
+            .group_by(groupby)
+            .agg(
+                pl.col("route_id").unique().alias("route_ids"),
+                pl.col("departure_time").sort().alias("departure_times"),
+                utils.mean_angle("shape_direction").alias("shape_direction"),
+                utils.mean_angle("shape_direction_backwards").alias("shape_direction_backwards"),
+                (
+                    (pl.col("departure_time").min() - start_sec)
+                    + (end_sec - pl.col("departure_time").max())
+                ).alias("initial_interval"),    
+                pl.col(at+"_A").first(), 
+                pl.col(at+"_B").first(),  
+                pl.col("n_trips").sum().alias("n_trips"),
+            )
+        )
+
+        gtfs_lf = (
+            gtfs_lf.with_columns(
+                (
+                    (
+                        (pl.col("departure_times").list.diff(null_behavior="drop"))
+                        .list.eval(pl.element().pow(2))
+                        .list.sum()
+                        + pl.col("initial_interval") ** 2
+                    )
+                    / (end_sec - start_sec)
+                ).alias("mean_interval")
+            )
+            .drop("initial_interval")
+            .collect()
+            .lazy()
+        )
+
+        if by == "edge_id":
+            by = "route_id"
+        # ----------------------------------------------------------
+        # HOW-aggregation for route-based method (grouped at bottom)
+        # ----------------------------------------------------------
+        if how == "best":
+            gtfs_lf = gtfs_lf.group_by("edge_id").agg(
+                [
+                    pl.col("route_ids").sort_by("mean_interval").first().alias("route_ids"),
+                    pl.col("shape_direction").sort_by("mean_interval").first().alias("shape_direction"),
+                    pl.col("mean_interval").min().alias("mean_interval"),
+                    pl.col(at+"_A").sort_by("mean_interval").first().alias(at+"_A"),
+                    pl.col(at+"_B").sort_by("mean_interval").first().alias(at+"_B"),
+                    pl.col("direction_id").sort_by("mean_interval").first().alias("direction_id"),
+                    pl.col("n_trips").sort_by("mean_interval").first().alias("n_trips"),
+                ]
+            )
+
+        elif how == "add":
+            if mix_directions == False:
+                # Pick best headway within each directional group
+                gtfs_lf = gtfs_lf.group_by("edge_id","direction_id").agg(
+                    [
+                        pl.col("route_ids").flatten().unique().alias("route_ids"),
+                        (1 / (1 / pl.col("mean_interval")).sum()).alias("mean_interval"),
+                        pl.col("shape_direction").flatten().unique().alias("shape_directions"),
+                        pl.col(at+"_A").first().alias(at+"_A"),
+                        pl.col(at+"_B").first().alias(at+"_B"),
+                        pl.col("n_trips").sum().alias("n_trips"),
+                    ]
+                )
+                gtfs_lf = gtfs_lf.group_by("edge_id").agg(
+                    [
+                        pl.col("route_ids").sort_by("mean_interval").first().alias("route_ids"),
+                        pl.col("shape_directions").sort_by("mean_interval").first().alias("shape_directions"),
+                        pl.col("mean_interval").min().alias("mean_interval"),
+                        pl.col(at+"_A").sort_by("mean_interval").first().alias(at+"_A"),
+                        pl.col(at+"_B").sort_by("mean_interval").first().alias(at+"_B"),
+                        pl.col("direction_id").sort_by("mean_interval").first().alias("direction_id"),
+                        pl.col("n_trips").sort_by("mean_interval").first().alias("n_trips"),
+                    ]
+                )
+            else:
+                gtfs_lf = gtfs_lf.group_by("edge_id").agg(
+                    [
+                        pl.col("route_ids").flatten().unique().alias("route_ids"),
+                        (1 / (1 / pl.col("mean_interval")).sum()).alias("mean_interval"),
+                        pl.col("shape_direction").flatten().unique().alias("shape_directions"),
+                        pl.col(at+"_A").first().alias(at+"_A"),
+                        pl.col(at+"_B").first().alias(at+"_B"),
+                        pl.col("direction_id").unique().alias("direction_id"),
+                        pl.col("n_trips").sum().alias("n_trips"),
+                    ]
+                )
+
+
+        else:  # how == "all"
+            gtfs_lf = gtfs_lf.drop("departure_times")
+            if by == "route_id":
+                gtfs_lf = gtfs_lf.drop("route_ids")
+
+        gtfs_lf = gtfs_lf.with_columns(
+            (pl.col("mean_interval") / 60).alias("mean_interval")
+        ).filter(pl.col("n_trips") > min_trips)
+
+        return gtfs_lf.collect()
+
+
+    def get_mean_speed_at_edges(            
+            self,
+            date: datetime | date,
+            start_time: datetime | time = time.min,
+            end_time: datetime | time = time.max,
+            route_types: list | int | str | None = None,
+            by="edge_id",
+            at="parent_station",
+            how="mean",
+            min_trips:int=2,
+        ):
+
+        gtfs_lf = self.filter(
+            date=date,
+            start_time=start_time,
+            end_time=end_time,
+            route_types=route_types,
+            in_aoi=False,
+            frequencies=True,
+            delete_last_stop=False
+        )
+        gtfs_lf = gtfs_lf.filter(pl.col(at).is_not_null())
+        gtfs_lf = (
+            gtfs_lf
+            .sort(["trip_id","stop_sequence"])
+            .with_columns(
+                pl.col("stop_id").alias("stop_id_A"),
+                pl.col("stop_id").shift(1).over("trip_id").alias("stop_id_B"),
+                pl.col("parent_station").alias("parent_station_A"),
+                pl.col("parent_station").shift(1).over("trip_id").alias("parent_station_B"),
+                (
+                    pl.col("shape_dist_traveled").shift(1).over("trip_id")-pl.col("shape_dist_traveled")
+                ).alias("distance_weight"),
+                (
+                    pl.col("departure_time").shift(1).over("trip_id")-pl.col("departure_time")
+                ).alias("time_weight"),
+                
+            )
+            .filter(pl.col("stop_id_B").is_not_null())
+            .select([
+                "stop_id_A",
+                "stop_id_B",
+                "parent_station_A",
+                "parent_station_B",
+                "trip_id",
+                "route_id",
+                "route_type",
+                "direction_id",
+                "shape_id",
+                "shape_direction",
+                "shape_direction_backwards",
+                "departure_time",
+                "arrival_time",
+                "stop_sequence",
+                "distance_weight",
+                "time_weight",
+                "n_trips",
+            ])
+            .with_columns(
+                (
+                    (pl.col("distance_weight") / 1000) / (pl.col("time_weight") / 3600)
+                ).alias("speed"),
+                pl.when(pl.col(f"{at}_A") > pl.col(f"{at}_B")).then(
+                    pl.concat_str([
+                        pl.col(f"{at}_A").cast(pl.Utf8),
+                        pl.lit("_stop_A_-_"),
+                        pl.col(f"{at}_B").cast(pl.Utf8),
+                        pl.lit("_stop_B")
+                    ])
+                ).otherwise(
+                    pl.concat_str([
+                        pl.col(f"{at}_B").cast(pl.Utf8),
+                        pl.lit("_stop_A_-_"),
+                        pl.col(f"{at}_A").cast(pl.Utf8),
+                        pl.lit("_stop_B")
+                    ])
+                ).alias("edge_id"),
+                pl.when(pl.col(f"{at}_A") > pl.col(f"{at}_B")).then(
+                    pl.lit(0)
+                ).otherwise(
+                    pl.lit(1)
+                ).alias("direction_id"),
+            )
+        )
+
+        if how == "max":
+            gtfs_lf = gtfs_lf.with_columns(
+                pl.col("speed").fill_null(float('-inf'))
+            )
+            gtfs_lf = gtfs_lf.group_by(list(np.unique([by,"edge_id"]))).agg(
+                pl.col("route_id").sort_by("speed").last().alias("route_ids"),
+                pl.col("speed").sort_by("speed").last(),
+                pl.col("distance_weight").sort_by("speed").last(),
+                pl.col("time_weight").sort_by("speed").last(),
+                pl.col(at+"_A").sort_by("speed").last(), 
+                pl.col(at+"_B").sort_by("speed").last(),  
+                pl.col("n_trips").sort_by("speed").last().alias("n_trips"),
+            )
+            gtfs_lf = gtfs_lf.with_columns(
+                pl.when(pl.col("speed") == pl.lit(float('-inf')))
+                .then(pl.lit(None))
+                .otherwise(pl.col("speed"))
+                .alias("speed")
+            )
+        elif how == "min":
+            gtfs_lf = gtfs_lf.with_columns(
+                pl.col("speed").fill_null(float('inf'))
+            )
+            gtfs_lf = gtfs_lf.group_by(list(np.unique([by,"edge_id"]))).agg(
+                pl.col("route_id").sort_by("speed").first().alias("route_ids"),
+                pl.col("speed").sort_by("speed").first(),
+                pl.col("distance_weight").sort_by("speed").first(),
+                pl.col("time_weight").sort_by("speed").first(),
+                pl.col(at+"_A").sort_by("speed").first(), 
+                pl.col(at+"_B").sort_by("speed").first(), 
+                pl.col("n_trips").sort_by("speed").first().alias("n_trips"), 
+            ) 
+            gtfs_lf = gtfs_lf.with_columns(
+                pl.when(pl.col("speed") == pl.lit(float('inf')))
+                .then(pl.lit(None))
+                .otherwise(pl.col("speed"))
+                .alias("speed")
+            )
+        elif how == "mean":
+            gtfs_lf = gtfs_lf.with_columns(
+                pl.when(pl.col("speed").is_null())
+                .then(pl.lit(0))
+                .otherwise(pl.col("n_trips"))
+                .alias("n_trips")
+            )
+            gtfs_lf = gtfs_lf.group_by(list(np.unique([by,"edge_id"]))).agg(
+                pl.col("route_id").unique().alias("route_ids"),
+                (
+                    (pl.col("speed") * pl.col("n_trips")).sum()
+                    / pl.col("n_trips").sum()
+                ).alias("speed"),
+                (
+                    (pl.col("distance_weight") * pl.col("n_trips")).sum()
+                    / pl.col("n_trips").sum()
+                ).alias("distance_weight"),
+                (
+                    (pl.col("time_weight") * pl.col("n_trips")).sum()
+                    / pl.col("n_trips").sum()
+                ).alias("time_weight"),
+                pl.col(at+"_A").first(), 
+                pl.col(at+"_B").first(),  
+                pl.col("n_trips").sum().alias("n_trips"),
+            )
+
+        if by == "route_id":
+            if "route_ids" in gtfs_lf.collect_schema().names():
+                gtfs_lf = gtfs_lf.drop("route_ids")
+        else: 
+            if how != "mean": 
+                if "route_id" not in gtfs_lf.collect_schema().names():
+                    gtfs_lf = gtfs_lf.rename({"route_ids":"route_id"})
+
+        return gtfs_lf.collect()#.filter(pl.col("n_trips") > min_trips).collect()
+
 
     def add_stop_coords(self,df:pd.DataFrame|pl.DataFrame|pl.LazyFrame):
         if isinstance(df,pd.DataFrame):
@@ -1704,29 +2093,26 @@ class Feed:
         else:
             lf = df
 
-        column_priority = ['stop_id','parent_station']
-        column = None 
+        column_priority = ['stop_id','parent_station','stop_id_A','parent_station_A']
+        stop_column = None 
+        edges = False
         for c in column_priority:
             if c in lf.collect_schema().names():
-                column = c 
+                stop_column = c 
+                if stop_column.endswith("_A"):
+                    edges = True
+                    stop_column = stop_column.removesuffix("_A")
                 break 
-
-        if column is None:
+        
+        if stop_column is None:
             warnings.warn(f"The provided dataframe should have one of the following columns {column_priority}.")
             return df
         
-        if 'stop_lat' in lf.collect_schema().names():
-            lf = lf.drop('stop_lat')
-        if 'stop_lon' in lf.collect_schema().names():
-            lf = lf.drop('stop_lon')
-        if 'stop_name' in lf.collect_schema().names():
-            lf = lf.drop('stop_name')
-
         if 'stop_name' in self.stops.lf.collect_schema().names():
             stops_lf = (
                 self.stops.lf.select(["stop_id", "parent_station", "stop_lat", "stop_lon", "stop_name"])
             ) 
-            if column == 'parent_station':
+            if 'parent_station' == stop_column:
                     stops_lf = (
                         stops_lf
                         .with_columns(
@@ -1751,32 +2137,63 @@ class Feed:
             else:
                 stops_lf = stops_lf.drop("parent_station")
 
-            stops_lf = stops_lf.unique(column)
+            stops_lf = stops_lf.unique(stop_column)
         else:
             stops_lf = (
-                self.stops.lf.select([column, "stop_lat", "stop_lon"])
+                self.stops.lf.select([stop_column, "stop_lat", "stop_lon"])
             )
-            if column == 'parent_station':
+            if 'parent_station' == stop_column:
                 stops_lf = (
                     stops_lf
                     .with_columns([
-                        pl.col("stop_lat").mean().over(column).alias("stop_lat"),
-                        pl.col("stop_lon").mean().over(column).alias("stop_lon"),
+                        pl.col("stop_lat").mean().over(stop_column).alias("stop_lat"),
+                        pl.col("stop_lon").mean().over(stop_column).alias("stop_lon"),
                         pl.lit(None).alias("stop_name")
                     ])
                 )
-            stops_lf = stops_lf.unique(column)
+            stops_lf = stops_lf.unique(stop_column)
 
         stops_lf = stops_lf.with_columns(
             pl.when(pl.col("stop_name").is_null())
-            .then(pl.col(column).str.replace(r"_file_\d+$", ""))
+            .then(pl.col(stop_column).str.replace(r"_file_\d+$", ""))
             .otherwise(
                 pl.col("stop_name")
             )
             .alias("stop_name")
         )
+        
+        if edges:
+            if 'edge_linestring' in lf.collect_schema().names():
+                lf = lf.drop('edge_linestring')
+            if 'stop_name_A' in lf.collect_schema().names():
+                lf = lf.drop('stop_name_A')
+            if 'stop_name_B' in lf.collect_schema().names():
+                lf = lf.drop('stop_name_B')
 
-        lf = lf.join(stops_lf,on=column,how='left')
+            lf = lf.join(stops_lf.rename({stop_column:stop_column+"_A"}),on=stop_column+"_A",how='left')
+            lf = lf.rename({"stop_lat":"stop_lat_A","stop_lon":"stop_lon_A","stop_name":"stop_name_A"})
+            lf = lf.join(stops_lf.rename({stop_column:stop_column+"_B"}),on=stop_column+"_B",how='left')
+            lf = lf.rename({"stop_lat":"stop_lat_B","stop_lon":"stop_lon_B","stop_name":"stop_name_B"})
+            lf = lf.with_columns(
+                pl.concat_str([
+                    pl.lit("LINESTRING("),
+                    pl.col("stop_lon_A").cast(str), pl.lit(" "),
+                    pl.col("stop_lat_A").cast(str), pl.lit(", "),
+                    pl.col("stop_lon_B").cast(str), pl.lit(" "),
+                    pl.col("stop_lat_B").cast(str),
+                    pl.lit(")")
+                ]).alias("edge_linestring")
+            ).drop(["stop_lon_A","stop_lat_A","stop_lon_B","stop_lat_B"])
+        else:
+            if 'stop_lat' in lf.collect_schema().names():
+                lf = lf.drop('stop_lat')
+            if 'stop_lon' in lf.collect_schema().names():
+                lf = lf.drop('stop_lon')
+            if 'stop_name' in lf.collect_schema().names():
+                lf = lf.drop('stop_name')
+
+            lf = lf.join(stops_lf,on=stop_column,how='left')
+
         if isinstance(df,pd.DataFrame):
             return lf.collect().to_pandas()
         elif isinstance(df,pl.DataFrame):
@@ -1813,7 +2230,7 @@ class Feed:
             .alias("route_name")
         )
 
-        routes_lf = routes_lf.select(['route_id','route_short_name','route_long_name','route_name','route_type'])
+        routes_lf = routes_lf.select(['route_id','route_short_name','route_long_name','route_name','route_type','route_type_text'])
         if 'route_id' in lf.collect_schema().names():
             if 'route_short_name' in lf.collect_schema().names():
                 lf = lf.drop('route_short_name')
@@ -1823,7 +2240,9 @@ class Feed:
                 lf = lf.drop('route_name')
             if 'route_type' in lf.collect_schema().names():
                 lf = lf.drop('route_type')
-                
+            if 'route_type_text' in lf.collect_schema().names():
+                lf = lf.drop('route_type_text')
+
             lf = lf.join(routes_lf,on='route_id',how='left')
         
         if 'route_ids' in lf.collect_schema().names():
@@ -1835,24 +2254,29 @@ class Feed:
                 lf = lf.drop('route_names')
             if 'route_types' in lf.collect_schema().names():
                 lf = lf.drop('route_types')
+            if 'route_type_texts' in lf.collect_schema().names():
+                lf = lf.drop('route_type_texts')
 
             routes_lf = routes_lf.rename({
                 'route_id':'route_ids',
                 'route_short_name':'route_short_names',
                 'route_long_name':'route_long_names',
                 'route_name':'route_names',
-                'route_type':'route_types'
+                'route_type':'route_types',
+                'route_type_text':'route_type_texts'
             })
             lf = lf.join(routes_lf,on='route_ids',how='left')
             lf = (
                 lf.group_by("_row_number")
-                .agg([
-                    pl.exclude(["route_short_names", "route_long_names", "route_ids", "route_types"]).first(),
+                .agg(
+                    pl.exclude(["route_short_names", "route_long_names", "route_names", "route_ids", "route_types", "route_type_texts"]).first(),
                     pl.col("route_short_names").unique(),
                     pl.col("route_long_names").unique(),
+                    pl.col("route_names").unique(),
                     pl.col("route_ids").unique(),
                     pl.col("route_types").unique(),
-                ])
+                    pl.col("route_type_texts").unique(),
+                )
                 .drop("_row_number")
             )
 

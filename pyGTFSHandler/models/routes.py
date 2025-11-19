@@ -90,7 +90,13 @@ class Routes:
 
         # Cast column, replacing non-integer values with None
         routes = routes.with_columns(
-            pl.col("route_type").cast(pl.Int64, strict=False).alias("route_type")
+            pl.col("route_type")
+                .cast(pl.Int64, strict=False)
+                .alias("route_type"),
+            pl.col("route_type")
+                .cast(pl.Int64, strict=False)
+                .map_elements(gtfs_checker.route_type_to_str,return_dtype=pl.String)
+                .alias("route_type_text")
         )
 
         routes = utils.filter_by_id_column(routes, "route_id", route_ids)

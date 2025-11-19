@@ -373,6 +373,26 @@ def normalize_route_type(route_type):
     return route_type
 
 
+def route_type_to_str(route_type):
+    if not isinstance(route_type, int):
+        raise Exception(f"route_type must be an int, got {type(route_type)}")
+
+    mapping = {
+        0: "tram",
+        1: "subway",
+        2: "rail",
+        3: "bus",
+        4: "ferry",
+        5: "cable car",
+        6: "gondola",
+        7: "funicular",
+    }
+
+    if route_type not in mapping:
+        raise Exception(f"route_type {route_type} is not in range 0–7")
+
+    return mapping[route_type]
+
 def try_parse_line(line: str, config: Dict[str, Any], expected_cols: int|None = None, header:list|None=None, schema:dict|None=None, mandatory_columns:list=[]) -> Tuple[List[str]|None, str|None, str|None, bool]:
     parsed = None
     error = ""

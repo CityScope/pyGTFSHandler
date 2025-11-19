@@ -138,13 +138,27 @@ class Stops:
         if "parent_station" not in lf.collect_schema().names():
             lf = lf.with_columns(pl.lit(None).alias("parent_station"))
 
+
         lf = lf.with_columns(
+            pl.when(pl.col("parent_station") == "")
+            .then(pl.lit(None))
+            .otherwise("parent_station")
+            .alias("parent_station"),
+            pl.when(pl.col("stop_id") == "")
+            .then(pl.lit(None))
+            .otherwise("stop_id")
+            .alias("stop_id")
+        ).with_columns(
             pl.when(pl.col("parent_station").is_null())
             .then(pl.col("stop_id"))
             .otherwise("parent_station")
-            .alias("parent_station")
+            .alias("parent_station"),
+            pl.when(pl.col("stop_id").is_null())
+            .then(pl.col("parent_station"))
+            .otherwise("stop_id")
+            .alias("stop_id")
         )
-
+        lf = lf.filter(pl.col("stop_id").is_not_null() & (pl.col("stop_id") != ""))
         return lf
 
     def filter_by_aoi(
@@ -299,6 +313,24 @@ class Stops:
                 ).alias("parent_station")
             )
             .drop(["suffix_count", "is_dup", "final_cluster"])
+            .with_columns(
+                pl.when(
+                    pl.col("parent_station").is_null()
+                ).then(
+                    pl.lit(None))
+                .otherwise(
+                    pl.col("parent_station")
+                ).alias("parent_station")
+            )
+            .with_columns(
+                pl.when(
+                    pl.col("parent_station").is_null()
+                ).then(
+                    pl.col("stop_id"))
+                .otherwise(
+                    pl.col("parent_station")
+                ).alias("parent_station")
+            )
         )
 
         cluster_df = cluster_df.collect()
