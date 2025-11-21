@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 # Constants
 EPOCH = date(1970, 1, 1)
-ID_COLS = ["trip_id", "service_id", "route_id", "stop_id", "shape_id", "parent_station"]
+ID_COLS = ["trip_id", "service_id", "route_id", "stop_id", "shape_id", "parent_station", "agency_id"]
 MANDATORY_COLS = ["trip_id", "service_id", "stop_id"]
 
 
