@@ -53,7 +53,7 @@ api = MobilityDatabaseClient(refresh_token)
 city_name = "Cambridge, Massachusetts, USA"
 aoi = get_city_geometry(city_name)
 download_folder = "gtfs_orig_files"
-revised_folder = "gtfs_revised_files
+revised_folder = "gtfs_revised_files"
 
 # 2. Search for relevant feeds
 feeds = api.search_gtfs_feeds(
