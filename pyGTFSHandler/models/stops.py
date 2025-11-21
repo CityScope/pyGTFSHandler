@@ -159,6 +159,8 @@ class Stops:
             .alias("stop_id")
         )
         lf = lf.filter(pl.col("stop_id").is_not_null() & (pl.col("stop_id") != ""))
+        lf = lf.filter(pl.col("stop_lat").is_not_null() & pl.col("stop_lon").is_not_null())
+        
         return lf
 
     def filter_by_aoi(
@@ -233,6 +235,7 @@ class Stops:
 
         gdf["x"] = gdf.geometry.x
         gdf["y"] = gdf.geometry.y
+        gdf = gdf.dropna(subset=["x","y","stop_id"])
 
         if len(gdf) == 1:
             gdf["cluster"] = 0
@@ -405,5 +408,27 @@ class Stops:
             .drop("parent_station_right")
         )
 
+        stops = stops.with_columns(
+            pl.when(pl.col("parent_station") == "")
+            .then(pl.lit(None))
+            .otherwise("parent_station")
+            .alias("parent_station"),
+            pl.when(pl.col("stop_id") == "")
+            .then(pl.lit(None))
+            .otherwise("stop_id")
+            .alias("stop_id")
+        ).with_columns(
+            pl.when(pl.col("parent_station").is_null())
+            .then(pl.col("stop_id"))
+            .otherwise("parent_station")
+            .alias("parent_station"),
+            pl.when(pl.col("stop_id").is_null())
+            .then(pl.col("parent_station"))
+            .otherwise("stop_id")
+            .alias("stop_id")
+        )
+        stops = stops.filter(pl.col("stop_id").is_not_null() & (pl.col("stop_id") != ""))
+        stops = stops.filter(pl.col("stop_lat").is_not_null() & pl.col("stop_lon").is_not_null())
+        
         self.lf = stops
         return None
