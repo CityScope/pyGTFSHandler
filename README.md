@@ -30,7 +30,7 @@ pip install "pyGTFSHandler[osm,plot] @ git+https://github.com/CityScope/pyGTFSHa
 ```
 Or, if you only need the core functionality:
 ```bash
-git+https://github.com/CityScope/pyGTFSHandler.git"
+git+https://github.com/CityScope/pyGTFSHandler.git
 ```
 
 ## Usage
