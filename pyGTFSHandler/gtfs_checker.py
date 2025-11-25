@@ -324,14 +324,14 @@ def normalize_df(lf: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame
 
 def normalize_route_type(route_type):
     if isinstance(route_type,int):
-        if route_type in [i for i in range(0,8)]:
-            return route_type 
-        else:
-            raise Exception(f"route_type {route_type} is not in range 0-7")
-        
-    if route_type in [str(i) for i in range(0, 8)]:
+        return route_type 
+
+    try:
         return int(route_type)
-    elif isinstance(route_type, str):
+    except:
+        None 
+    
+    if isinstance(route_type, str):
         if route_type == "tram":
             route_type = 0
 
@@ -371,6 +371,88 @@ def normalize_route_type(route_type):
         )
 
     return route_type
+
+def extended_to_standard_route_type(route_type: int) -> int | None:
+    """
+    Convert any GTFS route_type or Extended GTFS (Transmodel) route_type
+    into a standard GTFS route_type (0–7).
+
+    Returns:
+        int in {0..7} or None if not mappable.
+    """
+
+    # --- If already a standard GTFS type, return unchanged ---
+    if route_type in {0, 1, 2, 3, 4, 5, 6, 7}:
+        return route_type
+
+    # --- Extra custom values you asked to convert ---
+    if route_type == 11:   # Trolleybus
+        return 3           # Bus
+    if route_type == 12:   # Monorail
+        return 2           # Rail
+
+    # --- Rail services (100–117) ---
+    if 100 <= route_type <= 117:
+        return 2
+
+    # --- Coach (200–209) → Bus ---
+    if 200 <= route_type <= 209:
+        return 3
+
+    # --- Urban Rail, Metro, Underground, Monorail ---
+    urban_rail_map = {
+        400: 2,  # urban rail → rail
+        401: 1,  # metro
+        402: 1,  # underground/subway
+        403: 2,  # urban rail
+        404: 2,  # all urban rail
+        405: 2,  # monorail → rail (per your instruction)
+    }
+    if route_type in urban_rail_map:
+        return urban_rail_map[route_type]
+
+    # --- Bus (700–716) & Trolleybus (800) ---
+    if 700 <= route_type <= 716:
+        return 3
+    if route_type == 800:
+        return 3  # electric bus
+
+    # --- Tram / Light rail (900–906) ---
+    if 900 <= route_type <= 906:
+        return 0
+
+    # --- Water / Ferry ---
+    if route_type in {1000, 1200}:
+        return 4
+
+    # --- Air (no GTFS mapping) ---
+    if route_type == 1100:
+        return None
+
+    # --- Aerial lift services (1300–1307) ---
+    lift_map = {
+        1300: 6,  # aerial lift, gondola-like
+        1301: 6,
+        1302: 5,  # cable car
+        1303: 5,  # elevator → closest = cable car
+        1304: 6,  # chair lift
+        1305: 6,  # drag lift
+        1306: 6,
+        1307: 6,
+    }
+    if route_type in lift_map:
+        return lift_map[route_type]
+
+    # --- Funicular ---
+    if route_type == 1400:
+        return 7
+
+    # --- Taxi (1500–1507) or Misc (1700, 1702): no GTFS mapping ---
+    if 1500 <= route_type <= 1507 or route_type in {1700, 1702}:
+        return None
+
+    # --- Unknown ---
+    return None
 
 
 def route_type_to_str(route_type):
@@ -642,6 +724,7 @@ def unzip(file,output_path=None, delete:bool=False, overwrite:bool=True):
     else:
         raise Exception(f"Invalid zip file {file}")
     
+    
 def preprocess_gtfs(path,output_folder, mandatory_files = MANDATORY_FILES):
     log = ""
     delete_path = None
@@ -765,15 +848,16 @@ def preprocess_gtfs(path,output_folder, mandatory_files = MANDATORY_FILES):
         log += f"Created file {base_path} \n"
 
     for file_name, df in gtfs_errors.items():
-        error_path = os.path.join(output_folder, basename, f"{file_name}_errors.txt")
-        df.write_csv(
-            error_path,
-            separator=",",
-            quote_char='"',
-            decimal_comma=False,   # Use '.' for decimals
-            include_header=True
-        )
-        log += f"Created file {error_path} \n"
+        if len(df) > 0:
+            error_path = os.path.join(output_folder, basename, f"{file_name}_errors.txt")
+            df.write_csv(
+                error_path,
+                separator=",",
+                quote_char='"',
+                decimal_comma=False,   # Use '.' for decimals
+                include_header=True
+            )
+            log += f"Created file {error_path} \n"
 
     if delete_path is not None:
         shutil.rmtree(delete_path)

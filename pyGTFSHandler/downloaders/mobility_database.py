@@ -178,37 +178,24 @@ class MobilityDatabaseClient:
     # Search Feeds
     # -------------------------------------------------------------------
 
-    def search_gtfs_feeds(
+    def _search_gtfs_feeds(
         self,
-        aoi: Optional[Union[Polygon, MultiPolygon, gpd.GeoDataFrame, gpd.GeoSeries]] = None,
+        aoi=None,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
-        provider: Optional[Union[str, List[Optional[str]]]] = None,
-        producer_url: Optional[Union[str, List[Optional[str]]]] = None,
-        country_code: Optional[Union[str, List[Optional[str]]]] = None,
-        subdivision_name: Optional[Union[str, List[Optional[str]]]] = None,
-        municipality: Optional[Union[str, List[Optional[str]]]] = None,
-        bounding_filter_method: str = "partially_enclosed",
+        provider=None,
+        producer_url=None,
+        country_code=None,
+        subdivision_name=None,
+        municipality=None,
+        bounding_filter_method="partially_enclosed",
         is_official: Optional[bool] = None
     ) -> List[Dict[str, Any]]:
         """
-        Search for GTFS feeds matching specified filters.
-
-        Supports multiple values per parameter and handles client-side
-        merging of results across combinations.
-
-        Args:
-            aoi: Polygon or GeoDataFrame defining geographic area.
-            limit: Number of feeds to return (max 2500).
-            offset: Offset for pagination.
-            provider, producer_url, country_code, subdivision_name, municipality:
-                Filter fields (accept list or single value).
-            bounding_filter_method: Spatial inclusion rule.
-            is_official: Whether to filter by official feeds.
-
-        Returns:
-            A list of feed metadata dictionaries.
+        Performs a single search request (no pagination),
+        including param combination logic and None-handling.
         """
+
         # Prepare parameter combinations
         param_requests = {
             "provider": self._prepare_list_param_for_api("provider", provider),
@@ -219,11 +206,10 @@ class MobilityDatabaseClient:
         }
 
         needs_none_pass = any(flag for _, flag in param_requests.values())
+
         base_params: Dict[str, Any] = {}
 
         if limit is not None:
-            if not (0 <= limit <= 2500):
-                logger.warning(f"Unusual limit: {limit} (expected 0–2500)")
             base_params["limit"] = str(limit)
 
         if offset is not None:
@@ -234,14 +220,12 @@ class MobilityDatabaseClient:
         if is_official is not None:
             base_params["is_official"] = str(is_official).lower()
 
-        # AOI bounding box setup
+        # AOI bounding setup
         if aoi is not None:
             if isinstance(aoi, (gpd.GeoDataFrame, gpd.GeoSeries)):
                 if aoi.empty:
                     raise ValueError("AOI is empty.")
                 bounds_geom = aoi.geometry.to_crs(4326).union_all()
-                if bounds_geom.is_empty:
-                    raise ValueError("AOI geometry empty after transformation.")
             elif isinstance(aoi, (Polygon, MultiPolygon)):
                 bounds_geom = aoi
             else:
@@ -254,70 +238,146 @@ class MobilityDatabaseClient:
             valid_methods = ["completely_enclosed", "partially_enclosed", "disjoint"]
             if bounding_filter_method not in valid_methods:
                 raise ValueError(f"Invalid bounding_filter_method: {bounding_filter_method}")
+
             base_params["bounding_filter_method"] = bounding_filter_method
 
-        # Collect results
-        all_feed_ids: Set[str] = set()
-        final_results: List[Dict[str, Any]] = []
-
-        # Non-None combinations
+        # Prepare combinations
         non_none_values = {k: v[0] for k, v in param_requests.items() if v[0]}
         keys, lists = zip(*non_none_values.items()) if non_none_values else ([], [])
 
-        for combination in itertools.product(*lists):
-            query_params = {**base_params, **dict(zip(keys, combination))}
-            logger.info(f"Searching with params: {query_params}")
+        all_feed_ids = set()
+        results_final: List[Dict[str, Any]] = []
+
+        # Regular combinations
+        for combo in itertools.product(*lists):
+            params = {**base_params, **dict(zip(keys, combo))}
             try:
-                response = self._authorized_request("GET", self.GTFS_FEEDS_ENDPOINT, params=query_params)
-                results = response.json()
+                resp = self._authorized_request("GET", self.GTFS_FEEDS_ENDPOINT, params=params)
+                data = resp.json()
             except Exception as e:
-                logger.warning(f"API request failed for {query_params}: {e}")
+                logger.warning(f"API request failed for params {params}: {e}")
                 continue
 
-            for feed in results:
+            for feed in data:
                 feed_id = feed.get("id")
                 if feed_id and feed_id not in all_feed_ids:
-                    final_results.append(feed)
+                    results_final.append(feed)
                     all_feed_ids.add(feed_id)
 
-        # Handle fields with None
+        # Handle None fields
         if needs_none_pass:
-            logger.info("Performing additional search for feeds with None fields...")
             omitted_values = {k: v[0] for k, v in param_requests.items() if v[0] and not v[1]}
-            keys_omit, lists_omit = zip(*omitted_values.items()) if omitted_values else ([], [])
-            for combination in itertools.product(*lists_omit) if lists_omit else [()]:
-                query_params = {**base_params, **dict(zip(keys_omit, combination))}
+            keys_o, lists_o = zip(*omitted_values.items()) if omitted_values else ([], [])
+
+            for combo in itertools.product(*lists_o) if lists_o else [()]:
+                params = {**base_params, **dict(zip(keys_o, combo))}
                 try:
-                    response = self._authorized_request("GET", self.GTFS_FEEDS_ENDPOINT, params=query_params)
-                    results = response.json()
+                    resp = self._authorized_request("GET", self.GTFS_FEEDS_ENDPOINT, params=params)
+                    data = resp.json()
                 except Exception as e:
-                    logger.warning(f"API request failed for {query_params}: {e}")
+                    logger.warning(f"API request failed for params {params}: {e}")
                     continue
 
-                for feed in results:
+                for feed in data:
                     feed_id = feed.get("id")
                     if not feed_id or feed_id in all_feed_ids:
                         continue
 
-                    # Check if feed matches None criteria
                     matches_none = True
                     for param_name, (_, include_none_flag) in param_requests.items():
                         if include_none_flag:
                             field_value = None
+
                             if param_name in ["provider", "producer_url"]:
                                 field_value = feed.get(param_name)
-                            elif param_name in ["country_code", "subdivision_name", "municipality"]:
+                            else:
                                 locs = feed.get("locations")
-                                if locs and isinstance(locs, list) and len(locs) > 0:
+                                if locs:
                                     field_value = locs[0].get(param_name)
+
                             if field_value is not None:
                                 matches_none = False
                                 break
+
                     if matches_none:
-                        final_results.append(feed)
+                        results_final.append(feed)
                         all_feed_ids.add(feed_id)
 
-        logger.info(f"Total unique feeds found: {len(final_results)}")
+        return results_final
+
+    def search_gtfs_feeds(
+        self,
+        *args,
+        limit: Optional[int] = 100_000,
+        offset: Optional[int] = None,
+        **kwargs
+    ):
+        """
+        Search for GTFS feeds matching specified filters.
+
+        Supports multiple values per parameter and handles client-side
+        merging of results across combinations.
+
+        If limit <= 200 → single call.
+        If limit > 200 → automatic pagination using _search_gtfs_feeds().
+
+        Args:
+            aoi: Polygon or GeoDataFrame defining a geographic area.
+            limit: Number of feeds to return (max 2500; values >200 trigger internal pagination).
+            offset: Offset for pagination.
+            provider, producer_url, country_code, subdivision_name, municipality:
+                Filter fields (accept a list or single value).
+            bounding_filter_method: Spatial inclusion rule. One of:
+                'completely_enclosed', 'partially_enclosed', 'disjoint'.
+            is_official: Whether to filter by official feeds. None, True, False
+
+        Returns:
+            A list of feed metadata dictionaries.
+        """
+
+        MAX_PAGE = 200
+
+        if limit is None:
+            limit = MAX_PAGE
+
+        if limit <= MAX_PAGE:
+            return self._search_gtfs_feeds(
+                *args, limit=limit, offset=offset, **kwargs
+            )
+
+        # Pagination mode
+        final_results = []
+        used_ids = set()
+
+        remaining = limit
+        current_offset = offset if offset is not None else 0
+
+        while remaining > 0:
+            page_limit = min(MAX_PAGE, remaining)
+
+            page_results = self._search_gtfs_feeds(
+                *args,
+                limit=page_limit,
+                offset=current_offset,
+                **kwargs
+            )
+
+            if not page_results:
+                break
+
+            for feed in page_results:
+                fid = feed.get("id")
+                if fid and fid not in used_ids:
+                    final_results.append(feed)
+                    used_ids.add(fid)
+
+            remaining -= page_limit
+            current_offset += page_limit
+
+            if len(page_results) < page_limit:
+                # No more results from API
+                break
+
         return final_results
 
     # -------------------------------------------------------------------

@@ -89,16 +89,24 @@ class Routes:
             print(f"Warning: These route_type values could not be converted to int. Orig values in route_type_orig column. Non convertible values: {non_convertible}")
 
         # Cast column, replacing non-integer values with None
-        routes = routes.with_columns(
-            pl.col("route_type")
-                .cast(pl.Int64, strict=False)
-                .alias("route_type"),
-            pl.col("route_type")
-                .cast(pl.Int64, strict=False)
-                .map_elements(gtfs_checker.route_type_to_str,return_dtype=pl.String)
-                .alias("route_type_text")
+        routes = (
+            routes
+            .with_columns(
+                pl.col("route_type")
+                    .cast(pl.Int64, strict=False)
+                    .alias("extended_route_type"),
+            )
+            .with_columns(
+                pl.col("route_type")
+                    .map_elements(gtfs_checker.extended_to_standard_route_type,pl.Int64)
+                    .alias("route_type"),
+            )
+            .with_columns(
+                pl.col("route_type")
+                    .map_elements(gtfs_checker.route_type_to_str,return_dtype=pl.String)
+                    .alias("route_type_text")
+            )
         )
-
         routes = utils.filter_by_id_column(routes, "route_id", route_ids)
 
         if route_types is not None:
