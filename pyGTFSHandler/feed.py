@@ -313,8 +313,11 @@ class Feed:
             min_file_id=min_file_id
         )
 
+        if (route_types == 'all') or (route_types is None) or ('all' in route_types) or (None in route_types):
+            route_types = None 
+
         if route_types is not None:
-            if route_types is list:
+            if isinstance(route_types, list):
                 route_types = [gtfs_checker.normalize_route_type(i) for i in route_types]
             else:
                 route_types = [gtfs_checker.normalize_route_type(route_types)]
