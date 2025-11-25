@@ -1600,7 +1600,6 @@ class Feed:
 
     def get_mean_interval_at_stops(
         self,
-        lf: pl.LazyFrame,
         date: datetime | date | None,
         start_time: datetime | time = time.min,
         end_time: datetime | time = time.max,
@@ -1610,7 +1609,6 @@ class Feed:
         how: str = "all",
         n_divisions: int = 1,
         mix_directions:bool = False,
-        delete_last_stop:bool = True
     ) -> pl.LazyFrame:
         """
         Compute the mean headway (service interval) within a time window.

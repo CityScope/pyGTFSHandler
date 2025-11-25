@@ -9,6 +9,7 @@ import pyGTFSHandler.gtfs_checker as gtfs_checker
 import pyGTFSHandler.processing_helper as processing_helper
 from datetime import datetime, date, time
 import polars as pl 
+from shapely import wkt
 import geopandas as gpd
 import json
 import copy 
@@ -20,6 +21,7 @@ parser.add_argument('--orig_file', required=True, help='Path to original GTFS fi
 
 # Optional arguments with defaults
 parser.add_argument('--processed_gtfs_folder', default=None, help='Folder for processed GTFS')
+parser.add_argument('--aoi', type=str, default=None, help='Area of interest (as wkt string in epsg 4326)')
 parser.add_argument('--start_time', type=str, default="08:00:00", help='Start time (HH:MM:SS)')
 parser.add_argument('--end_time', type=str, default="20:00:00", help='End time (HH:MM:SS)')
 parser.add_argument('--start_date', type=str, default=None, help='Start date (YYYY-MM-DD)')
@@ -43,6 +45,15 @@ args = parser.parse_args()
 # -------------------------
 orig_file = args.orig_file
 processed_gtfs_folder = args.processed_gtfs_folder
+
+# aoi 
+if args.aoi is None:
+    aoi = None 
+else:
+    aoi = gpd.GeoDataFrame(
+        geometry=[wkt.loads(args.aoi)],
+        crs="EPSG:4326"
+    )
 
 # Time conversion
 start_time = datetime.strptime(args.start_time, "%H:%M:%S").time() if args.start_time else time(hour=8)
