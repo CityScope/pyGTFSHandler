@@ -41,7 +41,7 @@ analysis-ready representation of the entire GTFS schedule.
 Columns that might have duplicates between gtfs files: stop_id, route_id
 Columns that autoresolve duplicates between gtfs files: trip_id, service_id, shape_id
 TODOs:
-- TODO when grouping by parent_station shape_direction should be what it is for the direction with the most remaining stops and the oposite for
+- TODO when grouping by parent_station shape_direction should be the direction with the most remaining stops and the oposite for
 the direction with less remaining stops
 - TODO avoid performing non necesary checks at the begining. Do first all the filters and then the checks.
 - TODO check that all trips have a route and if not generate it.
@@ -49,6 +49,7 @@ the direction with less remaining stops
 - TODO add direction_id to routes based on shape direction per shape_id
 - TODO finish dealing with shape_id and shapes.txt
 - TODO If in a trip_id a stop_id is repeated divide it into 2 trip ids check if this is really needed
+- TODO Check service intensity results. Sometimes (Valdemoro, Madrid) there are strange peaks in the plot. 
 """
 
 """TODO: revise filter_by_time_range with frequencies
