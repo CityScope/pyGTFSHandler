@@ -50,6 +50,7 @@ the direction with less remaining stops
 - TODO finish dealing with shape_id and shapes.txt
 - TODO If in a trip_id a stop_id is repeated divide it into 2 trip ids check if this is really needed
 - TODO Check service intensity results. Sometimes (Valdemoro, Madrid) there are strange peaks in the plot. 
+- TODO most_frequent_row_index in processing_helper selects the null or 0 or very low service intensity if this is the majority. So discard these values.
 """
 
 """TODO: revise filter_by_time_range with frequencies

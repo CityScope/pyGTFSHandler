@@ -89,7 +89,11 @@ def most_frequent_row_index(values, bins=5):
 
 
 def assign_service_quality_to_interval(interval, route_type, service_matrix=SERVICE_MATRIX):
-    return service_matrix.loc[service_matrix['interval'] >= interval, route_type].iloc[0]
+    l = service_matrix.loc[service_matrix['interval'] >= interval, route_type]
+    if len(l) > 0:
+        return l.iloc[0]
+    else: 
+        return None
     
 # def assign_service_quality_to_interval(mean_interval_df, service_matrix, route_type):
 #     service_matrix_intervals = list(service_matrix["interval"])  # e.g., [10, 20, 30]
