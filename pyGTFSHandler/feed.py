@@ -687,11 +687,11 @@ class Feed:
             gtfs_lf = self._filter_by_route_type(gtfs_lf, route_types=route_types)
 
         if self.stop_times.frequencies is None:
-            gtfs_lf: pl.LazyFrame = gtfs_lf.unique(
+            gtfs_lf = gtfs_lf.unique(
                 ["service_id", "stop_id", "departure_time"]
             ).select("trip_id", "service_id", "n_trips")
         else:
-            gtfs_lf: pl.LazyFrame = gtfs_lf.unique(
+            gtfs_lf = gtfs_lf.unique(
                 ["service_id", "stop_id", "departure_time", "start_time", "end_time"]
             ).select("trip_id", "service_id", "n_trips")
 

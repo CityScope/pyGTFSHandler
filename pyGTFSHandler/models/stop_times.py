@@ -197,14 +197,16 @@ class StopTimes:
             self.lf = self.lf.collect().lazy()
 
             self.frequencies = self.frequencies.join(self.lf, on="trip_id", how="semi")
-            self.frequencies = self.__filter_repeated_frequencies_with_trips(
-                self.frequencies, trips
-            )
+            if check_files:
+                self.frequencies = self.__filter_repeated_frequencies_with_trips(
+                    self.frequencies, trips
+                )
             self.frequencies = self.frequencies.collect().lazy()
             self.frequencies = self._frequencies_midnight_crossing(self.frequencies)
-            self.lf, self.frequencies = self.__check_frequencies_in_stop_times(
-                self.lf, self.frequencies
-            )
+            if check_files:
+                self.lf, self.frequencies = self.__check_frequencies_in_stop_times(
+                    self.lf, self.frequencies
+                )
 
             self.lf = self.lf.collect().lazy()
             self.frequencies = self.frequencies.collect().lazy()

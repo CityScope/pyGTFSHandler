@@ -475,7 +475,7 @@ class Calendar:
             for i in range((end_date - start_date).days + 1)
         ]
         date_info = [
-            {"date": d.isoformat(), "weekday": d.strftime("%A").lower()}
+            {"date": d.isoformat(), "weekday": d.strftime("%A").lower(), "date_int": int(utils.datetime_to_days_since_epoch(d))}
             for d in date_list
         ]
 
@@ -519,19 +519,29 @@ class Calendar:
                 .collect()
             )
 
-            for wd in weekday_service_map:
-                weekday_service_map[wd] = set(
-                    calendar_df.filter(pl.col(wd) == 1)["service_id"].to_list()
-                )
-
-        # Initialize date to services mapping based on weekday
-        date_service_map = {
-            entry["date"]: {
-                "weekday": entry["weekday"],
-                "services": set(weekday_service_map[entry["weekday"]]),
+            # Initialize date to services mapping based on weekday
+            date_service_map = {
+                entry["date"]: {
+                    "weekday": entry["weekday"],
+                    "services": set(
+                        calendar_df.filter(
+                            (pl.col("start_date") <= entry["date_int"])
+                            & (pl.col("end_date") >= entry["date_int"]) 
+                            & (pl.col(entry["weekday"]) == 1)
+                        )["service_id"].to_list()
+                    ),
+                }
+                for entry in date_info
             }
-            for entry in date_info
-        }
+        else:
+            # Initialize date to services mapping based on weekday
+            date_service_map = {
+                entry["date"]: {
+                    "weekday": entry["weekday"],
+                    "services": set(),
+                }
+                for entry in date_info
+            }
 
         # Apply exceptions from calendar_dates.txt
         if self.exceptions_lf is not None:
