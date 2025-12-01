@@ -1005,11 +1005,11 @@ class Feed:
             in_aoi:bool = False, 
             delete_last_stop:bool = False
         ):
-        if in_aoi:
-            data = data.filter(pl.col("isin_aoi"))
-
         if delete_last_stop:
             data = data.filter(pl.col("stop_sequence") != pl.col("stop_sequence").max().over("trip_id"))
+
+        if in_aoi:
+            data = data.filter(pl.col("isin_aoi"))
 
         if route_types is not None:
             data = self._filter_by_route_type(data, route_types)
