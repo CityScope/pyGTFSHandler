@@ -1,4 +1,5 @@
 import os
+import shutil
 import json
 import itertools
 import logging
@@ -388,7 +389,8 @@ class MobilityDatabaseClient:
         self,
         feeds: List[Dict],
         download_folder: str,
-        overwrite: bool = False
+        overwrite: bool = False,
+        unzip: bool = True
     ) -> List[str]:
         """
         Download GTFS feed ZIP files from the Mobility Database.
@@ -421,6 +423,7 @@ class MobilityDatabaseClient:
             )
 
             zip_path = os.path.join(download_folder, f"{feed_filename}.zip")
+            folder_path = os.path.join(download_folder, feed_filename)
 
             latest_dataset = feed.get("latest_dataset")
             if not latest_dataset:
@@ -433,17 +436,25 @@ class MobilityDatabaseClient:
                 continue
 
             # Skip or overwrite existing files
-            if os.path.exists(zip_path):
+            if os.path.isfile(zip_path) or os.path.isdir(folder_path):
                 if overwrite:
                     if overwrite_message:
                         logger.info(f"Overwriting all existing feeds.")
                         overwrite_message = False
+
+                    if os.path.isdir(folder_path):
+                        shutil.rmtree(folder_path)
+
                 else:
                     if overwrite_message:
                         logger.info(f"Skipping all already donwloaded feeds.")
                         overwrite_message = False
-                        
-                    zip_paths.append(os.path.abspath(zip_path))
+                    
+                    if os.path.isdir(folder_path):
+                        zip_paths.append(os.path.abspath(folder_path))
+                    else:
+                        zip_paths.append(os.path.abspath(zip_path))
+
                     continue
 
             try:
@@ -461,7 +472,25 @@ class MobilityDatabaseClient:
                 logger.error(f"Error downloading '{feed_filename}': {e}")
                 if os.path.exists(zip_path):
                     os.remove(zip_path)
+
                 continue
 
         logger.info(f"Successfully downloaded {len(zip_paths)} feeds.")
-        return zip_paths
+
+        if unzip:
+            unzipped = 0
+            return_paths = []
+            for path in zip_paths:
+                if path.endswith(".zip"):
+                    return_paths.append(gtfs_checker.unzip(path))
+                    os.remove(path) 
+                    unzipped += 1
+                else:
+                    return_paths.append(path)
+
+            if unzipped > 0:
+                logger.info(f"Successfully unzipped {unzipped} feeds.")
+        else:
+            return_paths = zip_paths 
+
+        return return_paths

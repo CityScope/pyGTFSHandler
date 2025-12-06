@@ -13,7 +13,16 @@ import unicodedata
 import copy 
 
 MANDATORY_FILES = ["stops.txt","trips.txt","stop_times.txt",["calendar.txt","calendar_dates.txt"]]
+PREFERENTIAL_FILES = ["routes.txt","frequencies.txt","calendar.txt","calendar_dates.txt"]
 IMPLEMENTED_PARSERS = ["stops.txt","trips.txt","stop_times.txt","calendar.txt","calendar_dates.txt","agency.txt","routes.txt","frequencies.txt","shapes.txt"]
+FILE_PAIRS = [
+    {'files':["stops.txt","stop_times.txt"],'ids':["stop_id"]},
+    {'files':["trips.txt","stop_times.txt", "frequencies.txt"],'ids':["trip_id"]},
+    {'files':["calendar.txt","trips.txt","calendar_dates.txt"],'ids':["service_id"]},
+    {'files':["trips.txt","routes.txt"],'ids':["route_id"]},
+    {'files':["agency.txt","routes.txt"],'ids':["agency_id"]},
+    {'files':["trips.txt","shapes.txt"],'ids':["shape_id"]},
+]
 # ------------------------------
 # DATE PARSER
 # ------------------------------
@@ -476,6 +485,7 @@ def route_type_to_str(route_type):
     return mapping[route_type]
 
 def try_parse_line(line: str, config: Dict[str, Any], expected_cols: int|None = None, header:list|None=None, schema:dict|None=None, mandatory_columns:list=[]) -> Tuple[List[str]|None, str|None, str|None, bool]:
+    line = line.strip()
     parsed = None
     error = ""
     fix = ""
@@ -511,11 +521,14 @@ def try_parse_line(line: str, config: Dict[str, Any], expected_cols: int|None = 
             dtype = schema[col_name]
 
             val = parsed[col_idx]
+            if val is not None:
+                val = str(val).strip()
+
             original = val
             parsed_val = normalize_string(val,strict=False)
 
             # Skip empty values
-            if val is None or str(val).strip() == '': 
+            if val is None or val == '': 
                 if col_name in mandatory_columns:
                     val = None 
                     original = None
@@ -535,42 +548,41 @@ def try_parse_line(line: str, config: Dict[str, Any], expected_cols: int|None = 
                 
             try:
                 if dtype == "date":
-                    parsed_val = parse_date(str(val))
+                    parsed_val = parse_date(parsed_val)
                 elif dtype == "time":
-                    parsed_val = parse_time(str(val))
+                    parsed_val = parse_time(parsed_val)
                 elif dtype == "time|None":
-                    if val is None:
+                    if parsed_val is None:
                         parsed_val = None 
                     else:
-                        parsed_val = parse_time(str(val))
+                        parsed_val = parse_time(parsed_val)
                 elif dtype == "int|bool":
-                    sval = str(val).strip().lower()
-                    if sval in ("true", "1"):
+                    if parsed_val in ("true", "1"):
                         parsed_val = 1
-                    elif sval in ("false", "0"):
+                    elif parsed_val in ("false", "0"):
                         parsed_val = 0
                     else:
-                        parsed_val = int(float(sval))
+                        parsed_val = int(float(parsed_val))
                 elif dtype == int:
-                    parsed_val = int(float(val))
+                    parsed_val = int(float(parsed_val))
                 elif dtype == float:
-                    parsed_val = float(val)
+                    parsed_val = float(parsed_val)
                 elif dtype == "route_type":
-                    parsed_val = normalize_route_type(val)
+                    parsed_val = normalize_route_type(parsed_val)
                 elif dtype == "exception_type":
-                    if val == "added":
+                    if parsed_val == "added":
                         parsed_val = 1 
-                    elif val == "removed":
+                    elif parsed_val == "removed":
                         parsed_val = 2 
         
-                    parsed_val = int(float(val))
+                    parsed_val = int(float(parsed_val))
                     if parsed_val != 1 and parsed_val != 2:
                         parsed_val = None 
                         original = None
                         error += f"{parsed_val} not valid for {col_name}. Only [1,2] are valid. "
                         fix += f"Set {col_name} to None. "
                 else:
-                    parsed_val = str(val)
+                    parsed_val = parsed_val
             except Exception as e:
                 error += f"Parse failed for column '{col_name}' value '{original}': {e} "
                 if col_name in mandatory_columns:
@@ -625,7 +637,7 @@ def validate_and_load_csv(path: str, header: bool = True, csv_text=None):
     colum_names = None
 
     if header:
-        header_line = lines[0]
+        header_line = lines[0].strip()
         lines = lines[1:]
         orig_colum_names, error_msg, fix, error = try_parse_line(header_line, config)
         if error or (orig_colum_names is None):
@@ -676,9 +688,8 @@ def validate_and_load_csv(path: str, header: bool = True, csv_text=None):
     ).unnest("parsed_struct")
 
     # Build final DataFrame with parsed columns and df_cols as column names
-    parsed_cols_df = lines_df.filter(~pl.col("excluded")).select(['line_number','parsed'])
     if colum_names is not None:
-        parsed_cols_df = lines_df.select(['line_number','parsed'])
+        parsed_cols_df = lines_df.select(['line_number','parsed','excluded'])
         for i, col_name in enumerate(colum_names):
             parsed_cols_df = parsed_cols_df.with_columns(
                 pl.Series(col_name, lines_df["parsed"].list.get(i).cast(pl.Utf8))
@@ -686,7 +697,12 @@ def validate_and_load_csv(path: str, header: bool = True, csv_text=None):
         
         parsed_cols_df = parsed_cols_df.drop('parsed')
 
+    else:
+        parsed_cols_df = lines_df.select(['line_number','parsed','excluded'])
+
+    parsed_cols_df = parsed_cols_df.filter(~pl.col('excluded')).drop('excluded')
     errors_df = lines_df.select(['line_number','error','fix','excluded']).drop_nulls("error")
+
     if len(errors_df.filter("excluded")) > 0:
         warnings.warn(f"{len(errors_df.filter("excluded"))} rows of file {path} have failed while parsing.")
 
@@ -725,7 +741,7 @@ def unzip(file,output_path=None, delete:bool=False, overwrite:bool=True):
         raise Exception(f"Invalid zip file {file}")
     
     
-def preprocess_gtfs(path,output_folder, mandatory_files = MANDATORY_FILES):
+def preprocess_gtfs(path,output_folder, mandatory_files = MANDATORY_FILES, file_preferences = PREFERENTIAL_FILES, file_pairs = FILE_PAIRS):
     log = ""
     delete_path = None
     if os.path.isfile(path):
@@ -733,25 +749,33 @@ def preprocess_gtfs(path,output_folder, mandatory_files = MANDATORY_FILES):
         path = unzip(path)
         log += f"Extracted file {orig_path} to {path} \n"
         delete_path = path
-    else:
+    elif not os.path.isdir(path):
         raise Exception(f"Path {path} does not exist")
     
-    for file in MANDATORY_FILES:
+    mandatory_file_list = []
+    mandatory_file_groups = {}
+    for file in mandatory_files:
         if isinstance(file,list):
-            any_file = False
+            file_group = []
             for f in file:
                 if search_file(path,f) is not None:
-                    any_file = True 
-                    break 
+                    mandatory_file_list.append(f) 
+                    file_group.append(f)
 
-            if not any_file:
+            if len(file_group) > 1:
+                for f in file_group:
+                    mandatory_file_groups[f] = file_group
+
+            elif len(file_group) == 0:
                 print(log)
                 raise Exception(f"None of the files {file} not found in folder path {path}. At least one file should exist. This GTFS might be broken.")
         else:
             if search_file(path,file) is None:
                 print(log)
                 raise Exception(f"File {file} not found in folder path {path}. This GTFS might be broken.")
-            
+            else:
+                mandatory_file_list.append(file)
+    
     gtfs = {}
     gtfs_errors = {}
     for root, dirs, files in os.walk(path):
@@ -768,11 +792,11 @@ def preprocess_gtfs(path,output_folder, mandatory_files = MANDATORY_FILES):
                 # Ensure the output folder exists
                 os.makedirs(os.path.join(output_folder, basename), exist_ok=True)
                 shutil.copy2(file_path, os.path.join(output_folder,basename,file_name + '.txt'))
-                log += f"File {file_name + ext} has no parser. Copying directly to the output folder."
+                log += f"File {file_name + ext} has no parser. Copying directly to the output folder. \n"
                 continue
             try:
                 content, errors = validate_and_load_csv(file_path,header=True)
-                if (len(content) == 0) and (file_name + ".txt" in mandatory_files):
+                if (len(content) == 0) and (file_name + ".txt" in mandatory_file_list):
                     warnings.warn(f"File {os.path.join(path,file_path)} is empty")
                     log += f"File {os.path.join(path,file_path)} is empty. \n"
 
@@ -780,56 +804,126 @@ def preprocess_gtfs(path,output_folder, mandatory_files = MANDATORY_FILES):
                 gtfs_errors[file_name] = errors 
             except Exception as e:
                 log += f"Error reading file {file_path}. {e}. \n"
-                if (file_name + ".txt") in mandatory_files:
+                if (file_name + ".txt") in mandatory_file_list:
                     print(log)
                     raise Exception(f"Error reading file {os.path.join(path,file_path)}. {e}. \n")
 
-    check_id_files_list = [["stops","stop_times"],["trips","stop_times"],["trips","routes"],["agency","routes"],["trips","shapes"]]
-    check_id_col_list = ["stop_id","trip_id","route_id","agency_id","shape_id"]
+    for i in range(len(file_pairs)):
+        file_list_i = set(file_pairs[i]['files'])
+        file_list_i = file_list_i.intersection(set(f + ".txt" for f in gtfs.keys()))
+        id_cols = set(file_pairs[i]['ids'])
+        preferential_files_i = (
+            set(mandatory_file_list).union(file_preferences)
+        ).intersection(file_list_i)
+        mandatory_files_i = (
+            set(mandatory_file_list)
+        ).intersection(file_list_i)
+        for id_col in id_cols:
+            id_vals = None 
+            file_without_col = None
 
-    for i in range(len(check_id_col_list)):
-        check_id_files = check_id_files_list[i]
-        check_id_files_mandatory = []
-        check_id_files_final = []
-        for check_id_file in check_id_files:
-            if check_id_file in gtfs.keys():
-                check_id_files_final.append(check_id_file) 
-
-        if len(check_id_files_final) <= 1:
-            continue
-
-        check_id_files = check_id_files_final
-        for check_id_file in check_id_files:
-            if check_id_file in mandatory_files:
-                check_id_files_mandatory.append(check_id_file)
-
-        if len(check_id_files_mandatory) == 0:
-            check_id_files_mandatory = check_id_files 
-
-
-        check_id_col = check_id_col_list[i]
-        # Initialize as a set
-        ids = None  # start with None to handle first intersection
-
-        for check_id_file in check_id_files_mandatory:
-            # Get the column values as a set of strings
-            current_ids = set(map(str, gtfs[check_id_file].select(check_id_col)[check_id_col].to_list()))
-            if ids is None:
-                # For the first file, just initialize ids
-                ids = current_ids
+            if len(mandatory_files_i) == 0:
+                check_file_list = preferential_files_i 
             else:
-                # Intersect with the existing ids
-                ids = ids.intersection(current_ids)
+                check_file_list = mandatory_files_i
 
-        if ids is not None:
-            for check_id_file in check_id_files:
-                not_in_id = set(gtfs[check_id_file].select(check_id_col)[check_id_col].to_list()) - ids
-                if len(not_in_id) > 0:
-                    log += f"The id column {check_id_col} in {os.path.join(path,check_id_file)} has some ids not used elsewere. Excluding the following {check_id_col} values: \n" 
-                    log += f"{not_in_id} \n" 
-                    # warnings.warn(f"len{not_in_id} {check_id_col} ids in {os.path.join(path,check_id_file)} are not used elsewere and are being excluded.")
-                    gtfs[check_id_file] = gtfs[check_id_file].filter(pl.col(check_id_col).is_in(ids))
-                    gtfs_errors[check_id_file] = gtfs_errors[check_id_file].join(gtfs[check_id_file],on="line_number",how="left")
+            if len(check_file_list) == 0:
+                check_file_list = file_list_i
+
+            for file in (set(check_file_list) - set(mandatory_file_groups.keys())):
+                if id_col in gtfs[file.removesuffix(".txt")].columns:
+                    if len(file_list_i) > 1:
+                        # Get the column values as a set of strings
+                        current_id_vals = set(
+                            map(
+                                str, 
+                                gtfs[file.removesuffix(".txt")].select(id_col)[id_col].to_list()
+                            )
+                        )
+                        if id_vals is None:
+                            # For the first file, just initialize ids
+                            id_vals = current_id_vals
+                        else:
+                            # Intersect with the existing ids
+                            id_vals = id_vals.intersection(current_id_vals)  
+                else:
+                    file_without_col = file 
+                    break 
+
+            if file_without_col is None:
+                unique_groups = []
+                for f in check_file_list:
+                    if f in mandatory_file_groups.keys():
+                        unique_groups.append(mandatory_file_groups[f])
+                
+                unique_groups = {tuple(v) for v in unique_groups}
+                for file_group in unique_groups:
+                    current_id_vals = None
+                    has_col = False
+                    for file in file_group: 
+                        if id_col in gtfs[file.removesuffix(".txt")].columns:
+                            has_col = True
+                            if len(file_list_i) > 1:
+                                # Get the column values as a set of strings
+                                current_id_vals_i = set(
+                                    map(
+                                        str, 
+                                        gtfs[
+                                            file.removesuffix(".txt")
+                                        ].select(id_col)[id_col].to_list()
+                                    )
+                                )
+                                if current_id_vals is None:
+                                    # For the first file, just initialize ids
+                                    current_id_vals = current_id_vals_i
+                                else:
+                                    # Intersect with the existing ids
+                                    current_id_vals = current_id_vals.union(current_id_vals_i)  
+
+                        else:
+                            file_without_col = file
+
+                    if has_col:
+                        file_without_col = None 
+                        if id_vals is None:
+                            # For the first file, just initialize ids
+                            id_vals = current_id_vals
+                        elif current_id_vals is not None:
+                            # Intersect with the existing ids
+                            id_vals = id_vals.intersection(current_id_vals) 
+                    else:
+                        break
+
+            if file_without_col is None:
+                if (id_vals is not None) and (len(file_list_i) > 1):
+                    for file in file_list_i:
+                        not_in_id = set(gtfs[file.removesuffix(".txt")].select(id_col)[id_col].to_list()) - id_vals
+                        if len(not_in_id) > 0:
+                            log += f"The id column {id_col} in {os.path.join(path,file)} has some ids not used elsewere. Excluding the following {id_col} values: \n" 
+                            log += f"{not_in_id} \n" 
+                            # warnings.warn(f"len{not_in_id} {check_id_col} ids in {os.path.join(path,check_id_file)} are not used elsewere and are being excluded.")
+                            gtfs[file.removesuffix(".txt")] = gtfs[file.removesuffix(".txt")].filter(
+                                pl.col(id_col).is_in(id_vals)
+                            )
+                            gtfs_errors[file.removesuffix(".txt")] = gtfs_errors[file.removesuffix(".txt")].join(
+                                gtfs[file.removesuffix(".txt")],on="line_number",how="left"
+                            )
+
+            else:
+                if len(mandatory_files_i) >= 2: 
+                    raise Exception(f"Mandatory column {id_col} not in file {file_without_col}.")
+                else:
+                    if len(mandatory_files_i) == 0:
+                        delete_files_i = [f for f in file_list_i if f not in preferential_files_i]
+                    else:
+                        delete_files_i = [f for f in file_list_i if f not in mandatory_files_i]
+
+                    if len(delete_files_i) > 0:
+                        log += f"Excluding files {[fi for fi in delete_files_i]} as file {file_without_col} does not contain necesary column {id_col}. \n"
+                        for key in delete_files_i:
+                            key = str(key).removesuffix(".txt")
+                            gtfs.pop(key, None)         # remove key if it exists
+                            gtfs_errors.pop(key, None)  # remove key if it exists
 
     basename = os.path.basename(path)
     # Ensure the output folder exists
@@ -849,15 +943,27 @@ def preprocess_gtfs(path,output_folder, mandatory_files = MANDATORY_FILES):
 
     for file_name, df in gtfs_errors.items():
         if len(df) > 0:
-            error_path = os.path.join(output_folder, basename, f"{file_name}_errors.txt")
+            excluded_df = df.filter(pl.col('excluded'))
+            if len(excluded_df) > 0:
+                error_path = os.path.join(output_folder, basename, f"{file_name}_errors.txt")
+                excluded_df.write_csv(
+                    error_path,
+                    separator=",",
+                    quote_char='"',
+                    decimal_comma=False,   # Use '.' for decimals
+                    include_header=True
+                )
+                log += f"Created file {error_path} \n"
+
+            file_log_path = os.path.join(output_folder, basename, f"{file_name}_logs.txt")
             df.write_csv(
-                error_path,
+                file_log_path,
                 separator=",",
                 quote_char='"',
                 decimal_comma=False,   # Use '.' for decimals
                 include_header=True
             )
-            log += f"Created file {error_path} \n"
+            log += f"Created file {file_log_path} \n"
 
     if delete_path is not None:
         shutil.rmtree(delete_path)

@@ -50,7 +50,6 @@ parser.add_argument(
     help='Overwrite all existing files. Default is False.'
 )
 
-
 # Parse all arguments
 args = parser.parse_args()
 
@@ -152,7 +151,7 @@ else:
         file_path = gtfs_checker.unzip(orig_file,processed_gtfs_folder)
 
 if (not overwrite) and os.path.isfile(os.path.join(file_path,"stop_intervals.gpkg")):
-    warnings.warn(f"Not processing {file_path} as stop_intervals.gpkg already exists.") 
+    warnings.warn(f"Skipping {file_path} as stop_intervals.gpkg already exists.") 
 else:
     try:
         gtfs = Feed(
@@ -161,7 +160,7 @@ else:
             start_date=start_date,
             end_date=end_date,
             route_types=all_route_types,
-            check_files=check_files
+            check_files=not check_files
         )
     except Exception as e:
         error_msg = str(e)
@@ -179,7 +178,7 @@ else:
 
     selected_service_intensity = gtfs.get_service_intensity_in_date_range(
         start_date=None, # If None take the feed min date
-        end_date=None, # If None take the feed max date
+        end_date=None, # If one take the feed max date
         date_type=date_type # Could be something like 'holiday', 'businessday', 'non_businessday', or 'monday' to only consider some dates from the range.
     )
     selected_service_intensity = selected_service_intensity.to_pandas()
@@ -293,12 +292,16 @@ else:
         ["parent_station","route_type_simple_int","min_speed"]
     ).unique(
         ["parent_station","mean_interval"],keep='last'
-    ).drop("route_type_simple_int")
+    )
 
     if route_speed_mapping is None: 
         stop_interval_df = stop_interval_df.drop("min_speed")
         
-
+    stop_interval_df = stop_interval_df.join(
+        gtfs.stops.lf.select(['stop_id', 'parent_station']).collect(),
+        on='parent_station',
+        how='right'
+    )
     stop_interval_df = gtfs.add_stop_coords(stop_interval_df)
     stop_interval_df = gtfs.add_route_names(stop_interval_df)
 
