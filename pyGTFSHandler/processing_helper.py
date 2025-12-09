@@ -51,41 +51,39 @@ LEVEL_OF_SERVICES = [
 
 
 def most_frequent_row_index(values, bins=5):
-    """
-    Returns the index (usable with df.iloc) of the row whose value is
-    closest to the median of the most populated histogram bin.
-
-    Parameters:
-        values (array-like): Numeric values (e.g., from a column).
-        bins (int): Number of histogram bins to use.
-
-    Returns:
-        int: Index (iloc-style) of the most typical row.
-    """
     values = np.asarray(values)
 
-    counts, bin_edges = np.histogram(values, bins=bins)
+    # thresholding
+    threshold = 0.5 * np.percentile(values, 90)
+    cleaned = values.copy()
+    cleaned[cleaned < threshold] = 0
+    nonzero_mask = cleaned > 0
+    nz_vals = cleaned[nonzero_mask]
+    nz_idx = np.where(nonzero_mask)[0]
 
-    # Most frequent bin
-    max_bin_idx = np.argmax(counts)
-    bin_start = bin_edges[max_bin_idx]
-    bin_end = bin_edges[max_bin_idx + 1]
-
-    # Mask for values inside the most frequent bin
-    in_bin_mask = (values >= bin_start) & (values <= bin_end)
-    in_bin_indices = np.where(in_bin_mask)[0]
-
-    if len(in_bin_indices) == 0:
+    if len(nz_vals) == 0:
         return None
 
-    # Median of values inside the bin
-    median_in_bin = np.mean(values[in_bin_indices])
+    counts, edges = np.histogram(nz_vals, bins=bins)
 
-    # Find the index of the value closest to the median
-    closest_idx_in_bin = np.argmin(np.abs(values[in_bin_indices] - median_in_bin))
-    row_index = in_bin_indices[closest_idx_in_bin]
+    max_bin = np.argmax(counts)
+    start, end = edges[max_bin], edges[max_bin+1]
 
-    return int(row_index)
+    # match numpy.histogram logic:
+    if max_bin < bins - 1:
+        in_bin = (nz_vals >= start) & (nz_vals < end)
+    else:
+        in_bin = (nz_vals >= start) & (nz_vals <= end)
+
+    vals_in = nz_vals[in_bin]
+    idx_in = nz_idx[in_bin]
+
+    if len(vals_in) == 0:
+        return None
+
+    median = np.mean(vals_in)
+    closest = np.argmin(np.abs(vals_in - median))
+    return int(idx_in[closest])
 
 
 def assign_service_quality_to_interval(interval, route_type, service_matrix=SERVICE_MATRIX):
