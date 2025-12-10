@@ -97,9 +97,13 @@ class Routes:
                     .alias("extended_route_type"),
             )
             .with_columns(
-                pl.col("route_type")
+                pl.col("extended_route_type")
                     .map_elements(gtfs_checker.extended_to_standard_route_type,pl.Int64)
                     .alias("route_type"),
+            )
+            .with_columns(
+                pl.col("route_type").fill_null(-1),
+                pl.col("extended_route_type").fill_null(-1)
             )
             .with_columns(
                 pl.col("route_type")

@@ -391,7 +391,7 @@ def extended_to_standard_route_type(route_type: int) -> int | None:
     """
 
     # --- If already a standard GTFS type, return unchanged ---
-    if route_type in {0, 1, 2, 3, 4, 5, 6, 7}:
+    if route_type in {-1, 0, 1, 2, 3, 4, 5, 6, 7}:
         return route_type
 
     # --- Extra custom values you asked to convert ---
@@ -469,6 +469,7 @@ def route_type_to_str(route_type):
         raise Exception(f"route_type must be an int, got {type(route_type)}")
 
     mapping = {
+        -1: "None",
         0: "tram",
         1: "subway",
         2: "rail",

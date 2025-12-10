@@ -92,11 +92,23 @@ if not isinstance(route_type_mapping,dict):
     route_type_mapping = {'any':route_type_mapping}
 
 for k in route_type_mapping:
-    route_types = route_type_mapping[k]
-    if (route_types is None) or ('all' == route_types) or (None in route_types) or ('all' in route_types):
-        route_types = None 
+    route_types = []
+    if route_type_mapping[k] is None:
+        route_types = 'all'
+    elif route_type_mapping[k] == 'all':
+        route_types = 'all'
+    elif isinstance(route_type_mapping,(str,int)):
+        route_types = int(route_type_mapping[k])
     else:
-        route_types = list(np.unique([int(i) for i in route_types]))
+        for i in route_type_mapping[k]:
+            if (i is None):
+                route_types = 'all'
+                break
+            elif route_types == 'all':
+                route_types = 'all'
+                break  
+            else:
+                route_types.append(int(i))
 
     route_type_mapping[k] = route_types
 
