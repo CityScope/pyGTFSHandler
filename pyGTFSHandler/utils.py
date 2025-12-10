@@ -459,3 +459,209 @@ def compare_paths(path1: str, path2: str) -> bool:
 #         .alias("geohash")
 #     )
 #     return df
+
+
+def time_displacement(gtfs_lf,secs_disp):
+    gtfs_lf = gtfs_lf.with_columns(
+        (pl.col("shape_time_traveled") + secs_disp).alias("target_time")
+    )
+    gtfs_lf = gtfs_lf.with_columns(
+        pl.when(
+            pl.col("target_time") < 0
+        ).then(
+            pl.lit(0)
+        ).otherwise(
+            pl.col("target_time")
+        ).alias("target_time"),
+    )
+    gtfs_lf = gtfs_lf.with_columns(
+        pl.when(
+            pl.col("target_time") > pl.col("shape_total_travel_time")
+        ).then(
+            pl.col("shape_total_travel_time")
+        ).otherwise(
+            pl.col("target_time")
+        ).alias("target_time"),
+    )
+    gtfs_lf = gtfs_lf.sort(["trip_id", "shape_time_traveled"])
+    gtfs_lf = gtfs_lf.join_asof(
+        gtfs_lf.select([
+            "trip_id",
+            pl.col("shape_time_traveled").alias("t_lb"),
+            pl.col("shape_dist_traveled").alias("d_lb"),
+        ]),
+        left_on="target_time",
+        right_on="t_lb",
+        by="trip_id",
+        strategy="backward",
+    ).sort(["trip_id", "shape_time_traveled"])
+
+    gtfs_lf = gtfs_lf.join_asof(
+        gtfs_lf.select([
+            "trip_id",
+            pl.col("shape_time_traveled").alias("t_ub"),
+            pl.col("shape_dist_traveled").alias("d_ub"),
+        ]),
+        left_on="target_time",
+        right_on="t_ub",
+        by="trip_id",
+        strategy="forward",
+    )
+
+    gtfs_lf = gtfs_lf.with_columns(
+        pl.when(pl.col("d_lb").is_null())
+            .then(
+                pl.lit(None)
+            ).otherwise(
+                pl.col("t_lb")
+            ).alias("t_lb"),
+        pl.when(pl.col("t_lb").is_null())
+            .then(
+                pl.lit(None)
+            ).otherwise(
+                pl.col("d_lb")
+            ).alias("d_lb"),
+        pl.when(pl.col("d_ub").is_null())
+            .then(
+                pl.lit(None)
+            ).otherwise(
+                pl.col("t_ub")
+            ).alias("t_ub"),
+        pl.when(pl.col("t_ub").is_null())
+            .then(
+                pl.lit(None)
+            ).otherwise(
+                pl.col("d_ub")
+            ).alias("d_ub"),
+    )
+
+    gtfs_lf = gtfs_lf.with_columns(
+        pl.when(
+            pl.col("target_time") == 0
+        ).then(
+            pl.col("shape_time_traveled")
+        ).otherwise(
+            pl.col("t_ub")
+        ).alias("t_ub"),
+        pl.when(
+            pl.col("target_time") == pl.col("shape_total_travel_time")
+        ).then(
+            pl.col("shape_time_traveled")
+        ).otherwise(
+            pl.col("t_lb")
+        ).alias("t_lb"),
+        pl.when(
+            pl.col("target_time") == 0
+        ).then(
+            pl.col("shape_dist_traveled")
+        ).otherwise(
+            pl.col("d_ub")
+        ).alias("d_ub"),
+        pl.when(
+            pl.col("target_time") == pl.col("shape_total_travel_time")
+        ).then(
+            pl.col("shape_dist_traveled")
+        ).otherwise(
+            pl.col("d_lb")
+        ).alias("d_lb"),
+    )
+    
+    gtfs_lf = gtfs_lf.with_columns(
+        pl.when(pl.col("d_lb").is_null())
+            .then(
+                pl.col("shape_dist_traveled")
+            ).otherwise(
+                pl.col("d_lb")
+            ).alias("d_lb"),
+        pl.when(pl.col("t_lb").is_null())
+            .then(
+                pl.col("shape_time_traveled")
+            ).otherwise(
+                pl.col("t_lb")
+            ).alias("t_lb"),
+        pl.when(pl.col("d_ub").is_null())
+            .then(
+                pl.col("shape_dist_traveled")
+            ).otherwise(
+                pl.col("d_ub")
+            ).alias("d_ub"),
+        pl.when(pl.col("t_ub").is_null())
+            .then(
+                pl.col("shape_time_traveled")
+            ).otherwise(
+                pl.col("t_ub")
+            ).alias("t_ub"),
+    )
+
+    gtfs_lf = gtfs_lf.with_columns(
+        # Calculate "time"
+        (
+            pl.when(pl.col("t_lb").is_null())
+            .then(pl.lit(None))
+            .otherwise(
+                pl.when(pl.col("t_ub").is_null())
+                    .then(pl.lit(None))
+                    .otherwise(pl.col("target_time") - pl.col("shape_time_traveled"))
+            )
+        ).abs().alias("time_weight"),
+        
+        # Calculate "distance"
+        (
+            pl.when(pl.col("d_lb").is_null())
+            .then(pl.lit(None))
+            .otherwise(
+                pl.when(pl.col("d_ub").is_null())
+                    .then(pl.lit(None))
+                    .otherwise(
+                        (
+                            pl.col("d_lb") + 
+                            (
+                                (pl.col("d_ub") - pl.col("d_lb")) / 
+                                (pl.col("t_ub") - pl.col("t_lb"))
+                            ) * 
+                            (
+                                pl.col("target_time") - pl.col("t_lb")
+                            )
+                        ) - pl.col("shape_dist_traveled")
+                    )
+            )
+        ).abs().alias("distance_weight")
+    )#.drop(["d_lb","d_ub","t_lb","t_ub", "target_time"])
+
+    gtfs_lf = gtfs_lf.with_columns(
+        pl.when(
+            pl.col("time_weight").is_infinite() | pl.col("time_weight").is_nan()
+        ).then(
+            pl.lit(None)
+        ).otherwise(
+            pl.col("time_weight")
+        ).alias("time_weight"),
+
+        pl.when(
+            pl.col("distance_weight").is_infinite() | pl.col("distance_weight").is_nan()
+        ).then(
+            pl.lit(None)
+        ).otherwise(
+            pl.col("distance_weight")
+        ).alias("distance_weight"),
+    )
+
+    gtfs_lf = gtfs_lf.with_columns(
+        pl.when(
+            pl.col("time_weight").is_null()
+        ).then(
+            pl.lit(None)
+        ).otherwise(
+            pl.col("distance_weight")
+        ).alias("distance_weight"),
+        pl.when(
+            pl.col("distance_weight").is_null()
+        ).then(
+            pl.lit(None)
+        ).otherwise(
+            pl.col("time_weight")
+        ).alias("time_weight")
+    )
+
+    return gtfs_lf
+

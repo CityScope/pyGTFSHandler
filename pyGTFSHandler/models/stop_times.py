@@ -70,7 +70,7 @@ all stop times, including those generated from frequencies, ready for advanced a
 
 # A constant used for rounding trip travel times when generating shape_ids.
 # It groups trips with travel times within a 5-minute (300s) window.
-TRIP_ROUND_TIME: int = 600
+TRIP_ROUND_TIME: int = 300
 SECS_PER_DAY: int = 86400
 
 

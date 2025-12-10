@@ -50,7 +50,7 @@ the direction with less remaining stops
 - TODO finish dealing with shape_id and shapes.txt
 - TODO If in a trip_id a stop_id is repeated divide it into 2 trip ids check if this is really needed
 - TODO Check service intensity results. Sometimes (Valdemoro, Madrid) there are strange peaks in the plot. 
-- TODO most_frequent_row_index in processing_helper selects the null or 0 or very low service intensity if this is the majority. So discard these values.
+- TODO Computing speed if service passes to next day the first stops of the next day are needed. Otherwise there are trips with one stop as the rest happens the next day.
 """
 
 """TODO: revise filter_by_time_range with frequencies
@@ -1696,7 +1696,7 @@ class Feed:
             at="parent_station",
             how="mean",
             direction="both",
-            n_stops=1
+            time_step=15
         ):
         gtfs_lf = self.filter(
             date=date,
@@ -1710,98 +1710,55 @@ class Feed:
         gtfs_lf = gtfs_lf.filter(pl.col(at).is_not_null())
 
         if direction == "both":
-            backwards_stops = n_stops 
-            forward_stops = n_stops
+            forward = utils.time_displacement(gtfs_lf,secs_disp=time_step*60)
+            forward = forward.rename({'time_weight':'time_weight_f','distance_weight':'distance_weight_f'})
+            forward = forward.with_columns(
+                pl.col("time_weight_f").fill_null(0),
+                pl.col("distance_weight_f").fill_null(0),
+            )
+            backward = utils.time_displacement(gtfs_lf,secs_disp=-time_step*60)
+            backward = backward.rename({'time_weight':'time_weight_b','distance_weight':'distance_weight_b'})
+            backward = backward.with_columns(
+                pl.col("time_weight_b").fill_null(0),
+                pl.col("distance_weight_b").fill_null(0),
+            )
+            gtfs_lf = gtfs_lf.join(forward.select(['trip_id','stop_id','time_weight_f','distance_weight_f']),on=['trip_id','stop_id'],how='left')
+            gtfs_lf = gtfs_lf.join(backward.select(['trip_id','stop_id','time_weight_b','distance_weight_b']),on=['trip_id','stop_id'],how='left')
+            gtfs_lf = gtfs_lf.with_columns(
+                (pl.col("time_weight_f") + pl.col("time_weight_b")).alias("time_weight"),
+                (pl.col("distance_weight_f") + pl.col("distance_weight_b")).alias("distance_weight"),
+            )
         elif direction == "forward":
-            backwards_stops = 0 
-            forward_stops = n_stops
+            forward = utils.time_displacement(gtfs_lf,secs_disp=time_step*60)
+            forward = forward.with_columns(
+                pl.col("time_weight").fill_null(0),
+                pl.col("distance_weight").fill_null(0),
+            )
+            gtfs_lf = gtfs_lf.join(forward.select(['trip_id','stop_id','time_weight','distance_weight']),on=['trip_id','stop_id'],how='left')
         elif direction == "backward":
-            backwards_stops = n_stops 
-            forward_stops = 0
+            backward = utils.time_displacement(gtfs_lf,secs_disp=-time_step*60)
+            backward = backward.with_columns(
+                pl.col("time_weight").fill_null(0),
+                pl.col("distance_weight").fill_null(0),
+            )
+            gtfs_lf = gtfs_lf.join(backward.select(['trip_id','stop_id','time_weight','distance_weight']),on=['trip_id','stop_id'],how='left')
         else:
             raise Exception(f"Direction {direction} not  implemented. Only 'both', 'forward' and 'backward' are valid.")
 
-        gtfs_lf = (
-            gtfs_lf
-            .sort(["trip_id", "stop_sequence"])
-            .with_columns(
-                (
-                    pl.col("shape_dist_traveled")
-                        .shift(forward_stops)
-                        .over("trip_id") -
-                    pl.col("shape_dist_traveled")
-                        .shift(-backwards_stops)
-                        .over("trip_id")
-                    
-                ).alias("distance_weight"),
-                (
-                    pl.col("departure_time")
-                        .shift(forward_stops)
-                        .over("trip_id") - 
-                    pl.col("departure_time")
-                        .shift(-backwards_stops)
-                        .over("trip_id")
-                ).alias("time_weight")
-            )
-            .with_columns(
-                pl.when(
-                    (
-                        pl.col("stop_sequence").max().over("trip_id") - 
-                        pl.col("stop_sequence").min().over("trip_id") 
-                    ) < forward_stops 
-                ).then(
-                    pl.col("shape_total_distance")
-                ).otherwise(
-                    pl.col("distance_weight")
-                ).alias("distance_weight"),
-                pl.when(
-                    (
-                        pl.col("stop_sequence").max().over("trip_id") - 
-                        pl.col("stop_sequence").min().over("trip_id") 
-                    ) < forward_stops 
-                ).then(
-                    pl.col("shape_total_travel_time")
-                ).otherwise(
-                    pl.col("time_weight")
-                ).alias("time_weight")
-            )
-            .with_columns(
-                pl.when(
-                    (
-                        pl.col("stop_sequence").max().over("trip_id") - 
-                        pl.col("stop_sequence").min().over("trip_id") 
-                    ) < backwards_stops 
-                ).then(
-                    pl.col("shape_total_distance")
-                ).otherwise(
-                    pl.col("distance_weight")
-                ).alias("distance_weight"),
-                pl.when(
-                    (
-                        pl.col("stop_sequence").max().over("trip_id") - 
-                        pl.col("stop_sequence").min().over("trip_id") 
-                    ) < backwards_stops
-                ).then(
-                    pl.col("shape_total_travel_time")
-                ).otherwise(
-                    pl.col("time_weight")
-                ).alias("time_weight"),
-            )
-            .with_columns(
-                pl.col("distance_weight").forward_fill().over("trip_id").alias("distance_weight"),
-                pl.col("time_weight").forward_fill().over("trip_id").alias("time_weight"),
-            )
-            .with_columns(
-                pl.col("distance_weight").backward_fill().over("trip_id").alias("distance_weight"),
-                pl.col("time_weight").backward_fill().over("trip_id").alias("time_weight"),
-            )
-            .with_columns(
+        gtfs_lf = gtfs_lf.with_columns(
                 (
                     (pl.col("distance_weight") / 1000) / (pl.col("time_weight") / 3600)
                 ).alias("speed")
+            ).with_columns(
+                pl.when(
+                    pl.col("speed").is_infinite()
+                ).then(
+                    None
+                ).otherwise(
+                    pl.col("speed")
+                ).alias("speed"),  
             )
-        )
-
+        
         if how == "max":
             gtfs_lf = gtfs_lf.with_columns(
                 pl.col("speed").fill_null(float('-inf'))
@@ -1914,11 +1871,30 @@ class Feed:
         if by == "route_id":
             if "route_ids" in gtfs_lf.collect_schema().names():
                 gtfs_lf = gtfs_lf.drop("route_ids")
+
         else: 
             if how != "mean": 
                 if "route_id" not in gtfs_lf.collect_schema().names():
                     gtfs_lf = gtfs_lf.rename({"route_ids":"route_id"})
 
+        gtfs_lf = gtfs_lf.with_columns(
+            pl.when(pl.col("speed").is_infinite() | pl.col("speed").is_nan())
+            .then(pl.lit(None))
+            .otherwise(pl.col("speed"))
+            .alias("speed")
+        )
+        
+        gtfs_lf = gtfs_lf.with_columns(
+            pl.when(
+                pl.col("speed").is_null()
+            ).then(pl.lit(None)).otherwise(
+                pl.col("time_weight")).alias("time_weight"),
+            pl.when(
+                pl.col("speed").is_null()
+            ).then(pl.lit(None)).otherwise(
+                pl.col("distance_weight")).alias("distance_weight")
+        )
+        
         return gtfs_lf.filter(pl.col("isin_aoi") == True).drop("isin_aoi").collect()
 
     def get_mean_interval_at_edges(            
