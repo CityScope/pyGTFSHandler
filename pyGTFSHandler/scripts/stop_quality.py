@@ -36,7 +36,7 @@ parser.add_argument('--route_type_mapping', type=str, default=json.dumps({
     'rail':[1,2]
 }), help='JSON string mapping route types')
 parser.add_argument('--route_speed_mapping', type=str, default=json.dumps([0,10,15,20,25,30]), help='JSON string mapping route types and speeds')
-parser.add_argument('--n_stops_speeds', type=int, default=5)
+parser.add_argument('--time_step_speeds', type=int, default=5)
 parser.add_argument('--speed_direction', type=str, default="both", help='Direction to compute speed: forward, backward, both')
 parser.add_argument(
     '--fast_check',
@@ -145,7 +145,7 @@ if isinstance(route_speed_mapping,list):
         k:route_speed_mapping for k in route_type_mapping.keys()
     }
 
-n_stops_speeds = args.n_stops_speeds
+time_step_speeds = args.time_step_speeds
 speed_direction = args.speed_direction
 
 
@@ -216,7 +216,7 @@ else:
             at = 'parent_station', # Compute speed for every 'parent_station' 'stop_id' or 'route_id'
             how="mean", # How to group individual trip speeds 'mean' 'max' or 'min'
             direction=speed_direction, # Compute speed in 'forward' 'backward' or 'both' directions (walking n_stops in direction)
-            n_stops=n_stops_speeds, # Number of stops to pick to compute the speed
+            time_step=time_step_speeds, # Number of stops to pick to compute the speed
         )
         if isinstance(stop_speed_df,pl.DataFrame):
             stop_speed_df = stop_speed_df.lazy()
@@ -224,8 +224,7 @@ else:
         gtfs_lf = gtfs_lf.join(stop_speed_df.select(['parent_station','route_id','speed']),on=['parent_station','route_id'],how='left')
 
     unique_route_types = gtfs.lf.select("route_type").unique().collect()['route_type'].to_list()
-    valid_keys  = []
-
+    invalid_keys  = []
     for k in route_type_mapping.keys():
         route_types = route_type_mapping[k]
         if (route_types is None):
@@ -233,12 +232,14 @@ else:
 
         intersection = set(route_types) & set(unique_route_types)
         if not intersection:
-            route_type_mapping[k] = None
+            invalid_keys.append(k)
         else:
             route_type_mapping[k] = sorted(list(intersection))
             
+    for k in invalid_keys:
+        del route_type_mapping[k] 
+        
     route_type_mapping = check_route_type_mapping(route_type_mapping) 
-
     stop_interval_df = []
     route_type_simple_int = -1
     for route_type_simple in route_type_mapping.keys():
@@ -303,8 +304,8 @@ else:
     stop_interval_df = stop_interval_df.sort(
         ["parent_station","route_type_simple_int","min_speed"]
     ).unique(
-        ["parent_station","mean_interval"],keep='last'
-    )
+        ["parent_station","route_type_simple_int", "mean_interval"],keep='last'
+    ) # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! You could take route_type_simple_int out of the unique to have only one route type if some less good types include better ones (bus includes rail)
 
     if route_speed_mapping is None: 
         stop_interval_df = stop_interval_df.drop("min_speed")
