@@ -49,10 +49,28 @@ parser.add_argument(
     action='store_true',     # sets overwrite = True when used
     help='Overwrite all existing files. Default is False.'
 )
-
+parser.add_argument(
+    '--params_file',
+    type=str,
+    default=None,
+    help='Path to JSON file with all parameters (alternative to passing each argument individually)'
+)
 # Parse all arguments
 args = parser.parse_args()
 
+# If params_file is provided, override args with the JSON content
+if args.params_file is not None:
+    with open(args.params_file) as f:
+        params = json.load(f)
+
+    # Override args attributes
+    for key, value in params.items():
+        if hasattr(args, key):
+            setattr(args, key, value)
+
+    # Remove required constraint for orig_file when using JSON
+    if not hasattr(args, 'orig_file') or args.orig_file is None:
+        raise ValueError("Parameter 'orig_file' is required in the JSON file")
 
 # -------------------------
 # Convert to usable Python variables
