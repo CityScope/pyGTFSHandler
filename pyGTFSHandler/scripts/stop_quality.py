@@ -19,7 +19,7 @@ import warnings
 parser = argparse.ArgumentParser(description="Process GTFS feed.")
 
 # Mandatory
-parser.add_argument('--orig_file', required=True, help='Path to original GTFS file')
+parser.add_argument('--orig_file', required=False, help='Path to original GTFS file')
 
 # Optional arguments with defaults
 parser.add_argument('--processed_gtfs_folder', default=None, help='Folder for processed GTFS')
@@ -68,9 +68,9 @@ if args.params_file is not None:
         if hasattr(args, key):
             setattr(args, key, value)
 
-    # Remove required constraint for orig_file when using JSON
-    if not hasattr(args, 'orig_file') or args.orig_file is None:
-        raise ValueError("Parameter 'orig_file' is required in the JSON file")
+# Remove required constraint for orig_file when using JSON
+if not hasattr(args, 'orig_file') or args.orig_file is None:
+    raise ValueError("Parameter 'orig_file' is required")
 
 # -------------------------
 # Convert to usable Python variables
