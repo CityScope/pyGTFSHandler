@@ -101,14 +101,19 @@ end_date = datetime.strptime(args.end_date, "%Y-%m-%d").date() if args.end_date 
 date_type = args.date_type
 stop_group_distance = args.stop_group_distance
 
-def ensure_dict(value):
-    """Return a dict: load from JSON string if needed, otherwise return as-is."""
-    if isinstance(value, dict):
+def ensure_dict_or_list(value):
+    """
+    Return a dict or list:
+    - If dict or list, return as-is
+    - If string, load from JSON
+    - Otherwise, raise TypeError
+    """
+    if isinstance(value, (dict, list)):
         return value
     elif isinstance(value, str):
         return json.loads(value)
     else:
-        raise TypeError(f"Expected dict or JSON string, got {type(value).__name__}")
+        raise TypeError(f"Expected dict, list, or JSON string, got {type(value).__name__}")
 
 def check_route_type_mapping(route_type_mapping):
     seen_values = set()
