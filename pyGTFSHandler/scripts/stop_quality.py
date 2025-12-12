@@ -101,8 +101,31 @@ end_date = datetime.strptime(args.end_date, "%Y-%m-%d").date() if args.end_date 
 date_type = args.date_type
 stop_group_distance = args.stop_group_distance
 
+def ensure_dict(value):
+    """Return a dict: load from JSON string if needed, otherwise return as-is."""
+    if isinstance(value, dict):
+        return value
+    elif isinstance(value, str):
+        return json.loads(value)
+    else:
+        raise TypeError(f"Expected dict or JSON string, got {type(value).__name__}")
+
+def check_route_type_mapping(route_type_mapping):
+    seen_values = set()
+    new_mapping = {}
+
+    for k, v in reversed(list(route_type_mapping.items())):
+        v_tuple = tuple(v) if isinstance(v, list) else v
+        if v_tuple not in seen_values:
+            new_mapping[k] = v
+            seen_values.add(v_tuple)
+
+    # Reverse again to restore original order
+    new_mapping = dict(reversed(list(new_mapping.items())))
+    return new_mapping
+
 # JSON strings to Python dicts
-route_type_mapping = json.loads(args.route_type_mapping)
+route_type_mapping = ensure_dict(args.route_type_mapping)
 if route_type_mapping is None:
     route_type_mapping = {'any':'all'}
 
@@ -130,20 +153,6 @@ for k in route_type_mapping:
 
     route_type_mapping[k] = route_types
 
-def check_route_type_mapping(route_type_mapping):
-    seen_values = set()
-    new_mapping = {}
-
-    for k, v in reversed(list(route_type_mapping.items())):
-        v_tuple = tuple(v) if isinstance(v, list) else v
-        if v_tuple not in seen_values:
-            new_mapping[k] = v
-            seen_values.add(v_tuple)
-
-    # Reverse again to restore original order
-    new_mapping = dict(reversed(list(new_mapping.items())))
-    return new_mapping
-
 route_type_mapping = check_route_type_mapping(route_type_mapping) 
 
 all_route_types = []
@@ -157,7 +166,7 @@ for k in route_type_mapping:
 if ('all' in all_route_types) or (None in all_route_types): 
     all_route_types = 'all'
 
-route_speed_mapping = json.loads(args.route_speed_mapping)
+route_speed_mapping = ensure_dict(args.route_speed_mapping)
 if isinstance(route_speed_mapping,list):
     route_speed_mapping = {
         k:route_speed_mapping for k in route_type_mapping.keys()
