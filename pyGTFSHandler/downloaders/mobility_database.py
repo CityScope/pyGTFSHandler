@@ -10,6 +10,7 @@ import requests
 import geopandas as gpd
 from shapely.geometry import Point, Polygon, MultiPolygon
 from tqdm import tqdm
+import warnings 
 
 from .. import gtfs_checker
 
@@ -415,12 +416,28 @@ class MobilityDatabaseClient:
 
             # Normalize and truncate filenames
             max_chars = 10
-            feed_id_short = feed_id[:max_chars]
-            feed_name_short = feed_name[:max_chars]
-            feed_provider_short = feed_provider[:max_chars]
+            if isinstance(feed_id,str):
+                feed_id_short = feed_id[:max_chars]
+            else:
+                feed_id_short = ""
+
+            if isinstance(feed_name,str): 
+                feed_name_short = feed_name[:max_chars]
+            else:
+                feed_name_short = ""
+
+            if isinstance(feed_provider,str):   
+                feed_provider_short = feed_provider[:max_chars]
+            else:
+                feed_provider_short = ""
+
             feed_filename = gtfs_checker.normalize_string(
                 f"{feed_id_short}_{feed_name_short}_{feed_provider_short}"
             )
+
+            if feed_filename == "__":
+                warnings.warn(f"Skipping. Invalid filename. No 'id' 'feed_name' or 'provider' for feed {feed}")
+                continue
 
             zip_path = os.path.join(download_folder, f"{feed_filename}.zip")
             folder_path = os.path.join(download_folder, feed_filename)
