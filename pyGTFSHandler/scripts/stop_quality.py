@@ -101,7 +101,7 @@ end_date = datetime.strptime(args.end_date, "%Y-%m-%d").date() if args.end_date 
 date_type = args.date_type
 stop_group_distance = args.stop_group_distance
 
-def ensure_dict(value):
+def ensure_dict_or_list(value):
     """
     Return a dict or list:
     - If dict or list, return as-is
@@ -130,7 +130,7 @@ def check_route_type_mapping(route_type_mapping):
     return new_mapping
 
 # JSON strings to Python dicts
-route_type_mapping = ensure_dict(args.route_type_mapping)
+route_type_mapping = ensure_dict_or_list(args.route_type_mapping)
 if route_type_mapping is None:
     route_type_mapping = {'any':'all'}
 
@@ -171,7 +171,7 @@ for k in route_type_mapping:
 if ('all' in all_route_types) or (None in all_route_types): 
     all_route_types = 'all'
 
-route_speed_mapping = ensure_dict(args.route_speed_mapping)
+route_speed_mapping = ensure_dict_or_list(args.route_speed_mapping)
 if isinstance(route_speed_mapping,list):
     route_speed_mapping = {
         k:route_speed_mapping for k in route_type_mapping.keys()
