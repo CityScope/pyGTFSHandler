@@ -101,7 +101,7 @@ end_date = datetime.strptime(args.end_date, "%Y-%m-%d").date() if args.end_date 
 date_type = args.date_type
 stop_group_distance = args.stop_group_distance
 
-def ensure_dict_or_list(value):
+def ensure_dict(value):
     """
     Return a dict or list:
     - If dict or list, return as-is
