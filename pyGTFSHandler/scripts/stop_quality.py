@@ -59,13 +59,19 @@ parser.add_argument(
 args = parser.parse_args()
 
 # If params_file is provided, override args with the JSON content
-if args.params_file is not None:
+if args.params_file:
+    args.check_files = True
+    args.overwrite = False
     with open(args.params_file) as f:
         params = json.load(f)
 
-    # Override args attributes
     for key, value in params.items():
-        if hasattr(args, key):
+        if key == "fast_check":
+            if value:
+                args.check_files = False
+        elif key == "overwrite":
+            args.overwrite = True
+        elif key != "check_files" and hasattr(args, key):
             setattr(args, key, value)
 
 # Remove required constraint for orig_file when using JSON
