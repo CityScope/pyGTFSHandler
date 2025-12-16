@@ -515,6 +515,11 @@ def try_parse_line(line: str, config: Dict[str, Any], expected_cols: int|None = 
             return None, error, fix, True
     
     if schema is not None and header is not None and parsed is not None:
+        if len(header) != len(parsed):
+            error += f"Len of parsed row {parsed} mismatch with len of header {header}. parsed: {parsed} header: {header}. "
+            fix += "Excluded "
+            return None, error, fix, True
+        
         for col_idx, col_name in enumerate(header):
             if col_name not in schema:
                 continue
@@ -604,6 +609,7 @@ def try_parse_line(line: str, config: Dict[str, Any], expected_cols: int|None = 
                 parsed[col_idx] = None 
             else:
                 parsed[col_idx] = str(parsed_val)
+
 
     if error == "":
         error = None 
