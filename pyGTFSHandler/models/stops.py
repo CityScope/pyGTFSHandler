@@ -160,7 +160,8 @@ class Stops:
         )
         lf = lf.filter(pl.col("stop_id").is_not_null() & (pl.col("stop_id") != ""))
         lf = lf.filter(pl.col("stop_lat").is_not_null() & pl.col("stop_lon").is_not_null())
-        
+        lf = lf.filter(pl.col("stop_lat").is_finite() & pl.col("stop_lon").is_finite())
+
         return lf
 
     def filter_by_aoi(

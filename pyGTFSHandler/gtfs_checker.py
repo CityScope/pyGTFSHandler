@@ -791,7 +791,7 @@ def preprocess_gtfs(path,output_folder, mandatory_files = MANDATORY_FILES, file_
             if ext == ".txt" or ext == ".csv":  
                 file_path = os.path.join(root, file_name + ext)
             else:
-                log += f"Can't read file {file_path}. Not a text file. \n"
+                log += f"Can't read file {os.path.join(root, file_name)}. Not a text file. \n"
                 continue
 
             if (file_name + ".txt") not in IMPLEMENTED_PARSERS:
@@ -801,19 +801,39 @@ def preprocess_gtfs(path,output_folder, mandatory_files = MANDATORY_FILES, file_
                 shutil.copy2(file_path, os.path.join(output_folder,basename,file_name + '.txt'))
                 log += f"File {file_name + ext} has no parser. Copying directly to the output folder. \n"
                 continue
+            
             try:
                 content, errors = validate_and_load_csv(file_path,header=True)
-                if (len(content) == 0) and (file_name + ".txt" in mandatory_file_list):
-                    warnings.warn(f"File {os.path.join(path,file_path)} is empty")
-                    log += f"File {os.path.join(path,file_path)} is empty. \n"
-
-                gtfs[file_name] = content 
-                gtfs_errors[file_name] = errors 
             except Exception as e:
                 log += f"Error reading file {file_path}. {e}. \n"
                 if (file_name + ".txt") in mandatory_file_list:
                     print(log)
                     raise Exception(f"Error reading file {os.path.join(path,file_path)}. {e}. \n")
+                
+                continue
+
+            if (len(content) == 0) and (file_name + ".txt" in mandatory_file_list):
+                excluded_df = errors.filter(pl.col('excluded'))
+                if len(excluded_df) > 0:
+                    basename = os.path.basename(path)
+                    # Ensure the output folder exists
+                    os.makedirs(os.path.join(output_folder, basename), exist_ok=True)
+                    error_path = os.path.join(output_folder, basename, f"{file_name}_errors.txt")
+                    excluded_df.write_csv(
+                        error_path,
+                        separator=",",
+                        quote_char='"',
+                        decimal_comma=False,   # Use '.' for decimals
+                        include_header=True
+                    )
+                log += f"Created file {error_path} \n"
+                print(log)
+                raise Exception(f"File {os.path.join(path,file_path)} is empty")
+                # warnings.warn(f"File {os.path.join(path,file_path)} is empty")
+                # log += f"File {os.path.join(path,file_path)} is empty. \n"
+
+            gtfs[file_name] = content 
+            gtfs_errors[file_name] = errors 
 
     for i in range(len(file_pairs)):
         file_list_i = set(file_pairs[i]['files'])

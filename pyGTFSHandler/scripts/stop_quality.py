@@ -226,13 +226,26 @@ else:
             # Re-raise unexpected exceptions with full traceback
             raise
 
-    selected_service_intensity = gtfs.get_service_intensity_in_date_range(
-        start_date=None, # If None take the feed min date
-        end_date=None, # If one take the feed max date
-        date_type=date_type # Could be something like 'holiday', 'businessday', 'non_businessday', or 'monday' to only consider some dates from the range.
-    )
+    try: 
+        selected_service_intensity = gtfs.get_service_intensity_in_date_range(
+            start_date=None, # If None take the feed min date
+            end_date=None, # If one take the feed max date
+            date_type=date_type # Could be something like 'holiday', 'businessday', 'non_businessday', or 'monday' to only consider some dates from the range.
+        )
+    except Exception as e:
+        warnings.warn(f"date_type='{date_type}' failed ({e}). Falling back to date_type=None")
+
+        selected_service_intensity = gtfs.get_service_intensity_in_date_range(
+            start_date=None,
+            end_date=None,
+            date_type=None
+        )
+
     selected_service_intensity = selected_service_intensity.to_pandas()
     idx = processing_helper.most_frequent_row_index(selected_service_intensity['service_intensity'])
+    if idx is None:
+        raise Exception(f"No valid service intensity in {selected_service_intensity}")
+    
     selected_day = selected_service_intensity.iloc[idx]['date'].to_pydatetime()
 
     gtfs_lf = gtfs.filter(

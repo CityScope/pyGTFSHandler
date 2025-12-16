@@ -71,6 +71,15 @@ class Shapes:
         # Calculate cumulative mean latitude and longitude including the current stop.
         # cum_sum / n_stops gives running average for each shape_id group.
 
+        stop_shapes = stop_shapes.with_columns(
+                pl.col("shape_pt_lat").cast(float,strict=False),
+                pl.col("shape_pt_lon").cast(float,strict=False),
+                pl.col("stop_sequence").cast(int,strict=False),
+        ).dropna(["shape_pt_lat","shape_pt_lon", "stop_sequence"]).filter(
+            pl.col("shape_pt_lat").is_finite() &
+            pl.col("shape_pt_lon").is_finite()
+        )
+
         stop_shapes = (
             stop_shapes.sort(["shape_id", "stop_sequence"], descending=True)
             .with_columns(
@@ -234,9 +243,20 @@ class Shapes:
                 {
                     "stop_lat": "shape_pt_lat",
                     "stop_lon": "shape_pt_lon",
+                    "stop_sequence": "shape_pt_sequence"
                 }
             )
-            .with_columns(pl.col("stop_sequence").alias("shape_pt_sequence"))
+            .with_columns(
+                pl.col("shape_pt_lat").cast(float,strict=False),
+                pl.col("shape_pt_lon").cast(float,strict=False),
+                pl.col("shape_pt_sequence").cast(int,strict=False),
+            )
+            .dropna(["shape_pt_lat","shape_pt_lon","shape_pt_sequence"])
+            .filter(
+                pl.col("shape_pt_lat").is_finite() &
+                pl.col("shape_pt_lon").is_finite() &
+                pl.col("shape_pt_sequence").is_finite()
+            )
         )
 
         shapes = self.__generate_shape_dist_traveled_column(shapes)
@@ -246,6 +266,14 @@ class Shapes:
         R = 6371000  # Earth radius in meters
         deg2rad = math.pi / 180
 
+        shapes = shapes.with_columns(
+                pl.col("shape_pt_lat").cast(float,strict=False),
+                pl.col("shape_pt_lon").cast(float,strict=False),
+        ).dropna(["shape_pt_lat","shape_pt_lon"]).filter(
+            pl.col("shape_pt_lat").is_finite() &
+            pl.col("shape_pt_lon").is_finite()
+        )
+        
         shapes = shapes.with_columns(
             [
                 # Convert lat/lon to radians
@@ -360,6 +388,16 @@ class Shapes:
         """
         Convert GTFS shapes.txt into a GeoDataFrame of LINESTRING geometries.
         """
+        shapes = shapes.with_columns(
+                pl.col("shape_pt_lat").cast(float,strict=False),
+                pl.col("shape_pt_lon").cast(float,strict=False),
+                pl.col("shape_pt_sequence").cast(int,strict=False),
+        ).dropna(["shape_pt_lat","shape_pt_lon","shape_pt_sequence"]).filter(
+            pl.col("shape_pt_lat").is_finite() &
+            pl.col("shape_pt_lon").is_finite() &
+            pl.col("shape_pt_sequence").is_finite()
+        )
+        
         grouped = (
             shapes.sort(["shape_id", "shape_pt_sequence"])
             .with_columns(
@@ -371,12 +409,13 @@ class Shapes:
             )
             .group_by("shape_id")
             .agg(pl.col("pt").sort_by("shape_pt_sequence").alias("pt"))
+            .filter(pl.col("pt").list.len() >= 1)
             .with_columns(
                 (
                     pl.when(pl.col("pt").list.len() == 1)
                     .then(
                         pl.concat_str(
-                            [pl.lit("Point("), pl.col("pt").list.join(""), pl.lit(")")]
+                            [pl.lit("POINT("), pl.col("pt").list.join(""), pl.lit(")")]
                         )
                     )
                     .otherwise(

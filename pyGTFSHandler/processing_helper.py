@@ -63,17 +63,19 @@ def most_frequent_row_index(values, bins=5):
 
     if len(nz_vals) == 0:
         return None
+    elif len(nz_vals) == 1:
+        return int(nz_idx[0])
 
     counts, edges = np.histogram(nz_vals, bins=bins)
 
-    max_bin = np.argmax(counts)
-    start, end = edges[max_bin], edges[max_bin+1]
+    max_count = counts.max()
+    max_bins = np.where(counts == max_count)[0]
 
-    # match numpy.histogram logic:
-    if max_bin < bins - 1:
-        in_bin = (nz_vals >= start) & (nz_vals < end)
-    else:
-        in_bin = (nz_vals >= start) & (nz_vals <= end)
+    # Include all tied max-count bins in the bounds
+    start = edges[max_bins[0]]
+    end = edges[max_bins[-1] + 1]
+
+    in_bin = (nz_vals >= start) & (nz_vals <= end)
 
     vals_in = nz_vals[in_bin]
     idx_in = nz_idx[in_bin]

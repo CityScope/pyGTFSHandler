@@ -51,6 +51,7 @@ the direction with less remaining stops
 - TODO If in a trip_id a stop_id is repeated divide it into 2 trip ids check if this is really needed
 - TODO Check service intensity results. Sometimes (Valdemoro, Madrid) there are strange peaks in the plot. 
 - TODO Computing speed if service passes to next day the first stops of the next day are needed. Otherwise there are trips with one stop as the rest happens the next day.
+- TODO What about services with different timezones?
 """
 
 """TODO: revise filter_by_time_range with frequencies
@@ -506,6 +507,10 @@ class Feed:
             routes.lf.select(["route_id", "route_type"]),
             on=["route_id"],
             how="left",
+        )
+
+        lf = lf.with_columns(
+            pl.col("route_type").fill_null(-1)
         )
 
         lf = lf.join(
