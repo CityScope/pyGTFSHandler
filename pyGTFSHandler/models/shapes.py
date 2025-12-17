@@ -75,7 +75,7 @@ class Shapes:
                 pl.col("shape_pt_lat").cast(float,strict=False),
                 pl.col("shape_pt_lon").cast(float,strict=False),
                 pl.col("stop_sequence").cast(int,strict=False),
-        ).dropna(["shape_pt_lat","shape_pt_lon", "stop_sequence"]).filter(
+        ).drop_nulls(["shape_pt_lat","shape_pt_lon", "stop_sequence"]).filter(
             pl.col("shape_pt_lat").is_finite() &
             pl.col("shape_pt_lon").is_finite()
         )
@@ -251,7 +251,9 @@ class Shapes:
                 pl.col("shape_pt_lon").cast(float,strict=False),
                 pl.col("shape_pt_sequence").cast(int,strict=False),
             )
-            .dropna(["shape_pt_lat","shape_pt_lon","shape_pt_sequence"])
+            .drop_nulls(
+                ["shape_pt_lat", "shape_pt_lon", "shape_pt_sequence"]
+            )
             .filter(
                 pl.col("shape_pt_lat").is_finite() &
                 pl.col("shape_pt_lon").is_finite() &
@@ -269,7 +271,7 @@ class Shapes:
         shapes = shapes.with_columns(
                 pl.col("shape_pt_lat").cast(float,strict=False),
                 pl.col("shape_pt_lon").cast(float,strict=False),
-        ).dropna(["shape_pt_lat","shape_pt_lon"]).filter(
+        ).drop_nulls(["shape_pt_lat","shape_pt_lon"]).filter(
             pl.col("shape_pt_lat").is_finite() &
             pl.col("shape_pt_lon").is_finite()
         )
@@ -392,7 +394,7 @@ class Shapes:
                 pl.col("shape_pt_lat").cast(float,strict=False),
                 pl.col("shape_pt_lon").cast(float,strict=False),
                 pl.col("shape_pt_sequence").cast(int,strict=False),
-        ).dropna(["shape_pt_lat","shape_pt_lon","shape_pt_sequence"]).filter(
+        ).drop_nulls(["shape_pt_lat","shape_pt_lon","shape_pt_sequence"]).filter(
             pl.col("shape_pt_lat").is_finite() &
             pl.col("shape_pt_lon").is_finite() &
             pl.col("shape_pt_sequence").is_finite()
