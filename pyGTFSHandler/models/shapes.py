@@ -243,13 +243,13 @@ class Shapes:
                 {
                     "stop_lat": "shape_pt_lat",
                     "stop_lon": "shape_pt_lon",
-                    "stop_sequence": "shape_pt_sequence"
                 }
             )
             .with_columns(
                 pl.col("shape_pt_lat").cast(float,strict=False),
                 pl.col("shape_pt_lon").cast(float,strict=False),
-                pl.col("shape_pt_sequence").cast(int,strict=False),
+                pl.col("stop_sequence").cast(int,strict=False).alias("shape_pt_sequence"),
+                pl.col("stop_sequence").cast(int,strict=False).alias("stop_sequence"),
             )
             .drop_nulls(
                 ["shape_pt_lat", "shape_pt_lon", "shape_pt_sequence"]
