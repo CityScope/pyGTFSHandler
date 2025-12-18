@@ -321,6 +321,9 @@ class StopTimes:
         stop_times: pl.LazyFrame = utils.read_csv_list(
             stop_times_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id
         )
+        if (stop_times is None) or (stop_times.select(pl.len()).collect().item() == 0):
+            raise Exception(f"No stop_times.txt file found for any {paths}")
+        
 
         stop_times = stop_times.with_columns(
             pl.when(pl.col("arrival_time").str.strip_chars().eq(""))
@@ -665,8 +668,8 @@ class StopTimes:
             frequencies_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id
         )
 
-        if frequencies is None:
-            return None
+        if (frequencies is None) or (frequencies.select(pl.len()).collect().item() == 0):
+            return None 
 
         frequencies = utils.filter_by_id_column(frequencies, "trip_id", trip_ids)
 

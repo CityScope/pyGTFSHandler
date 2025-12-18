@@ -79,6 +79,9 @@ class Routes:
 
         schema_dict, _ = gtfs_checker.get_df_schema_dict("routes.txt")
         routes = utils.read_csv_list(route_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id)
+        if (routes is None) or (routes.select(pl.len()).collect().item() == 0):
+            return None 
+        
         # Identify values that cannot be converted to int
         non_convertible = routes.filter(
             pl.col("route_type").cast(pl.Int64, strict=False).is_null()

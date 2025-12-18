@@ -1304,7 +1304,8 @@ class Feed:
             )
 
             gtfs_lf = (
-                gtfs_lf.with_columns(
+                gtfs_lf
+                .with_columns(
                     (
                         (
                             (pl.col("departure_times").list.diff(null_behavior="drop"))
@@ -1317,10 +1318,9 @@ class Feed:
                 )
                 .drop("initial_interval")
                 .with_columns(
-                    pl.col("direction_id").cast(int).alias("direction_id")
+                    pl.col("direction_id").cast(int).alias("direction_id") # Cast fails if none !!!!!!!!!!!!!!!!!!!
                 )
                 .collect()
-                .lazy()
             )
 
             # ----------------------------------------------------------
@@ -1502,10 +1502,25 @@ class Feed:
                 ).alias("angle")
             )
             .with_columns(
-                ((pl.col("angle") * n_sectors / 360).floor().cast(pl.Int32))
+                ((pl.col("angle") * n_sectors / 360).floor().cast(pl.Int32, strict=False))
                 .alias("shape_direction_id")
             )
             .drop("angle")
+            .collect()
+        )
+
+        null_count = gtfs_lf.select(pl.col("shape_direction_id").null_count()).item()
+
+        if null_count > 0:
+            warnings.warn(
+                f"{null_count} rows have null shape_direction_id and will be dropped",
+                RuntimeWarning,
+            )
+
+        gtfs_lf = (
+            gtfs_lf
+            .drop_nulls("shape_direction_id")
+            .lazy()
         )
 
         # Compute headway per angular bin
@@ -2490,33 +2505,60 @@ class Feed:
             lf = lf.with_row_index("_row_number")
             lf = lf.explode('route_ids')
 
-        routes_lf = self.routes.lf.with_columns(
-            pl.when(pl.col("route_short_name").is_not_null())
-            .then(pl.col("route_short_name"))
-            .when(pl.col("route_long_name").is_not_null())
-            .then(pl.col("route_long_name"))
-            .otherwise(
-                # remove '_file_<digits>' from route_id
-                pl.col("route_id").str.replace(r"_file_\d+$", "")
+        routes_lf = self.routes.lf
+        if routes_lf is None: 
+            lf = lf.with_columns(
+                pl.lit(None).alias("route_short_name"),
+                pl.lit(None).alias("route_long_name"),
+                pl.lit(None).alias("route_name"),
+                pl.lit(None).alias("route_type"),
+                pl.lit(None).alias("route_type_text")
             )
-            .alias("route_name")
-        )
+        else:
+            if "route_short_name" not in routes_lf.collect_schema().names():
+                routes_lf = routes_lf.with_columns(
+                    pl.lit(None).alias("route_short_name")
+                )
 
-        routes_lf = routes_lf.select(['route_id','route_short_name','route_long_name','route_name','route_type','route_type_text'])
-        if 'route_id' in lf.collect_schema().names():
-            if 'route_short_name' in lf.collect_schema().names():
-                lf = lf.drop('route_short_name')
-            if 'route_long_name' in lf.collect_schema().names():
-                lf = lf.drop('route_long_name')
-            if 'route_name' in lf.collect_schema().names():
-                lf = lf.drop('route_name')
-            if 'route_type' in lf.collect_schema().names():
-                lf = lf.drop('route_type')
-            if 'route_type_text' in lf.collect_schema().names():
-                lf = lf.drop('route_type_text')
+            if "route_long_name" not in routes_lf.collect_schema().names():
+                routes_lf = routes_lf.with_columns(
+                    pl.lit(None).alias("route_long_name")
+                )
 
-            lf = lf.join(routes_lf,on='route_id',how='left')
-        
+            if "route_name" not in routes_lf.collect_schema().names():
+                routes_lf = routes_lf.with_columns(
+                    pl.lit(None).alias("route_name")
+                )
+
+            routes_lf = self.routes.lf.with_columns(
+                pl.when(pl.col("route_short_name").is_not_null())
+                .then(pl.col("route_short_name"))
+                .when(pl.col("route_long_name").is_not_null())
+                .then(pl.col("route_long_name"))
+                .when(pl.col("route_name").is_not_null())
+                .then(pl.col("route_name"))
+                .otherwise(
+                    # remove '_file_<digits>' from route_id
+                    pl.col("route_id").str.replace(r"_file_\d+$", "")
+                )
+                .alias("route_name")
+            )
+
+            routes_lf = routes_lf.select(['route_id','route_short_name','route_long_name','route_name','route_type','route_type_text'])
+            if 'route_id' in lf.collect_schema().names():
+                if 'route_short_name' in lf.collect_schema().names():
+                    lf = lf.drop('route_short_name')
+                if 'route_long_name' in lf.collect_schema().names():
+                    lf = lf.drop('route_long_name')
+                if 'route_name' in lf.collect_schema().names():
+                    lf = lf.drop('route_name')
+                if 'route_type' in lf.collect_schema().names():
+                    lf = lf.drop('route_type')
+                if 'route_type_text' in lf.collect_schema().names():
+                    lf = lf.drop('route_type_text')
+
+                lf = lf.join(routes_lf,on='route_id',how='left')
+            
         if 'route_ids' in lf.collect_schema().names():
             if 'route_short_names' in lf.collect_schema().names():
                 lf = lf.drop('route_short_names')

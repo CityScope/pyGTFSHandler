@@ -91,7 +91,9 @@ class Trips:
 
         schema_dict, _ = gtfs_checker.get_df_schema_dict("trips.txt")
         trips = utils.read_csv_list(trip_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id)
-
+        if (trips is None) or (trips.select(pl.len()).collect().item() == 0):
+            raise Exception(f"No trips.txt file found for any {paths}")
+        
         trips = utils.filter_by_id_column(trips, "service_id", service_ids)
         trips = utils.filter_by_id_column(trips, "trip_id", trip_ids)
         trips = utils.filter_by_id_column(trips, "route_id", route_ids)

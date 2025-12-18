@@ -67,6 +67,9 @@ class Calendar:
 
         self.lf = self.__read_calendar(paths, service_ids, check_files=check_files, min_file_id=min_file_id)
         self.exceptions_lf = self.__read_calendar_dates(paths, service_ids, check_files=check_files, min_file_id=min_file_id)
+        if (self.lf is None) and (self.exceptions_lf is None):
+            raise Exception(f"No calendar.txt or calendar_dates.txt files found in paths {paths}")
+        
         self.min_date, self.max_date = self.__get_min_max_dates(
             self.lf, self.exceptions_lf
         )
@@ -146,9 +149,8 @@ class Calendar:
 
         schema_dict, _ = gtfs_checker.get_df_schema_dict("calendar.txt")  # assume same schema
         calendar = utils.read_csv_list(calendar_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id)
-
-        if calendar is None:
-            return None
+        if (calendar is None) or (calendar.select(pl.len()).collect().item() == 0):
+            return None 
 
         calendar = utils.filter_by_id_column(calendar, "service_id", service_ids)
 
@@ -234,10 +236,9 @@ class Calendar:
         calendar_dates = utils.read_csv_list(
             calendar_dates_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id
         )
-
-        if calendar_dates is None:
-            return None
-
+        if (calendar_dates is None) or (calendar_dates.select(pl.len()).collect().item() == 0):
+            return None 
+        
         calendar_dates = utils.filter_by_id_column(
             calendar_dates, "service_id", service_ids
         )

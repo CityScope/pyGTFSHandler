@@ -826,7 +826,8 @@ def preprocess_gtfs(path,output_folder, mandatory_files = MANDATORY_FILES, file_
                         decimal_comma=False,   # Use '.' for decimals
                         include_header=True
                     )
-                log += f"Created file {error_path} \n"
+                    log += f"Created file {error_path} \n"
+                    
                 print(log)
                 raise Exception(f"File {os.path.join(path,file_path)} is empty")
                 # warnings.warn(f"File {os.path.join(path,file_path)} is empty")

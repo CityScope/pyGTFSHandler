@@ -65,7 +65,7 @@ class Stops:
             paths = [Path(p) for p in path]
 
         self.lf = self.__read_stops(paths, stop_ids, check_files=check_files, min_file_id=min_file_id)
-
+        
         if aoi is None:
             df = self.lf.select(
                 ["stop_id", "parent_station", "stop_lat", "stop_lon"]
@@ -132,7 +132,9 @@ class Stops:
 
         schema_dict, _ = gtfs_checker.get_df_schema_dict("stops.txt")
         lf = utils.read_csv_list(stop_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id)
-
+        if (lf is None) or (lf.select(pl.len()).collect().item() == 0):
+            raise Exception(f"No stops.txt file found for any {paths}")
+        
         lf = utils.filter_by_id_column(lf, "stop_id", stop_ids)
 
         if "parent_station" not in lf.collect_schema().names():
