@@ -2540,7 +2540,7 @@ class Feed:
                     pl.lit(None).alias("route_name")
                 )
 
-            routes_lf = self.routes.lf.with_columns(
+            routes_lf = routes_lf.with_columns(
                 pl.when(pl.col("route_short_name").is_not_null())
                 .then(pl.col("route_short_name"))
                 .when(pl.col("route_long_name").is_not_null())
