@@ -834,6 +834,10 @@ def preprocess_gtfs(path,output_folder, mandatory_files = MANDATORY_FILES, file_
                 if "calendar" not in file_path:
                     raise Exception(f"File {os.path.join(path,file_path)} is empty")
                 
+                mandatory_file_groups.pop(file_name, None)
+                if file_name in mandatory_file_list:
+                    mandatory_file_list.remove(file_name)
+
                 continue
                 # warnings.warn(f"File {os.path.join(path,file_path)} is empty")
                 # log += f"File {os.path.join(path,file_path)} is empty. \n"
