@@ -12,6 +12,8 @@ import shutil
 import unicodedata 
 import copy 
 
+"TODO exception if file is empty is wrong for calendar and calendar dates"
+
 MANDATORY_FILES = ["stops.txt","trips.txt","stop_times.txt",["calendar.txt","calendar_dates.txt"]]
 PREFERENTIAL_FILES = ["routes.txt","frequencies.txt","calendar.txt","calendar_dates.txt"]
 IMPLEMENTED_PARSERS = ["stops.txt","trips.txt","stop_times.txt","calendar.txt","calendar_dates.txt","agency.txt","routes.txt","frequencies.txt","shapes.txt"]
