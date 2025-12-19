@@ -900,7 +900,9 @@ class Feed:
         """
         start_time: int = utils.time_to_seconds(start_time)
         end_time: int = utils.time_to_seconds(end_time)
-
+        if end_time < start_time:
+            raise Exception(f"start_time {start_time} should happen before end_time {end_time}")
+        
         # If frequencies are present, filter based on both frequency windows and explicit times.
         if self.stop_times.frequencies is not None:
             # Keep rows if their frequency window overlaps the filter time.
@@ -1269,7 +1271,14 @@ class Feed:
             delete_last_stop=delete_last_stop
         )
         gtfs_lf = gtfs_lf.filter(pl.col(at).is_not_null())
-
+        gtfs_lf = gtfs_lf.with_columns(
+            pl.col("departure_time").cast(pl.Float64,strict=False)
+        ).filter(
+            pl.col("departure_time").is_not_null() & 
+            pl.col("departure_time").is_not_nan() & 
+            pl.col("departure_time").is_finite()
+        )
+            
         start_sec = utils.time_to_seconds(start_time)
         end_sec = utils.time_to_seconds(end_time)
 
@@ -1321,6 +1330,7 @@ class Feed:
                     pl.col("direction_id").cast(int).alias("direction_id") # Cast fails if none !!!!!!!!!!!!!!!!!!!
                 )
                 .collect()
+                .lazy()
             )
 
             # ----------------------------------------------------------
