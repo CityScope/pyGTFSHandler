@@ -831,19 +831,46 @@ def preprocess_gtfs(path,output_folder, mandatory_files = MANDATORY_FILES, file_
                     log += f"Created file {error_path} \n"
                     
                 print(log)
-                if "calendar" not in file_path:
-                    raise Exception(f"File {os.path.join(path,file_path)} is empty")
-                
-                mandatory_file_groups.pop(file_name, None)
-                if file_name in mandatory_file_list:
-                    mandatory_file_list.remove(file_name)
+                if ((file_name+".txt") in mandatory_file_groups.keys()) and (len(mandatory_file_groups[(file_name+".txt")]) > 1):
+                    mandatory_file_groups.pop(file_name+".txt", None)
+                    for k in mandatory_file_groups.keys():
+                        if (file_name+".txt") in mandatory_file_groups[k]: 
+                            mandatory_file_groups[k].remove(file_name+".txt")
 
-                continue
+                    if (file_name+".txt") in mandatory_file_list:
+                        mandatory_file_list.remove(file_name+".txt")
+
+                    continue
+                elif (file_name+".txt") in mandatory_file_list:
+                    raise Exception(f"File {os.path.join(path,file_path)} is empty")
+                else:
+                    mandatory_file_groups.pop(file_name+".txt", None)
+                    for k in mandatory_file_groups.keys():
+                        if (file_name+".txt") in mandatory_file_groups[k]: 
+                            mandatory_file_groups[k].remove(file_name+".txt")
+
+                    continue
+
                 # warnings.warn(f"File {os.path.join(path,file_path)} is empty")
                 # log += f"File {os.path.join(path,file_path)} is empty. \n"
 
             gtfs[file_name] = content 
             gtfs_errors[file_name] = errors 
+
+    for file in mandatory_files:
+        if isinstance(file,list):
+            file_group = []
+            for f in file:
+                if f in mandatory_file_list:
+                    file_group.append(f)
+
+            if len(file_group) == 0:
+                print(log)
+                raise Exception(f"None of the files {file} not found in folder path {path}. At least one file should exist. This GTFS might be broken.")
+        else:
+            if file not in mandatory_file_list:
+                print(log)
+                raise Exception(f"File {file} not found in folder path {path}. This GTFS might be broken.")
 
     for i in range(len(file_pairs)):
         file_list_i = set(file_pairs[i]['files'])
