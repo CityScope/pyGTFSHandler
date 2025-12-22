@@ -45,15 +45,18 @@ class Routes:
             paths = [Path(p) for p in path]
 
         self.lf = self.__read_routes(paths, route_ids, route_types, check_files=check_files, min_file_id=min_file_id)
-        if (route_ids is not None) or (route_types is not None):
-            self.route_ids = (
-                self.lf.select("route_id").unique().collect()["route_id"].to_list()
-            )
-            if (len(self.route_ids) > 0) and (self.route_ids[0] is None):
-                self.route_ids = []
+        if self.lf is not None:
+            if (route_ids is not None) or (route_types is not None):
+                self.route_ids = (
+                    self.lf.select("route_id").unique().collect()["route_id"].to_list()
+                )
+                if (len(self.route_ids) > 0) and (self.route_ids[0] is None):
+                    self.route_ids = []
+            else:
+                self.route_ids = None
         else:
             self.route_ids = None
-
+            
     def __read_routes(
         self, paths, route_ids: Optional[List[str]], route_types: Optional[List[int]], check_files=False, min_file_id=0
     ) -> pl.LazyFrame:

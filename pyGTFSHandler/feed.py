@@ -503,11 +503,17 @@ class Feed:
         # Drop helper column if you don't want to keep it
         lf = lf.drop("prev_parent_station")
 
-        lf = lf.join(
-            routes.lf.select(["route_id", "route_type"]),
-            on=["route_id"],
-            how="left",
-        )
+        if routes.lf is not None:
+            lf = lf.join(
+                routes.lf.select(["route_id", "route_type"]),
+                on=["route_id"],
+                how="left",
+            )
+        else:
+            lf = lf.with_columns(
+                pl.col("route_id").alias("trip_id"),
+                pl.lit(-1).alias("route_type")
+            )
 
         lf = lf.with_columns(
             pl.col("route_type").fill_null(-1)
