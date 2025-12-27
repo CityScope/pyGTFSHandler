@@ -2587,15 +2587,17 @@ class Feed:
             if 'route_type_texts' in lf.collect_schema().names():
                 lf = lf.drop('route_type_texts')
 
-            routes_lf = routes_lf.rename({
-                'route_id':'route_ids',
-                'route_short_name':'route_short_names',
-                'route_long_name':'route_long_names',
-                'route_name':'route_names',
-                'route_type':'route_types',
-                'route_type_text':'route_type_texts'
-            })
-            lf = lf.join(routes_lf,on='route_ids',how='left')
+            if routes_lf is not None:
+                routes_lf = routes_lf.rename({
+                    'route_id':'route_ids',
+                    'route_short_name':'route_short_names',
+                    'route_long_name':'route_long_names',
+                    'route_name':'route_names',
+                    'route_type':'route_types',
+                    'route_type_text':'route_type_texts'
+                })
+                lf = lf.join(routes_lf,on='route_ids',how='left')
+                
             lf = (
                 lf.group_by("_row_number")
                 .agg(
