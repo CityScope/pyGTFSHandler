@@ -49,11 +49,10 @@ LEVEL_OF_SERVICES = [
     "F",
 ]
 
-
-def most_frequent_row_index(values, bins=5):
+def most_frequent_row_range(values, bins=5):
     values = np.asarray(values)
 
-    # thresholding
+    # Thresholding
     threshold = 0.5 * np.percentile(values, 90)
     cleaned = values.copy()
     cleaned[cleaned < threshold] = 0
@@ -62,12 +61,12 @@ def most_frequent_row_index(values, bins=5):
     nz_idx = np.where(nonzero_mask)[0]
 
     if len(nz_vals) == 0:
-        return None
+        return []
     elif len(nz_vals) == 1:
-        return int(nz_idx[0])
+        return [int(nz_idx[0])]  # single value
 
+    # Histogram to find high-frequency bins
     counts, edges = np.histogram(nz_vals, bins=bins)
-
     max_count = counts.max()
     max_bins = np.where(counts == max_count)[0]
 
@@ -76,17 +75,98 @@ def most_frequent_row_index(values, bins=5):
     end = edges[max_bins[-1] + 1]
 
     in_bin = (nz_vals >= start) & (nz_vals <= end)
-
     vals_in = nz_vals[in_bin]
     idx_in = nz_idx[in_bin]
 
     if len(vals_in) == 0:
-        return None
+        return []
 
-    median = np.mean(vals_in)
-    closest = np.argmin(np.abs(vals_in - median))
-    return int(idx_in[closest])
+    # Compute mean and std of values in high-frequency bin
+    mean_val = np.mean(vals_in)
+    std_val = np.std(vals_in)
 
+    # Define lower and upper bounds (mean ± 1 std)
+    lower_bound = mean_val - std_val
+    upper_bound = mean_val + std_val
+
+    # Find all indices corresponding to values within this range
+    in_range_mask = (vals_in >= lower_bound) & (vals_in <= upper_bound)
+    indices_in_range = idx_in[in_range_mask]
+
+    return indices_in_range.tolist()
+
+def most_frequent_row_index(values, bins=5):
+    if isinstance(values,pl.LazyFrame):
+        values = values.collect()
+
+    if isinstance(values,pl.DataFrame):
+        values = values.to_pandas()
+    
+    if isinstance(values,pd.DataFrame):
+        if "date" in values.columns:
+            values['date'] = pd.to_datetime(values['date'])
+            values = values.dropna(subset=['date']).sort_values('date')
+        else:
+            raise Exception("Column 'date' is mandatory in values if passing a DataFrame instead of a list.")
+        
+        if "service_intensity" in values.columns:
+            values = values.dropna(subset=["service_intensity"])
+            values['service_intensity'] = values['service_intensity'].astype(float)
+        else:
+            raise Exception("Column 'service_intensity' is mandatory in values if passing a DataFrame instead of a list.")
+        
+        values = values.sort_values("date")
+        if "file_id" in values.columns:
+            id_col = "file_id"
+        elif "gtfS_name" in values.columns:
+            id_col = "gtfs_name"
+        else:
+            id_col = None
+            values = list(values['service_intensity'])
+        
+    else:
+        id_col = None
+
+    if id_col is None:
+        indices = most_frequent_row_range(values, bins=bins)
+        if indices is None:
+            return None 
+        # Compute mean of the selected values
+        mean_val = np.mean(values[indices])
+        # Compute absolute differences between all values and the mean
+        diffs = np.abs(values - mean_val)
+        if len(diffs) == 0:
+            return None
+        # Find the minimum difference
+        min_diff = np.min(diffs)
+        # Find all indices where difference equals minimum
+        nearest_indices = np.where(diffs == min_diff)[0]
+        # Return first nearest index or None
+        if nearest_indices.size > 0:
+            return int(nearest_indices[0])
+        else:
+            return None
+    else:
+        indices = []
+
+        # Loop over each unique ID
+        for uid in values[id_col].unique():
+            # Get the service_intensity column for this ID
+            intensity_series = values.loc[values[id_col] == uid, "service_intensity"]
+
+            # Get list of row indices in the most frequent range
+            indices_i = most_frequent_row_range(intensity_series, bins=bins)
+        
+            # Map back to the DataFrame's actual index
+            if indices_i is not None:  # only add if non-empty
+                indices += list(intensity_series.iloc[indices_i].index)
+
+        if len(indices)==0:
+            return None  # no valid indices found
+
+        # From the selected rows, find the index of the max service_intensity
+        max_idx = values.loc[indices, "service_intensity"].idxmax()
+        return max_idx
 
 def assign_service_quality_to_interval(interval, route_type, service_matrix=SERVICE_MATRIX):
     l = service_matrix.loc[service_matrix['interval'] >= interval, route_type]

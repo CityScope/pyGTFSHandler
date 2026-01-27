@@ -1224,13 +1224,19 @@ class Feed:
         )
 
         if by_feed:
-            ids = self.lf.select("file_id").unique().collect().to_series().to_list()
+            ids = (
+                self.lf
+                .select(["file_id", "gtfs_name"])
+                .unique("file_id")
+                .collect()
+            )
             total_by_date = []
-            for id in ids:
+            for id, name in ids.iter_rows():
                 gtfs_lf = self.lf.filter(pl.col("file_id") == id)
                 result = self.__service_intensity_in_date_range(gtfs_lf,route_types,date_df)
                 result = result.with_columns(
-                    pl.lit(id).alias("file_id")
+                    pl.lit(id).alias("file_id"),
+                    pl.lit(name).alias("gtfs_name"),
                 )
                 total_by_date.append(result)
 

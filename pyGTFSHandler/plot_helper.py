@@ -4,7 +4,7 @@ from datetime import time, datetime
 import matplotlib.patches as mpatches
 import folium
 
-def plot_service_intensity(service_intensity):
+def service_intensity(service_intensity):
     # Convert to pandas if it's Polars
     if not isinstance(service_intensity, pd.DataFrame):
         pdf = service_intensity.to_pandas()
@@ -21,8 +21,12 @@ def plot_service_intensity(service_intensity):
     holiday_hatch = "//"
 
     # --- CASE 1: file_id present ---
-    if "file_id" in pdf.columns:
-        unique_files = sorted(pdf["file_id"].unique())
+    if "file_id" in pdf.columns or "gtfs_name" in pdf.columns:
+        name_col = "gtfs_name"
+        if "gtfs_name" not in pdf.columns:
+            name_col = "file_id"
+
+        unique_files = sorted(pdf[name_col].unique())
         color_cycle = plt.cm.tab20.colors  # large qualitative palette
         color_map = {fid: color_cycle[i % len(color_cycle)] for i, fid in enumerate(unique_files)}
 
@@ -31,7 +35,7 @@ def plot_service_intensity(service_intensity):
             bottom = 0
             for _, row in group.iterrows():
                 value = row["service_intensity"]
-                fid = row["file_id"]
+                fid = row[name_col]
                 color = color_map[fid]
 
                 # Determine hatch pattern (weekend or holiday)
