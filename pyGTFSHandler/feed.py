@@ -31,7 +31,7 @@ The `Feed` class acts as a high-level container that:
 5.  **Provides Analysis Methods**: Offers high-level methods for common GTFS
     analyses, such as:
     -   Calculating service intensity (number of trips x stops) over a date range.
-    -   Calculating the mean interval (headway) between services at stops.
+    -   Calculating the mean headway (headway) between services at stops.
     -   Filtering the integrated data by specific date or time ranges.
 
 The final result is a powerful `Feed` object that holds a clean, integrated, and
@@ -55,7 +55,7 @@ the direction with less remaining stops
 """
 
 """TODO: revise filter_by_time_range with frequencies
-TODO: revise interval func to work with all possible by, at and hows especially 'shape_direction' 'all' instead of 'max'
+TODO: revise headway func to work with all possible by, at and hows especially 'shape_direction' 'all' instead of 'max'
 """
 
 from .models import StopTimes, Stops, Trips, Calendar, Routes, Shapes
@@ -1261,7 +1261,7 @@ class Feed:
 
         return total_by_date.sort("date")
 
-    def _get_mean_interval_at_stops(
+    def _get_headway_at_stops(
         self,
         lf: pl.LazyFrame,
         date: datetime | date | None,
@@ -1329,7 +1329,7 @@ class Feed:
                     (
                         (pl.col("departure_time").min() - start_sec)
                         + (end_sec - pl.col("departure_time").max())
-                    ).alias("initial_interval"),      
+                    ).alias("initial_headway"),      
                 )
             )
 
@@ -1341,12 +1341,12 @@ class Feed:
                             (pl.col("departure_times").list.diff(null_behavior="drop"))
                             .list.eval(pl.element().pow(2))
                             .list.sum()
-                            + pl.col("initial_interval") ** 2
+                            + pl.col("initial_headway") ** 2
                         )
                         / (end_sec - start_sec)
-                    ).alias("mean_interval")
+                    ).alias("headway")
                 )
-                .drop("initial_interval")
+                .drop("initial_headway")
                 .with_columns(
                     pl.col("direction_id").cast(int).alias("direction_id") # Cast fails if none !!!!!!!!!!!!!!!!!!!
                 )
@@ -1361,21 +1361,21 @@ class Feed:
                 gtfs_lf = gtfs_lf.group_by(at).agg(
                     [
                         pl.col("route_ids").sort_by(
-                            "mean_interval",  
+                            "headway",  
                             nulls_last=True,
                             maintain_order=True
                         ).first().alias("route_ids"),
                         pl.col("shape_direction").sort_by(
-                            "mean_interval",  
+                            "headway",  
                             nulls_last=True,
                             maintain_order=True
                         ).first().alias("shape_direction"),
                         pl.col("direction_id").sort_by(
-                            "mean_interval",  
+                            "headway",  
                             nulls_last=True,
                             maintain_order=True
                         ).first().cast(int).alias("direction_id"),
-                        pl.col("mean_interval").min().alias("mean_interval"),
+                        pl.col("headway").min().alias("headway"),
                     ]
                 )
             elif how == "add":
@@ -1384,35 +1384,35 @@ class Feed:
                     gtfs_lf = gtfs_lf.group_by(at,"direction_id").agg(
                         [
                             pl.col("route_ids").flatten().unique().alias("route_ids"),
-                            (1 / (1 / pl.col("mean_interval")).sum()).alias("mean_interval"),
+                            (1 / (1 / pl.col("headway")).sum()).alias("headway"),
                             pl.col("shape_direction").flatten().unique().alias("shape_directions"),
                         ]
                     )
                     gtfs_lf = gtfs_lf.group_by(at).agg(
                         [
                             pl.col("route_ids").sort_by(
-                                "mean_interval",  
+                                "headway",  
                                 nulls_last=True,
                                 maintain_order=True
                             ).first().alias("route_ids"),
                             pl.col("shape_directions").sort_by(
-                                "mean_interval",  
+                                "headway",  
                                 nulls_last=True,
                                 maintain_order=True
                             ).first().alias("shape_directions"),
                             pl.col("direction_id").sort_by(
-                                "mean_interval",  
+                                "headway",  
                                 nulls_last=True,
                                 maintain_order=True
                             ).first().alias("direction_id"),
-                            pl.col("mean_interval").min().alias("mean_interval"),
+                            pl.col("headway").min().alias("headway"),
                         ]
                     )
                 else:
                     gtfs_lf = gtfs_lf.group_by(at).agg(
                         [
                             pl.col("route_ids").flatten().unique().alias("route_ids"),
-                            (1 / (1 / pl.col("mean_interval")).sum()).alias("mean_interval"),
+                            (1 / (1 / pl.col("headway")).sum()).alias("headway"),
                             pl.col("shape_direction").flatten().unique().alias("shape_directions"),
                             pl.col("direction_id")
                                 .flatten()
@@ -1430,7 +1430,7 @@ class Feed:
                 )
 
             gtfs_lf = gtfs_lf.with_columns(
-                (pl.col("mean_interval") / 60).alias("mean_interval")
+                (pl.col("headway") / 60).alias("headway")
             )
 
             if by == "route_id":
@@ -1567,7 +1567,7 @@ class Feed:
                     (
                         (pl.col("departure_time").min() - start_sec)
                         + (end_sec - pl.col("departure_time").max())
-                    ).alias("initial_interval"),
+                    ).alias("initial_headway"),
                 ]
             )
         )
@@ -1579,10 +1579,10 @@ class Feed:
                         (pl.col("departure_times").list.diff(null_behavior="drop"))
                         .list.eval(pl.element().pow(2))
                         .list.sum()
-                        + pl.col("initial_interval") ** 2
+                        + pl.col("initial_headway") ** 2
                     )
                     / (end_sec - start_sec)
-                ).alias("mean_interval"),
+                ).alias("headway"),
                 (pl.col("shape_direction_id") % n_divisions).alias("shape_direction_group_id"),
             ]
         )
@@ -1594,21 +1594,21 @@ class Feed:
             gtfs_lf = gtfs_lf.group_by(at).agg(
                 [
                     pl.col("shape_direction").sort_by(
-                        "mean_interval",  
+                        "headway",  
                         nulls_last=True,
                         maintain_order=True
                     ).first().alias("shape_direction"),
                     pl.col("shape_ids").sort_by(
-                        "mean_interval",  
+                        "headway",  
                         nulls_last=True,
                         maintain_order=True
                     ).first().alias("shape_ids"),
                     pl.col("route_ids").sort_by(
-                        "mean_interval",  
+                        "headway",  
                         nulls_last=True,
                         maintain_order=True
                     ).first().alias("route_ids"),
-                    pl.col("mean_interval").min().alias("mean_interval"),
+                    pl.col("headway").min().alias("headway"),
                 ]
             )
 
@@ -1618,27 +1618,27 @@ class Feed:
                 gtfs_lf = gtfs_lf.group_by([at, "shape_direction_group_id"]).agg(
                     [
                         pl.col("shape_direction").sort_by(
-                            "mean_interval",  
+                            "headway",  
                             nulls_last=True,
                             maintain_order=True
                         ).first().alias("shape_direction"),
                         pl.col("shape_ids").sort_by(
-                            "mean_interval",  
+                            "headway",  
                             nulls_last=True,
                             maintain_order=True
                         ).first().alias("shape_ids"),
                         pl.col("route_ids").sort_by(
-                            "mean_interval",  
+                            "headway",  
                             nulls_last=True,
                             maintain_order=True
                         ).first().alias("route_ids"),
-                        pl.col("mean_interval").min().alias("mean_interval"),
+                        pl.col("headway").min().alias("headway"),
                     ]
                 )
 
             gtfs_lf = gtfs_lf.group_by(at).agg(
                 [
-                    (1 / (1 / pl.col("mean_interval")).sum()).alias("mean_interval"),
+                    (1 / (1 / pl.col("headway")).sum()).alias("headway"),
                     pl.col("shape_direction").alias("shape_directions"),
                     pl.col("shape_ids").flatten().unique().alias("shape_ids"),
                     pl.col("route_ids").flatten().unique().alias("route_ids"),
@@ -1650,11 +1650,11 @@ class Feed:
             )
 
         gtfs_lf = gtfs_lf.with_columns(
-            (pl.col("mean_interval") / 60).alias("mean_interval")
+            (pl.col("headway") / 60).alias("headway")
         )
         return gtfs_lf.collect()
 
-    def get_mean_interval_at_stops(
+    def get_headway_at_stops(
         self,
         date: datetime | date | None,
         start_time: datetime | time = time.min,
@@ -1667,9 +1667,9 @@ class Feed:
         mix_directions:bool = False,
     ) -> pl.LazyFrame:
         """
-        Compute the mean headway (service interval) within a time window.
+        Compute the mean headway (service headway) within a time window.
 
-        Headway is computed using the harmonic mean of inter-departure intervals.
+        Headway is computed using the harmonic mean of inter-departure headways.
         Data may be aggregated by route or by directional clusters.
 
         Parameters
@@ -1685,12 +1685,12 @@ class Feed:
         by : str, {"route_id", "shape_direction"}
             Determines how services are grouped before headway computation.
         at : str, {"parent_station", "stop_id"}
-            Spatial unit for the interval calculation.
+            Spatial unit for the headway calculation.
         how : {"all", "best", "mean"}
             Post-aggregation method:
             - "all": return all route/direction combinations  
-            - "best": pick the service with smallest interval  
-            - "add": harmonic mean of all service intervals together (route intervals are added together)
+            - "best": pick the service with smallest headway  
+            - "add": harmonic mean of all service headways together (route headways are added together)
         n_divisions : int, default 1
             Number of directional bins when using `shape_direction`.
         mix_directions : bool, default False 
@@ -1721,7 +1721,7 @@ class Feed:
         )
         gtfs_lf = gtfs_lf.filter(pl.col(at).is_not_null())
 
-        return self._get_mean_interval_at_stops(
+        return self._get_headway_at_stops(
             gtfs_lf,
             date = date,
             start_time = start_time,
@@ -1737,7 +1737,7 @@ class Feed:
             delete_last_stop = False,
         )
     
-    def get_mean_speed_at_stops(
+    def get_speed_at_stops(
             self,
             date: datetime | date,
             start_time: datetime | time = time.min,
@@ -1948,7 +1948,7 @@ class Feed:
         
         return gtfs_lf.filter(pl.col("isin_aoi") == True).drop("isin_aoi").collect()
 
-    def get_mean_interval_at_edges(            
+    def get_headway_at_edges(            
             self,
             date: datetime | date,
             start_time: datetime | time = time.min,
@@ -2047,7 +2047,7 @@ class Feed:
                 (
                     (pl.col("departure_time").min() - start_sec)
                     + (end_sec - pl.col("departure_time").max())
-                ).alias("initial_interval"),    
+                ).alias("initial_headway"),    
                 pl.col(at+"_A").first(), 
                 pl.col(at+"_B").first(),  
                 pl.col("n_trips").sum().alias("n_trips"),
@@ -2061,12 +2061,12 @@ class Feed:
                         (pl.col("departure_times").list.diff(null_behavior="drop"))
                         .list.eval(pl.element().pow(2))
                         .list.sum()
-                        + pl.col("initial_interval") ** 2
+                        + pl.col("initial_headway") ** 2
                     )
                     / (end_sec - start_sec)
-                ).alias("mean_interval")
+                ).alias("headway")
             )
-            .drop("initial_interval")
+            .drop("initial_headway")
             .collect()
             .lazy()
         )
@@ -2080,33 +2080,33 @@ class Feed:
             gtfs_lf = gtfs_lf.group_by("edge_id").agg(
                 [
                     pl.col("route_ids").sort_by(
-                        "mean_interval",  
+                        "headway",  
                         nulls_last=True,
                         maintain_order=True
                     ).first().alias("route_ids"),
                     pl.col("shape_direction").sort_by(
-                        "mean_interval",  
+                        "headway",  
                         nulls_last=True,
                         maintain_order=True
                     ).first().alias("shape_direction"),
-                    pl.col("mean_interval").min().alias("mean_interval"),
+                    pl.col("headway").min().alias("headway"),
                     pl.col(at+"_A").sort_by(
-                        "mean_interval",  
+                        "headway",  
                         nulls_last=True,
                         maintain_order=True
                     ).first().alias(at+"_A"),
                     pl.col(at+"_B").sort_by(
-                        "mean_interval",  
+                        "headway",  
                         nulls_last=True,
                         maintain_order=True
                     ).first().alias(at+"_B"),
                     pl.col("direction_id").sort_by(
-                        "mean_interval",  
+                        "headway",  
                         nulls_last=True,
                         maintain_order=True
                     ).first().alias("direction_id"),
                     pl.col("n_trips").sort_by(
-                        "mean_interval",  
+                        "headway",  
                         nulls_last=True,
                         maintain_order=True
                     ).first().alias("n_trips"),
@@ -2119,7 +2119,7 @@ class Feed:
                 gtfs_lf = gtfs_lf.group_by("edge_id","direction_id").agg(
                     [
                         pl.col("route_ids").flatten().unique().alias("route_ids"),
-                        (1 / (1 / pl.col("mean_interval")).sum()).alias("mean_interval"),
+                        (1 / (1 / pl.col("headway")).sum()).alias("headway"),
                         pl.col("shape_direction").flatten().unique().alias("shape_directions"),
                         pl.col(at+"_A").first().alias(at+"_A"),
                         pl.col(at+"_B").first().alias(at+"_B"),
@@ -2129,33 +2129,33 @@ class Feed:
                 gtfs_lf = gtfs_lf.group_by("edge_id").agg(
                     [
                         pl.col("route_ids").sort_by(
-                            "mean_interval",  
+                            "headway",  
                             nulls_last=True,
                             maintain_order=True
                         ).first().alias("route_ids"),
                         pl.col("shape_directions").sort_by(
-                            "mean_interval",  
+                            "headway",  
                             nulls_last=True,
                             maintain_order=True
                         ).first().alias("shape_directions"),
-                        pl.col("mean_interval").min().alias("mean_interval"),
+                        pl.col("headway").min().alias("headway"),
                         pl.col(at+"_A").sort_by(
-                            "mean_interval",  
+                            "headway",  
                             nulls_last=True,
                             maintain_order=True
                         ).first().alias(at+"_A"),
                         pl.col(at+"_B").sort_by(
-                            "mean_interval",  
+                            "headway",  
                             nulls_last=True,
                             maintain_order=True
                         ).first().alias(at+"_B"),
                         pl.col("direction_id").sort_by(
-                            "mean_interval",  
+                            "headway",  
                             nulls_last=True,
                             maintain_order=True
                         ).first().alias("direction_id"),
                         pl.col("n_trips").sort_by(
-                            "mean_interval",  
+                            "headway",  
                             nulls_last=True,
                             maintain_order=True
                         ).first().alias("n_trips"),
@@ -2165,7 +2165,7 @@ class Feed:
                 gtfs_lf = gtfs_lf.group_by("edge_id").agg(
                     [
                         pl.col("route_ids").flatten().unique().alias("route_ids"),
-                        (1 / (1 / pl.col("mean_interval")).sum()).alias("mean_interval"),
+                        (1 / (1 / pl.col("headway")).sum()).alias("headway"),
                         pl.col("shape_direction").flatten().unique().alias("shape_directions"),
                         pl.col(at+"_A").first().alias(at+"_A"),
                         pl.col(at+"_B").first().alias(at+"_B"),
@@ -2181,13 +2181,13 @@ class Feed:
                 gtfs_lf = gtfs_lf.drop("route_ids")
 
         gtfs_lf = gtfs_lf.with_columns(
-            (pl.col("mean_interval") / 60).alias("mean_interval")
+            (pl.col("headway") / 60).alias("headway")
         ).filter(pl.col("n_trips") > min_trips)
 
         return gtfs_lf.collect()
 
 
-    def get_mean_speed_at_edges(            
+    def get_speed_at_edges(            
             self,
             date: datetime | date,
             start_time: datetime | time = time.min,
