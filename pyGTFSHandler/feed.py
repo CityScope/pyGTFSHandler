@@ -509,6 +509,15 @@ class Feed:
                 on=["route_id"],
                 how="left",
             )
+            lf = lf.with_columns(
+                pl.when(
+                    pl.col("route_id").is_null()
+                ).then(
+                    pl.col("trip_id")
+                ).otherwise(
+                    pl.col("route_id")
+                ).alias("route_id")
+            )
         else:
             lf = lf.with_columns(
                 pl.col("route_id").alias("trip_id"),
