@@ -244,7 +244,7 @@ def general_map(
     if m is None:
         m = folium.Map(
             location=[centroid.y, centroid.x],
-            zoom_start=11,
+            zoom_start=12,
             tiles="CartoDB positron",
         )
 
@@ -505,7 +505,7 @@ def general_map(
             for col in list(set(points_geojson.columns) - set(serializable_cols)):
                 if col == points_geojson.geometry.name:
                     continue 
-                
+
                 try:
                     points_geojson[col] = points_geojson[col].astype(str)
                     serializable_cols.append(col)
