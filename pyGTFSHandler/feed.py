@@ -896,8 +896,8 @@ class Feed:
     def _filter_by_time_range(
         self,
         data: pl.LazyFrame,
-        start_time: datetime | time = datetime.min,
-        end_time: datetime | time = datetime.max,
+        start_time: datetime | time = time(hour=0),
+        end_time: datetime | time = time(hour=23, minute=59, second=59),
     ) -> pl.LazyFrame:
         """
         Filters a LazyFrame based on a time-of-day range.
@@ -1021,8 +1021,8 @@ class Feed:
             end_date: datetime | date | None = None,
             date: datetime | date | None = None,
             date_type: str | list[str] | None = None,
-            start_time: datetime | time = datetime.min,
-            end_time: datetime | time = datetime.max,
+            start_time: datetime | time = time(hour=0),
+            end_time: datetime | time = time(hour=23, minute=59, second=59),
             route_types: list | int | str | None = None,
             frequencies:bool = True,
             in_aoi:bool = False, 
@@ -1097,8 +1097,8 @@ class Feed:
 
     def filter_by_time_range(
         self,
-        start_time: datetime | time = datetime.min,
-        end_time: datetime | time = datetime.max,
+        start_time: datetime | time = time(hour=0),
+        end_time: datetime | time = time(hour=23, minute=59, second=59),
     ) -> pl.LazyFrame:
         """
         Filters a LazyFrame based on a time-of-day range.
@@ -1126,8 +1126,8 @@ class Feed:
             end_date: datetime | date | None = None,
             date: datetime | date | None = None,
             date_type: str | list[str] | None = None,
-            start_time: datetime | time = datetime.min,
-            end_time: datetime | time = datetime.max,
+            start_time: datetime | time = time(hour=0),
+            end_time: datetime | time = time(hour=23, minute=59, second=59),
             route_types: list | int | str | None = None,
             frequencies:bool = True,
             in_aoi:bool = False, 
