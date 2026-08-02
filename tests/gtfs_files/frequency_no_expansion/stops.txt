@@ -1,0 +1,7 @@
+stop_id,stop_name,stop_lat,stop_lon
+S1,Stop 1,40.02,-3.69
+S2,Stop 2,40.01,-3.71
+S3,Stop 3,40.00,-3.70
+S4,Stop 4,40.01,-3.695
+S5,Stop 5,39.99,-3.70
+S6,Stop 6,39.98,-3.70

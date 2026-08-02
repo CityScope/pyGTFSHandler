@@ -1,9 +1,42 @@
+# -*- coding: utf-8 -*-
+"""GTFS stops.txt handling: loading, AOI filtering, and proximity clustering.
+
+Why this module exists and how it's organized:
+-----------------------------------------------
+- **Loading** (`_read_stops`): reads `stops.txt`, validates `stop_lat`/
+  `stop_lon` (drops null/non-finite/out-of-range coordinates and warns),
+  fills a missing `parent_station` with the stop's own id so every stop
+  always has one, and rejects a `stop_id` duplicated *within a single
+  source file* (a genuine data error) while leaving the same id reused
+  *across* different loaded feeds untouched (that's a multi-feed id-
+  collision concern, namespaced by `io.read_csv_lazy`'s `_file_<n>`
+  suffixing, not a `stops.txt`-internal one).
+- **AOI filtering** (`filter_by_aoi`): a cheap polars bounding-box
+  pre-filter, followed by a precise `geopandas`/`shapely` intersection --
+  the one place in this file geopandas does real geometric work, since
+  arbitrary-polygon containment isn't a reasonable thing to reimplement in
+  polars.
+- **Clustering** (`group_stops`/`_cluster_by_distance`): groups stops within
+  `distance` meters of one another (transitively -- a chain of stops each
+  close to the next all land in one cluster even if the two ends are far
+  apart) into a shared `parent_station`. This is done entirely in polars +
+  `scipy`: bucket stops into a lon/lat grid sized to `distance`
+  (`geo_polars.grid_cell_columns`), join each stop against only its own and
+  neighboring cells for cheap candidate pairs (never an all-pairs cross
+  join), keep pairs within the exact haversine distance
+  (`geo_polars.haversine_distance_m`), and take connected components of
+  that edge graph (`geo_polars.connected_components_from_edges`) -- no
+  scikit-learn, no UTM reprojection.
+"""
+
 import polars as pl
 import geopandas as gpd
 import pandas as pd
 from pathlib import Path
 from typing import Union, List
-from .. import utils, gtfs_checker
+from ..utils import gtfs_checker
+from ..utils import io
+from ..utils import geo_polars
 import os
 import warnings
 
@@ -64,7 +97,7 @@ class Stops:
         else:
             paths = [Path(p) for p in path]
 
-        self.lf = self.__read_stops(paths, stop_ids, check_files=check_files, min_file_id=min_file_id)
+        self.lf = self._read_stops(paths, stop_ids, check_files=check_files, min_file_id=min_file_id)
         
         if aoi is None:
             df = self.lf.select(
@@ -106,7 +139,7 @@ class Stops:
         self.mean_lon = mean_coords["mean_lon"][0]
         self.mean_lat = mean_coords["mean_lat"][0]
 
-    def __read_stops(
+    def _read_stops(
         self, paths, stop_ids: Union[List[str], None] = None, check_files=False, min_file_id=0
     ) -> pl.LazyFrame:
         """
@@ -123,7 +156,7 @@ class Stops:
         stop_paths: List[Path] = []
         file = "stops.txt"
         for p in paths:
-            new_p = gtfs_checker.search_file(p, file=file)
+            new_p = io.search_file(p, file=file)
             if new_p is None:
                 stop_paths.append(None)
                 warnings.warn(f"File {file} does not exist in {p}", UserWarning)
@@ -131,11 +164,11 @@ class Stops:
                 stop_paths.append(new_p)
 
         schema_dict, _ = gtfs_checker.get_df_schema_dict("stops.txt")
-        lf = utils.read_csv_list(stop_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id)
+        lf = io.read_csv_list(stop_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id)
         if (lf is None) or (lf.select(pl.len()).collect().item() == 0):
             raise Exception(f"No stops.txt file found for any {paths}")
         
-        lf = utils.filter_by_id_column(lf, "stop_id", stop_ids)
+        lf = geo_polars.filter_by_id_column(lf, "stop_id", stop_ids)
 
         if "parent_station" not in lf.collect_schema().names():
             lf = lf.with_columns(pl.lit(None).alias("parent_station"))
@@ -163,6 +196,27 @@ class Stops:
         lf = lf.filter(pl.col("stop_id").is_not_null() & (pl.col("stop_id") != ""))
         lf = lf.filter(pl.col("stop_lat").is_not_null() & pl.col("stop_lon").is_not_null())
         lf = lf.filter(pl.col("stop_lat").is_finite() & pl.col("stop_lon").is_finite())
+        lf = lf.filter(
+            pl.col("stop_lat").is_between(-90, 90) & pl.col("stop_lon").is_between(-180, 180)
+        )
+
+        # A duplicate `stop_id` *within a single source file* is a genuine
+        # data error (the same file can't mean two different physical stops
+        # by the same id). Duplicates *across* different loaded feeds are a
+        # separate, intentional case (`Feed(gtfs_dirs=[...])` stacking/
+        # multi-feed loading) and are handled there, not flagged here.
+        duplicate_ids = (
+            lf.group_by(["file_id", "stop_id"])
+            .agg(pl.len().alias("n"))
+            .filter(pl.col("n") > 1)
+            .select("stop_id")
+            .collect()["stop_id"]
+            .to_list()
+        )
+        if duplicate_ids:
+            raise Exception(
+                f"stops.txt has duplicate stop_id value(s) within the same file: {duplicate_ids}"
+            )
 
         return lf
 
@@ -219,6 +273,65 @@ class Stops:
 
         return final_lf, gdf
 
+    def _cluster_by_distance(self, stop_coords: pl.DataFrame, distance: float) -> pl.DataFrame:
+        """Assigns a `cluster` id (int) to each `stop_id` in `stop_coords`,
+        grouping stops transitively within `distance` meters of one another.
+
+        See `group_stops` for why this replaces the previous sklearn
+        `AgglomerativeClustering`-based approach.
+
+        Args:
+            stop_coords: DataFrame with `stop_id`, `stop_lat`, `stop_lon`
+                (one row per stop, no nulls, no duplicate `stop_id`).
+            distance: Clustering distance threshold, in meters. `<= 0` means
+                "no clustering" (every stop its own cluster).
+
+        Returns:
+            pl.DataFrame: `stop_id`, `cluster` (int).
+        """
+        n = stop_coords.height
+        if n == 0:
+            return pl.DataFrame({"stop_id": [], "cluster": []}, schema={"stop_id": pl.Utf8, "cluster": pl.Int64})
+        if n == 1 or distance <= 0:
+            return stop_coords.select("stop_id").with_row_index("cluster")
+
+        indexed = stop_coords.with_row_index("idx")
+        reference_latitude = indexed["stop_lat"].mean()
+        cell_exprs = geo_polars.grid_cell_columns(
+            "stop_lat", "stop_lon", cell_size_m=distance, reference_latitude_deg=reference_latitude
+        )
+        indexed = indexed.with_columns(cell_exprs)
+
+        # Candidate pairs: each point against every point sharing its own
+        # cell or one of the 8 neighboring cells (never an all-pairs join).
+        neighbor_offsets = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 0), (0, 1), (1, -1), (1, 0), (1, 1)]
+        neighbor_frames = [
+            indexed.select(
+                (pl.col("cell_lat") + d_lat).alias("cell_lat"),
+                (pl.col("cell_lon") + d_lon).alias("cell_lon"),
+                pl.col("idx").alias("idx_b"),
+                pl.col("stop_lat").alias("stop_lat_b"),
+                pl.col("stop_lon").alias("stop_lon_b"),
+            )
+            for d_lat, d_lon in neighbor_offsets
+        ]
+        neighbors = pl.concat(neighbor_frames)
+
+        candidate_pairs = indexed.select("idx", "stop_lat", "stop_lon", "cell_lat", "cell_lon").join(
+            neighbors, on=["cell_lat", "cell_lon"], how="inner"
+        ).filter(pl.col("idx") < pl.col("idx_b"))
+
+        candidate_pairs = candidate_pairs.with_columns(
+            geo_polars.haversine_distance_m("stop_lat", "stop_lon", "stop_lat_b", "stop_lon_b").alias("dist_m")
+        ).filter(pl.col("dist_m") <= distance)
+
+        edges = list(zip(candidate_pairs["idx"].to_list(), candidate_pairs["idx_b"].to_list()))
+        labels = geo_polars.connected_components_from_edges(n, edges)
+
+        return indexed.select("idx", "stop_id").with_columns(
+            pl.Series("cluster", [labels[i] for i in indexed["idx"].to_list()])
+        ).select("stop_id", "cluster")
+
     def group_stops(self, distance: float):
         """
         Groups nearby stops by spatial proximity and assigns consistent parent_station values.
@@ -229,36 +342,31 @@ class Stops:
         Raises:
             ValueError: If projection is missing or invalid.
         """
-        from sklearn.cluster import AgglomerativeClustering
-
-        gdf = self.gdf.copy()
-
-        if not gdf.crs or not gdf.crs.is_projected:
-            gdf = gdf.to_crs(gdf.estimate_utm_crs())
-
-        gdf["x"] = gdf.geometry.x
-        gdf["y"] = gdf.geometry.y
-        gdf = gdf.dropna(subset=["x","y","stop_id"])
-
-        if len(gdf) == 1:
-            gdf["cluster"] = 0
-        elif len(gdf) == 0:
-            gdf["cluster"] = pd.Series(dtype=int)
-        else:
-            gdf["cluster"] = (
-                AgglomerativeClustering(
-                    n_clusters=None,
-                    distance_threshold=distance,
-                    metric="euclidean",
-                    linkage="complete",
-                )
-                .fit(gdf[["x", "y"]])
-                .labels_
+        # Polars-native clustering: bucket stops into a lon/lat grid sized to
+        # `distance`, self-join each stop against its own cell plus the 8
+        # neighboring cells to get cheap candidate pairs (never an all-pairs
+        # cross join), keep pairs whose exact haversine distance is within
+        # `distance`, and take connected components of that edge graph --
+        # this is a *transitive* grouping (a chain of stops each within
+        # `distance` of the next all end up in one cluster, even if the two
+        # ends are farther apart than `distance`), unlike the "complete"
+        # linkage clustering this replaces. No sklearn, no UTM projection.
+        stop_coords = (
+            self.lf.select(["stop_id", "stop_lat", "stop_lon"])
+            .filter(
+                pl.col("stop_id").is_not_null()
+                & pl.col("stop_lat").is_not_null()
+                & pl.col("stop_lon").is_not_null()
             )
+            .unique("stop_id")
+            .collect()
+        )
+
+        cluster_labels = self._cluster_by_distance(stop_coords, distance)
 
         # This assumes parent_station info comes from self.lf (not self.gdf)
         parent_station_df = self.lf.select(["stop_id", "parent_station"])
-        stop_ids_df = pl.from_pandas(gdf[["stop_id", "cluster"]]).lazy()
+        stop_ids_df = cluster_labels.lazy()
 
         cluster_df = stop_ids_df.join(parent_station_df, on=["stop_id"], how="left")
 
@@ -360,14 +468,19 @@ class Stops:
         stop_paths: List[Path] = []
         file = "stops.txt"
         for p in paths:
-            new_p = gtfs_checker.search_file(p, file=file)
+            new_p = io.search_file(p, file=file)
             if new_p is None:
                 stop_paths.append(None)
             else:
                 stop_paths.append(new_p)
 
         schema_dict, _ = gtfs_checker.get_df_schema_dict("stops.txt")
-        stops = utils.read_csv_list(stop_paths, schema_overrides=schema_dict, check_files=True)
+        stops = io.read_csv_list(stop_paths, schema_overrides=schema_dict, check_files=True)
+        stops = stops.filter(
+            pl.col("stop_lat").is_not_null() & pl.col("stop_lon").is_not_null()
+            & pl.col("stop_lat").is_finite() & pl.col("stop_lon").is_finite()
+            & pl.col("stop_lat").is_between(-90, 90) & pl.col("stop_lon").is_between(-180, 180)
+        )
 
         if isinstance(stop_ids, list):
             stop_ids_lf = pl.LazyFrame({"stop_id": stop_ids})

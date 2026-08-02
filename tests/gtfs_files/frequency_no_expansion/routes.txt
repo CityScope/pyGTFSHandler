@@ -1,0 +1,2 @@
+route_id,agency_id,route_short_name,route_long_name,route_type
+R1,AG1,L1,Shape Test Line,3

@@ -1,0 +1,105 @@
+route_id,service_id,trip_id,trip_headsign,trip_short_name,direction_id,block_id,shape_id,wheelchair_accessible,bikes_allowed
+L1-CE-OQ,2025_Laborable_ENE_JUN,CE-OQ-LAB-INV1-2025,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2025_Laborable_ENE_JUN,OQ-CE-LAB-INV1-2025,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2025_Laborable_ENE_JUN,CE-PO-LAB-INV1-2025,Pablo de Olavide,Ciudad Expo - Pablo de Olavide,0,,,1,1
+L1-CE-OQ,2025_Laborable_ENE_JUN,PO-CE-LAB-INV1-2025,Ciudad Expo,Pablo de Olavide - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2025_Laborable_JUN_JUL,CE-OQ-LAB-V1-1-2025,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2025_Laborable_JUN_JUL,OQ-CE-LAB-V1-1-2025,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2025_Laborable_JUL_AGO,CE-OQ-LAB-V2-2025,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2025_Laborable_JUL_AGO,OQ-CE-LAB-V2-2025,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2025_Laborable_SEP_SEP,CE-OQ-LAB-V1-2-2025,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2025_Laborable_SEP_SEP,OQ-CE-LAB-V1-2-2025,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2025_Laborable_SEP_DIC,CE-OQ-LAB-INV2-2025,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2025_Laborable_SEP_DIC,OQ-CE-LAB-INV2-2025,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2025_Laborable_SEP_DIC,CE-PO-LAB-INV2-2025,Pablo de Olavide,Ciudad Expo - Pablo de Olavide,0,,,1,1
+L1-CE-OQ,2025_Laborable_SEP_DIC,PO-CE-LAB-INV2-2025,Ciudad Expo,Pablo de Olavide - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2025_Viernes_ENE_JUN,CE-OQ-VIE-INV1-2025,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2025_Viernes_ENE_JUN,OQ-CE-VIE-INV1-2025,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2025_Viernes_ENE_JUN,CE-PO-VIE-INV1-2025,Pablo de Olavide,Ciudad Expo - Pablo de Olavide,0,,,1,1
+L1-CE-OQ,2025_Viernes_ENE_JUN,PO-CE-VIE-INV1-2025,Ciudad Expo,Pablo de Olavide - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2025_Viernes_JUN_JUL,CE-OQ-VIE-V1-1-2025,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2025_Viernes_JUN_JUL,OQ-CE-VIE-V1-1-2025,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2025_Viernes_JUL_AGO,CE-OQ-VIE-V2-2025,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2025_Viernes_JUL_AGO,OQ-CE-VIE-V2-2025,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2025_Viernes_SEP_SEP,CE-OQ-VIE-V1-2-2025,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2025_Viernes_SEP_SEP,OQ-CE-VIE-V1-2-2025,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2025_Viernes_SEP_DIC,CE-OQ-VIE-INV2-2025,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2025_Viernes_SEP_DIC,OQ-CE-VIE-INV2-2025,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2025_Viernes_SEP_DIC,CE-PO-VIE-INV2-2025,Pablo de Olavide,Ciudad Expo - Pablo de Olavide,0,,,1,1
+L1-CE-OQ,2025_Viernes_SEP_DIC,PO-CE-VIE-INV2-2025,Ciudad Expo,Pablo de Olavide - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2025_Sabado_ENE_JUN,CE-OQ-SAB-INV1-2025,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2025_Sabado_ENE_JUN,OQ-CE-SAB-INV1-2025,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2025_Sabado_JUN_JUL,CE-OQ-SAB-V1-1-2025,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2025_Sabado_JUN_JUL,OQ-CE-SAB-V1-1-2025,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2025_Sabado_JUL_AGO,CE-OQ-SAB-V2-2025,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2025_Sabado_JUL_AGO,OQ-CE-SAB-V2-2025,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2025_Sabado_SEP_SEP,CE-OQ-SAB-V1-2-2025,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2025_Sabado_SEP_SEP,OQ-CE-SAB-V1-2-2025,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2025_Sabado_SEP_DIC,CE-OQ-SAB-INV2-2025,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2025_Sabado_SEP_DIC,OQ-CE-SAB-INV2-2025,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2025_Domingo_ENE_JUN,CE-OQ-DOM-INV1-2025,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2025_Domingo_ENE_JUN,OQ-CE-DOM-INV1-2025,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2025_Domingo_JUN_JUL,CE-OQ-DOM-V1-1-2025,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2025_Domingo_JUN_JUL,OQ-CE-DOM-V1-1-2025,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2025_Domingo_JUL_AGO,CE-OQ-DOM-V2-2025,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2025_Domingo_JUL_AGO,OQ-CE-DOM-V2-2025,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2025_Domingo_SEP_SEP,CE-OQ-DOM-V1-2-2025,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2025_Domingo_SEP_SEP,OQ-CE-DOM-V1-2-2025,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2025_Domingo_SEP_DIC,CE-OQ-DOM-INV2-2025,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2025_Domingo_SEP_DIC,OQ-CE-DOM-INV2-2025,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2026_Laborable_ENE_JUN,CE-OQ-LAB-INV1-2026,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2026_Laborable_ENE_JUN,OQ-CE-LAB-INV1-2026,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2026_Laborable_ENE_JUN,CE-PO-LAB-INV1-2026,Pablo de Olavide,Ciudad Expo - Pablo de Olavide,0,,,1,1
+L1-CE-OQ,2026_Laborable_ENE_JUN,PO-CE-LAB-INV1-2026,Ciudad Expo,Pablo de Olavide - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2026_Laborable_JUN_JUL,CE-OQ-LAB-V1-1-2026,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2026_Laborable_JUN_JUL,OQ-CE-LAB-V1-1-2026,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2026_Laborable_JUN_JUL,CE-PO-LAB-V1-1-2026,Pablo de Olavide,Ciudad Expo - Pablo de Olavide,0,,,1,1
+L1-CE-OQ,2026_Laborable_JUN_JUL,PO-CE-LAB-V1-1-2026,Ciudad Expo,Pablo de Olavide - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2026_Laborable_JUL_AGO,CE-OQ-LAB-V2-2026,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2026_Laborable_JUL_AGO,OQ-CE-LAB-V2-2026,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2026_Laborable_SEP_SEP,CE-OQ-LAB-V1-2-2026,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2026_Laborable_SEP_SEP,OQ-CE-LAB-V1-2-2026,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2026_Laborable_SEP_SEP,CE-PO-LAB-V1-2-2026,Pablo de Olavide,Ciudad Expo - Pablo de Olavide,1,,,1,1
+L1-CE-OQ,2026_Laborable_SEP_SEP,PO-CE-LAB-V1-2-2026,Ciudad Expo,Pablo de Olavide - Ciudad Expo,0,,,1,1
+L1-CE-OQ,2026_Laborable_SEP_DIC,CE-OQ-LAB-INV2-2026,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2026_Laborable_SEP_DIC,OQ-CE-LAB-INV2-2026,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2026_Laborable_SEP_DIC,CE-PO-LAB-INV2-2026,Pablo de Olavide,Ciudad Expo - Pablo de Olavide,0,,,1,1
+L1-CE-OQ,2026_Laborable_SEP_DIC,PO-CE-LAB-INV2-2026,Ciudad Expo,Pablo de Olavide - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2026_Viernes_ENE_JUN,CE-OQ-VIE-INV1-2026,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2026_Viernes_ENE_JUN,OQ-CE-VIE-INV1-2026,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2026_Viernes_ENE_JUN,CE-PO-VIE-INV1-2026,Pablo de Olavide,Ciudad Expo - Pablo de Olavide,0,,,1,1
+L1-CE-OQ,2026_Viernes_ENE_JUN,PO-CE-VIE-INV1-2026,Ciudad Expo,Pablo de Olavide - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2026_Viernes_JUN_JUL,CE-OQ-VIE-V1-1-2026,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2026_Viernes_JUN_JUL,OQ-CE-VIE-V1-1-2026,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2026_Viernes_JUN_JUL,CE-PO-VIE-V1-1-2026,Pablo de Olavide,Ciudad Expo - Pablo de Olavide,0,,,1,1
+L1-CE-OQ,2026_Viernes_JUN_JUL,PO-CE-VIE-V1-1-2026,Ciudad Expo,Pablo de Olavide - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2026_Viernes_JUL_AGO,CE-OQ-VIE-V2-2026,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2026_Viernes_JUL_AGO,OQ-CE-VIE-V2-2026,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2026_Viernes_SEP_SEP,CE-OQ-VIE-V1-2-2026,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2026_Viernes_SEP_SEP,OQ-CE-VIE-V1-2-2026,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2026_Viernes_SEP_SEP,CE-PO-VIE-V1-2-2026,Pablo de Olavide,Ciudad Expo - Pablo de Olavide,0,,,1,1
+L1-CE-OQ,2026_Viernes_SEP_SEP,PO-CE-VIE-V1-2-2026,Ciudad Expo,Pablo de Olavide - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2026_Viernes_SEP_DIC,CE-OQ-VIE-INV2-2026,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2026_Viernes_SEP_DIC,OQ-CE-VIE-INV2-2026,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2026_Viernes_SEP_DIC,CE-PO-VIE-INV2-2026,Pablo de Olavide,Ciudad Expo - Pablo de Olavide,0,,,1,1
+L1-CE-OQ,2026_Viernes_SEP_DIC,PO-CE-VIE-INV2-2026,Ciudad Expo,Pablo de Olavide - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2026_Sabado_ENE_JUN,CE-OQ-SAB-INV1-2026,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2026_Sabado_ENE_JUN,OQ-CE-SAB-INV1-2026,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2026_Sabado_JUN_JUL,CE-OQ-SAB-V1-1-2026,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2026_Sabado_JUN_JUL,OQ-CE-SAB-V1-1-2026,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2026_Sabado_JUL_AGO,CE-OQ-SAB-V2-2026,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2026_Sabado_JUL_AGO,OQ-CE-SAB-V2-2026,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2026_Sabado_SEP_SEP,CE-OQ-SAB-V1-2-2026,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2026_Sabado_SEP_SEP,OQ-CE-SAB-V1-2-2026,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2026_Sabado_SEP_DIC,CE-OQ-SAB-INV2-2026,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2026_Sabado_SEP_DIC,OQ-CE-SAB-INV2-2026,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2026_Domingo_ENE_JUN,CE-OQ-DOM-INV1-2026,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2026_Domingo_ENE_JUN,OQ-CE-DOM-INV1-2026,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2026_Domingo_JUN_JUL,CE-OQ-DOM-V1-1-2026,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2026_Domingo_JUN_JUL,OQ-CE-DOM-V1-1-2026,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2026_Domingo_JUL_AGO,CE-OQ-DOM-V2-2026,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2026_Domingo_JUL_AGO,OQ-CE-DOM-V2-2026,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2026_Domingo_SEP_SEP,CE-OQ-DOM-V1-2-2026,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2026_Domingo_SEP_SEP,OQ-CE-DOM-V1-2-2026,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1
+L1-CE-OQ,2026_Domingo_SEP_DIC,CE-OQ-DOM-INV2-2026,Olivar de Quintos,Ciudad Expo - Olivar de Quintos,0,,,1,1
+L1-CE-OQ,2026_Domingo_SEP_DIC,OQ-CE-DOM-INV2-2026,Ciudad Expo,Olivar de Quintos - Ciudad Expo,1,,,1,1

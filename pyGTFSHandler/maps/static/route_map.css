@@ -1,0 +1,396 @@
+.gtfs-rm * { box-sizing: border-box; }
+.gtfs-rm {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+/* ---- stop marker icon: plain emoji, no background "dot" ---- */
+.gtfs-rm-stop-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  line-height: 1;
+  white-space: nowrap;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
+  transition: transform 0.15s ease, filter 0.15s ease;
+}
+.gtfs-rm-stop-icon.gtfs-rm-selected {
+  position: relative;
+  transform: scale(1.25);
+  filter:
+    drop-shadow(1.5px 0 0 #111) drop-shadow(-1.5px 0 0 #111)
+    drop-shadow(0 1.5px 0 #111) drop-shadow(0 -1.5px 0 #111)
+    drop-shadow(0 2px 4px rgba(0, 0, 0, 0.55));
+  z-index: 10000 !important;
+}
+
+/* ---- clustered-stops bubble (shown instead of individual markers below
+   CLUSTER_ZOOM): dominant mode's emoji plus a count badge, clickable to fly
+   in and split the cluster back into its individual stops. ---- */
+.gtfs-rm-cluster {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  line-height: 1;
+  background: #ffffff;
+  border: 2px solid #2a5adf;
+  border-radius: 50%;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+}
+.gtfs-rm-cluster-count {
+  position: absolute;
+  bottom: -4px;
+  right: -6px;
+  min-width: 16px;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: #2a5adf;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+/* ---- average-headway line shown above a stop timetable, pinned alongside
+   the route-badge filter row so it stays visible regardless of scrolling
+   and updates live as that filter is toggled. ---- */
+.gtfs-rm-headway {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #555;
+}
+
+/* ---- line badges shown next to a highlighted stop's emoji: at most 4
+   visible at once, the rest reachable by scrolling. The scrollbar gets its
+   own reserved strip *below* the icon row (padding-bottom) and is always
+   rendered (overflow-x: scroll, not auto) rather than an overlay track
+   that would otherwise cover the icons themselves. ---- */
+.gtfs-rm-marker-badges {
+  position: absolute;
+  left: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  margin-left: 3px;
+  display: flex;
+  gap: 2px;
+  filter: none;
+  max-width: 98px;
+  overflow-x: scroll;
+  overflow-y: hidden;
+  padding-bottom: 5px;
+  scrollbar-width: thin;
+}
+.gtfs-rm-marker-badges::-webkit-scrollbar { height: 4px; }
+.gtfs-rm-marker-badges::-webkit-scrollbar-track { background: rgba(255, 255, 255, 0.5); border-radius: 2px; }
+.gtfs-rm-marker-badges::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.6); border-radius: 2px; }
+.gtfs-rm-marker-badges .gtfs-rm-badge {
+  font-size: 9px;
+  height: 15px;
+  min-width: 15px;
+  padding: 1px 4px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+}
+
+/* ---- filter control panel ---- */
+.gtfs-rm-filter-panel {
+  background: rgba(255, 255, 255, 0.96);
+  border-radius: 10px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+  padding: 10px 12px;
+  font-size: 13px;
+  color: #222;
+  max-width: 220px;
+}
+.gtfs-rm-filter-panel h4 {
+  margin: 0 0 6px 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.gtfs-rm-filter-panel label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  cursor: pointer;
+}
+.gtfs-rm-lines-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: #2a5adf;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  line-height: 1.2;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+.gtfs-rm-lines-btn:hover { background: #1e46b8; }
+.gtfs-rm-lines-btn:active { transform: scale(0.98); }
+
+/* ---- generic pill buttons (Select all / Clear all, etc.) ---- */
+.gtfs-rm-btn {
+  padding: 7px 14px;
+  border: none;
+  border-radius: 8px;
+  background: #2a5adf;
+  color: #fff;
+  font-size: 12.5px;
+  font-weight: 600;
+  font-family: inherit;
+  line-height: 1.2;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+.gtfs-rm-btn:hover { background: #1e46b8; }
+.gtfs-rm-btn:active { transform: scale(0.97); }
+.gtfs-rm-btn.gtfs-rm-btn-secondary {
+  background: #eef0f4;
+  color: #333;
+}
+.gtfs-rm-btn.gtfs-rm-btn-secondary:hover { background: #e0e3e9; }
+
+/* ---- "Filter lines" box: per-route checkboxes grouped by mode ---- */
+.gtfs-rm-linefilter-actions {
+  display: flex;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #eee;
+}
+.gtfs-rm-linefilter-group { margin-bottom: 10px; }
+.gtfs-rm-linefilter-mode {
+  font-size: 11px;
+  font-weight: 600;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  margin: 8px 0 4px 0;
+}
+.gtfs-rm-linefilter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  cursor: pointer;
+  font-size: 12.5px;
+}
+.gtfs-rm-linefilter-name { overflow-wrap: break-word; }
+
+/* ---- floating info boxes (timetable / trip) ---- */
+.gtfs-rm-box {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 9999;
+  background: rgba(255, 255, 255, 0.98);
+  border-radius: 12px;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.3);
+  max-width: 480px;
+  max-height: 70%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.gtfs-rm-box-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid #eee;
+  gap: 8px;
+}
+.gtfs-rm-box-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: #222;
+}
+.gtfs-rm-box-close {
+  cursor: pointer;
+  border: none;
+  background: none;
+  font-size: 18px;
+  color: #888;
+  line-height: 1;
+  padding: 0 4px;
+}
+.gtfs-rm-box-close:hover { color: #222; }
+
+/* Route-icon row: pinned above the scrollable body, always visible. */
+.gtfs-rm-box-pinned {
+  flex: 0 0 auto;
+  padding: 8px 14px 0 14px;
+}
+
+/* The body holds up to two independently-scrollable sections (per-platform
+   breakdown, timetable) stacked in a column, so a long stop_id list can
+   never push the timetable out of view -- each scrolls on its own instead
+   of one section eating all the space. */
+.gtfs-rm-box-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  padding: 10px 14px 14px 14px;
+}
+.gtfs-rm-box-platforms-scroll {
+  flex: 0 1 auto;
+  max-height: 140px;
+  overflow-y: auto;
+  padding-right: 4px;
+  margin-bottom: 8px;
+  scrollbar-width: thin;
+}
+.gtfs-rm-box-platforms-scroll::-webkit-scrollbar { width: 4px; }
+.gtfs-rm-box-platforms-scroll::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.05); border-radius: 2px; }
+.gtfs-rm-box-platforms-scroll::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.35); border-radius: 2px; }
+.gtfs-rm-box-tablewrap {
+  flex: 1 1 auto;
+  min-height: 90px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.gtfs-rm-box-tablewrap::-webkit-scrollbar { width: 5px; }
+.gtfs-rm-box-tablewrap::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.05); border-radius: 2px; }
+.gtfs-rm-box-tablewrap::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.35); border-radius: 2px; }
+.gtfs-rm-nav-btn {
+  border: none;
+  background: #f0f0f0;
+  border-radius: 6px;
+  width: 26px;
+  height: 26px;
+  cursor: pointer;
+  font-size: 14px;
+}
+.gtfs-rm-nav-btn:hover { background: #e0e0e0; }
+
+/* ---- badge row (route short_name pills): wraps to fit the box's width
+   instead of needing a horizontal slider ---- */
+.gtfs-rm-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-bottom: 6px;
+}
+.gtfs-rm-badge-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  max-height: 140px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+.gtfs-rm-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 8px;
+  min-width: 26px;
+  height: 22px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.gtfs-rm-badge.square { border-radius: 6px; }
+.gtfs-rm-badge.circle { border-radius: 999px; }
+
+/* ---- clickable line badges that filter the timetable, Google-Maps-style ---- */
+.gtfs-rm-badge.gtfs-rm-badge-filter {
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+.gtfs-rm-badge.gtfs-rm-badge-filter:hover { opacity: 0.85; }
+.gtfs-rm-badge.gtfs-rm-badge-filter.active {
+  opacity: 1;
+  box-shadow: 0 0 0 2px #111;
+  transform: scale(1.05);
+}
+
+/* ---- per-platform (stop_id) line breakdown under a station's badge row ---- */
+.gtfs-rm-platforms {
+  margin-bottom: 8px;
+  padding-top: 4px;
+  border-top: 1px dashed #eee;
+}
+.gtfs-rm-platform-row { margin-bottom: 6px; }
+.gtfs-rm-platform-row .gtfs-rm-badge-row { margin-bottom: 0; }
+.gtfs-rm-platform-name {
+  font-size: 11px;
+  color: #888;
+  margin-bottom: 3px;
+}
+
+/* ---- compact line grid, one per stop in the trip-itinerary table: up to
+   4 rows of 3 (12 icons) visible, more reachable by scrolling. The
+   scrollbar gets its own reserved strip (padding-right) so it never
+   overlaps the icons, and is always rendered (overflow-y: scroll). ---- */
+.gtfs-rm-badge-grid-mini {
+  display: grid;
+  grid-template-columns: repeat(3, auto);
+  gap: 3px;
+  max-height: 84px;
+  max-width: 110px;
+  overflow-y: scroll;
+  padding-right: 5px;
+  scrollbar-width: thin;
+}
+.gtfs-rm-badge-grid-mini::-webkit-scrollbar { width: 4px; }
+.gtfs-rm-badge-grid-mini::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.05); border-radius: 2px; }
+.gtfs-rm-badge-grid-mini::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.35); border-radius: 2px; }
+.gtfs-rm-badge-grid-mini .gtfs-rm-badge {
+  font-size: 10px;
+  height: 18px;
+  min-width: 18px;
+  padding: 2px 5px;
+}
+
+/* ---- timetable / trip tables: fixed layout + wrapping cells so long
+   route/destination names never force the box to scroll horizontally ---- */
+.gtfs-rm-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.gtfs-rm-table th {
+  text-align: left;
+  font-size: 11px;
+  color: #888;
+  font-weight: 600;
+  padding: 4px 6px;
+  border-bottom: 1px solid #eee;
+  position: sticky;
+  top: 0;
+  background: #fff;
+}
+.gtfs-rm-table td {
+  padding: 5px 6px;
+  border-bottom: 1px solid #f2f2f2;
+  vertical-align: middle;
+  white-space: normal;
+  overflow-wrap: break-word;
+}
+.gtfs-rm-table tr.gtfs-rm-row-clickable { cursor: pointer; }
+.gtfs-rm-table tr.gtfs-rm-row-clickable:hover { background: #f7f9ff; }
+.gtfs-rm-time { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.gtfs-rm-dest-parent { color: #999; font-size: 11px; display: block; }
+
+/* ---- stop names in the trip-itinerary box: click to zoom to the stop ---- */
+.gtfs-rm-stop-link { cursor: pointer; }
+.gtfs-rm-stop-link:hover { text-decoration: underline; color: #2a5adf; }

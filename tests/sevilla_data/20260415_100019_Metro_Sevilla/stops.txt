@@ -1,0 +1,43 @@
+stop_id,stop_code,stop_name,stop_desc,stop_lat,stop_lon,zone_id,stop_url,location_type,parent_station,wheelchair_boarding
+L1-E1,,"Ciudad Expo","Av. de los Descubrimientos, s/n",37.3490704814239,-6.052050356808763,z0,,1,,1
+L1-E2,,"Cavaleri","Plaza de Jagüey Grande, s/n",37.353281850153,-6.0470309911828,z0,,1,,1
+L1-E3,,"San Juan Alto","Urbanización Montelar (Junto a la autovía A-8057)",37.361609128565,-6.0385701877616,z0,,1,,1
+L1-E4,,"San Juan Bajo","Barrio Bajo (Junto al Puente Basculante de San Juan)",37.366930105293,-6.0252349886692,z0,,1,,1
+L1-E5,,"Blas Infante","Avda. de Blas Infante, s/n (Esquina Glorieta de Carlos Cano)",37.373099066671,-6.0105479562216,z1,,1,,1
+L1-E6,,"Parque de los Príncipes","Av. República Argentina, 39 (Esquina calle Virgen de Aguas Santas)",37.37673540403,-6.0040945613311,z1,,1,,1
+L1-E7,,"Plaza de Cuba","Av. República Argentina, 7 (Esquina calle Virgen de Consolación)",37.378998966979,-5.9996513349554,z1,,1,,1
+L1-E8,,"Puerta Jerez","Paseo de Cristina, s/n (Junto al Edificio Cristina)",37.3819359553,-5.9941221082221,z1,,1,,1
+L1-E9,,"Prado de San Sebastián","Av. de Carlos V, s/n (Junto a los Jardines del Prado frente a los Juzgados)",37.380618800597,-5.9872663819819,z1,,1,,1
+L1-E10,,"San Bernardo","c/ Enramadilla, s/n (Frente a la estación de cercanías de San Bernardo)",37.378397914551,-5.9790044340831,z1,,1,,1
+L1-E11,,"Nervión","Eduardo Dato Av. de Eduardo Dato, 22 (Esquina Av. de San Francisco Javier). Eduardo Dato Av. de Eduardo Dato, 57 (Esquina calle Santo Domingo de la Calzada)",37.383027172741,-5.9741825664079,z1,,1,,1
+L1-E12,,"Gran Plaza","Eduardo Dato Av. de Eduardo Dato, 99 (Esquina Gran Plaza)",37.381616555328,-5.9667195447336,z1,,1,,1
+L1-E13,,"1º de Mayo","Mayo Gayarre Av. Federico Mayo Gayarre, 31 (Frente calle Columela)",37.380687299,-5.9556213079565,z1,,1,,1
+L1-E14,,"Amate","Los Gavilanes Av. de los Gavilanes, s/n (Esquina calle Puerto del Escudo)",37.375759490449,-5.9527245222207,z1,,1,,1
+L1-E15,,"La Plata","Los Gavilanes Av. de los Gavilanes, 21 (Esquina calle Virgen de la Saleta)",37.371402628806,-5.951588753856,z1,,1,,1
+L1-E16,,"Cocheras","Parque de la Música, s/n",37.367625340448,-5.9504193107235,z1,,1,,1
+L1-E17,,"Pablo de Olavide","Universidad Pablo de Olavide (Autovía A-376)",37.353874279667,-5.9433303100607,z1,,1,,1
+L1-E18,,"Condequinto","Avenida San Jose de Calasanz, 4",37.346416130099,-5.936324752177,z2,,1,,1
+L1-E19,,"Montequinto","Avenida de Montequinto, s/n (Esquina con Calle Ferrara)",37.342202569904,-5.9345606027739,z2,,1,,1
+L1-E20,,"Europa","Avenida de Montequinto, 7",37.337515050316,-5.9352032167456,z2,,1,,1
+L1-E21,,"Olivar de Quintos","Avenida Condes de Ybarra (Esquina con Calle de la Jara)",37.328980350407,-5.9386973132022,z2,,1,,1
+L1-1,,"Ciudad Expo","Av. de los Descubrimientos, s/n",37.3490704814239,-6.052050356808763,z0,,0,L1-E1,1
+L1-2,,"Cavaleri","Plaza de Jagüey Grande, s/n",37.353281850153,-6.0470309911828,z0,,0,L1-E2,1
+L1-3,,"San Juan Alto","Urbanización Montelar (Junto a la autovía A-8057)",37.361609128565,-6.0385701877616,z0,,0,L1-E3,1
+L1-4,,"San Juan Bajo","Barrio Bajo (Junto al Puente Basculante de San Juan)",37.366930105293,-6.0252349886692,z0,,0,L1-E4,1
+L1-5,,"Blas Infante","Avda. de Blas Infante, s/n (Esquina Glorieta de Carlos Cano)",37.373099066671,-6.0105479562216,z1,,0,L1-E5,1
+L1-6,,"Parque de los Príncipes","Av. República Argentina, 39 (Esquina calle Virgen de Aguas Santas)",37.37673540403,-6.0040945613311,z1,,0,L1-E6,1
+L1-7,,"Plaza de Cuba","Av. República Argentina, 7 (Esquina calle Virgen de Consolación)",37.378998966979,-5.9996513349554,z1,,0,L1-E7,1
+L1-8,,"Puerta Jerez","Paseo de Cristina, s/n (Junto al Edificio Cristina)",37.3819359553,-5.9941221082221,z1,,0,L1-E8,1
+L1-9,,"Prado de San Sebastián","Av. de Carlos V, s/n (Junto a los Jardines del Prado frente a los Juzgados)",37.380618800597,-5.9872663819819,z1,,0,L1-E9,1
+L1-10,,"San Bernardo","c/ Enramadilla, s/n (Frente a la estación de cercanías de San Bernardo)",37.378397914551,-5.9790044340831,z1,,0,L1-E10,1
+L1-11,,"Nervión","Eduardo Dato Av. de Eduardo Dato, 22 (Esquina Av. de San Francisco Javier). Eduardo Dato Av. de Eduardo Dato, 57 (Esquina calle Santo Domingo de la Calzada)",37.383027172741,-5.9741825664079,z1,,0,L1-E11,1
+L1-12,,"Gran Plaza","Eduardo Dato Av. de Eduardo Dato, 99 (Esquina Gran Plaza)",37.381616555328,-5.9667195447336,z1,,0,L1-E12,1
+L1-13,,"1º de Mayo","Mayo Gayarre Av. Federico Mayo Gayarre, 31 (Frente calle Columela)",37.380687299,-5.9556213079565,z1,,0,L1-E13,1
+L1-14,,"Amate","Los Gavilanes Av. de los Gavilanes, s/n (Esquina calle Puerto del Escudo)",37.375759490449,-5.9527245222207,z1,,0,L1-E14,1
+L1-15,,"La Plata","Los Gavilanes Av. de los Gavilanes, 21 (Esquina calle Virgen de la Saleta)",37.371402628806,-5.951588753856,z1,,0,L1-E15,1
+L1-16,,"Cocheras","Parque de la Música, s/n",37.367625340448,-5.9504193107235,z1,,0,L1-E16,1
+L1-17,,"Pablo de Olavide","Universidad Pablo de Olavide (Autovía A-376)",37.353874279667,-5.9433303100607,z1,,0,L1-E17,1
+L1-18,,"Condequinto","Avenida San Jose de Calasanz, 4",37.346416130099,-5.936324752177,z2,,0,L1-E18,1
+L1-19,,"Montequinto","Avenida de Montequinto, s/n (Esquina con Calle Ferrara)",37.342202569904,-5.9345606027739,z2,,0,L1-E19,1
+L1-20,,"Europa","Avenida de Montequinto, 7",37.337515050316,-5.9352032167456,z2,,0,L1-E20,1
+L1-21,,"Olivar de Quintos","Avenida Condes de Ybarra (Esquina con Calle de la Jara)",37.328980350407,-5.9386973132022,z2,,0,L1-E21,1

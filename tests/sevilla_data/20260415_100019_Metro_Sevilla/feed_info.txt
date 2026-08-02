@@ -1,0 +1,2 @@
+feed_publisher_name,feed_publisher_url,feed_lang,feed_start_date,feed_end_date,feed_version
+Metro de Sevilla,https://metro-sevilla.es/google-transit/google_transit.zip,es,20250101,20261231,2.13

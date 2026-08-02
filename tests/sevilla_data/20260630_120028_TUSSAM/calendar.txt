@@ -1,0 +1,5 @@
+service_id,monday,tuesday,wednesday,thursday,friday,saturday,sunday,start_date,end_date
+IN2FES35,0,0,0,0,0,0,1,20260705,20261004
+IN2LAB35,1,1,1,1,0,0,0,20260629,20261004
+IN2SAB35,0,0,0,0,0,1,0,20260704,20261004
+IN2VIE35,0,0,0,0,1,0,0,20260703,20261004

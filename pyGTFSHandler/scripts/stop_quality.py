@@ -5,8 +5,9 @@ import os
 import argparse
 
 from pyGTFSHandler.feed import Feed
-import pyGTFSHandler.gtfs_checker as gtfs_checker
-import pyGTFSHandler.processing_helper as processing_helper
+import pyGTFSHandler.utils.gtfs_checker as gtfs_checker
+import pyGTFSHandler.utils.io as io
+import pyGTFSHandler.utils.processing_helpers as processing_helper
 from datetime import datetime, date, time
 import polars as pl 
 from shapely import wkt
@@ -196,9 +197,9 @@ if (not overwrite) and os.path.isdir(os.path.join(processed_gtfs_folder,filename
     file_path = os.path.join(processed_gtfs_folder,filename)
 else:
     if check_files:
-        file_path = gtfs_checker.preprocess_gtfs(orig_file,processed_gtfs_folder)
+        file_path = io.preprocess_gtfs(orig_file,processed_gtfs_folder)
     else:
-        file_path = gtfs_checker.unzip(orig_file,processed_gtfs_folder)
+        file_path = io.unzip(orig_file,processed_gtfs_folder)
 
 if (not overwrite) and os.path.isfile(os.path.join(file_path,"stop_intervals.gpkg")):
     warnings.warn(f"Skipping {file_path} as stop_intervals.gpkg already exists.") 

@@ -1,7 +1,26 @@
+# -*- coding: utf-8 -*-
+"""GTFS trips.txt handling: loading and `service_id`/`trip_id`/`route_id`
+filtering.
+
+Why this module exists and how it's organized:
+-----------------------------------------------
+Kept deliberately thin: `_read_trips` reads the file, applies the three id
+filters via `geo_polars.filter_by_id_column`, and backfills three optional GTFS
+columns this codebase relies on elsewhere with an all-null default when the
+feed omits them -- `direction_id` (cast to a nullable int), and
+`trip_headsign`/`shape_id` (used respectively by frequency-template
+deduplication in `models/frequencies.py` and by the real-shape-geometry
+lookup in `models/shapes.py`/`Feed.load_shapes`). Without these defaults,
+either of those would raise a missing-column error the moment a feed simply
+didn't bother to include an optional field.
+"""
+
 from pathlib import Path
 import polars as pl
 from typing import Optional, List, Union
-from .. import utils, gtfs_checker
+from ..utils import geo_polars
+from ..utils import gtfs_checker
+from ..utils import io
 import os
 import warnings
 
@@ -41,13 +60,7 @@ class Trips:
         else:
             paths = [Path(p) for p in path]
 
-        if service_ids is not None:
-            service_ids = [
-                sid[:-6] if (sid is not None and sid.endswith("_night")) else sid
-                for sid in service_ids
-            ]
-
-        self.lf = self.__read_trips(paths,service_ids, trip_ids, route_ids, check_files=check_files, min_file_id=min_file_id)
+        self.lf = self._read_trips(paths,service_ids, trip_ids, route_ids, check_files=check_files, min_file_id=min_file_id)
         if (service_ids is not None) or (route_ids is not None):
             self.trip_ids = (
                 self.lf.select("trip_id").unique().collect()["trip_id"].to_list()
@@ -58,7 +71,7 @@ class Trips:
         if (self.trip_ids is not None) and (len(self.trip_ids) > 0) and (self.trip_ids[0] is None):
             self.trip_ids = []
 
-    def __read_trips(
+    def _read_trips(
         self,
         paths,
         service_ids: Optional[List[str]],
@@ -81,7 +94,7 @@ class Trips:
         trip_paths: List[Path] = []
         file = "trips.txt"
         for p in paths:
-            new_p = gtfs_checker.search_file(p, file=file)
+            new_p = io.search_file(p, file=file)
             if new_p is None:
                 trip_paths.append(None)
                 warnings.warn(f"File {file} does not exist in {p}", UserWarning)
@@ -90,16 +103,24 @@ class Trips:
 
 
         schema_dict, _ = gtfs_checker.get_df_schema_dict("trips.txt")
-        trips = utils.read_csv_list(trip_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id)
+        trips = io.read_csv_list(trip_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id)
         if (trips is None) or (trips.select(pl.len()).collect().item() == 0):
             raise Exception(f"No trips.txt file found for any {paths}")
         
-        trips = utils.filter_by_id_column(trips, "service_id", service_ids)
-        trips = utils.filter_by_id_column(trips, "trip_id", trip_ids)
-        trips = utils.filter_by_id_column(trips, "route_id", route_ids)
-        if "direction_id" not in trips.collect_schema().names():
+        trips = geo_polars.filter_by_id_column(trips, "service_id", service_ids)
+        trips = geo_polars.filter_by_id_column(trips, "trip_id", trip_ids)
+        trips = geo_polars.filter_by_id_column(trips, "route_id", route_ids)
+        existing_columns = trips.collect_schema().names()
+        if "direction_id" not in existing_columns:
             trips = trips.with_columns(pl.lit(None).alias("direction_id"))
 
         trips = trips.with_columns(pl.col("direction_id").cast(int).alias("direction_id"))
+
+        # `trip_headsign` and `shape_id` are optional per the GTFS spec, but
+        # downstream code (frequency-template deduplication, shape lookups)
+        # expects them to always be present, even as an all-null column.
+        for optional_column in ("trip_headsign", "shape_id"):
+            if optional_column not in existing_columns:
+                trips = trips.with_columns(pl.lit(None, dtype=pl.Utf8).alias(optional_column))
 
         return trips

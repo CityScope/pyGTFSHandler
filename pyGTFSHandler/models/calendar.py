@@ -1,8 +1,40 @@
+# -*- coding: utf-8 -*-
+"""GTFS calendar.txt/calendar_dates.txt handling: which services are active
+on a given date or date range.
+
+Why this module exists and how it's organized:
+-----------------------------------------------
+`calendar.txt` (weekday-pattern + date-range rows) and `calendar_dates.txt`
+(single-date add/remove exceptions) are both parsed and kept *exactly as the
+GTFS feed authored them* -- no row duplication, no date shifting. This is a
+deliberate change from an earlier version of this module, which used to
+duplicate every row as a `"_night"`-suffixed variant shifted +1 day, to
+approximate multi-day/overnight trips. That approach only ever supported a
+single day of offset and doubled every service regardless of whether it
+ever ran past midnight.
+
+The correct handling of overnight/multi-day trips instead lives in
+`models/stop_times.py`'s `day_offset` column: a stop_time's *real* calendar
+date is `service_date + day_offset`, resolved at query time (see
+`Feed._filter_by_date`/`Feed._filter_by_date_range` in `feed_filtering.py`)
+by checking, for each `day_offset` value present in the data, whether the
+service is active on `queried_date - day_offset`. This module itself only
+needs to answer "which services are active on date X" -- it has no
+awareness of `day_offset` at all, and `filter_by_date_type` is written so a
+caller (`Feed`) can request weekday/weekend/holiday classification against
+a date *other than* the row's own nominal date, which is exactly what's
+needed to classify an offset-shifted stop_time's real date correctly.
+"""
+
 from datetime import datetime, timedelta, date
 from typing import Tuple
 
 import polars as pl
-from .. import utils, gtfs_checker
+from ..utils import geo_polars
+from ..utils import date_parsing
+from ..utils import gtfs_checker
+from ..utils import io
+from ..utils import geocoding
 
 from typing import Union, Optional, List
 from pathlib import Path
@@ -14,7 +46,7 @@ class Calendar:
         self.exceptions_lf = exceptions_lf 
         if (lf is not None) or (exceptions_lf is not None):
             if min_date is None:
-                min_date, max_date = self.__get_min_max_dates(
+                min_date, max_date = self._get_min_max_dates(
                     lf, exceptions_lf
                 )
 
@@ -60,17 +92,12 @@ class Calendar:
         if isinstance(end_date, datetime):
             end_date = end_date.date()
 
-        if service_ids:
-            service_ids = [
-                sid[:-6] if sid.endswith("_night") else sid for sid in service_ids
-            ]
-
-        self.lf = self.__read_calendar(paths, service_ids, check_files=check_files, min_file_id=min_file_id)
-        self.exceptions_lf = self.__read_calendar_dates(paths, service_ids, check_files=check_files, min_file_id=min_file_id)
+        self.lf = self._read_calendar(paths, service_ids, check_files=check_files, min_file_id=min_file_id)
+        self.exceptions_lf = self._read_calendar_dates(paths, service_ids, check_files=check_files, min_file_id=min_file_id)
         if (self.lf is None) and (self.exceptions_lf is None):
             raise Exception(f"No calendar.txt or calendar_dates.txt files found in paths {paths}")
         
-        self.min_date, self.max_date = self.__get_min_max_dates(
+        self.min_date, self.max_date = self._get_min_max_dates(
             self.lf, self.exceptions_lf
         )
         if start_date is not None and start_date > self.min_date:
@@ -125,11 +152,11 @@ class Calendar:
         else:
             self.service_ids = service_ids
 
-    def __read_calendar(
+    def _read_calendar(
         self, paths, service_ids: Optional[List[str]], check_files=False, min_file_id=0
     ) -> Optional[pl.LazyFrame]:
         """
-        Reads the calendar.txt files from all paths using utils.read_csv_list.
+        Reads the calendar.txt files from all paths using io.read_csv_list.
 
         Args:
             service_ids (Optional[List[str]]): List of service IDs to filter.
@@ -140,7 +167,7 @@ class Calendar:
         calendar_paths: List[Path] = []
         file = "calendar.txt"
         for p in paths:
-            new_p = gtfs_checker.search_file(p, file=file)
+            new_p = io.search_file(p, file=file)
             if new_p is None:
                 calendar_paths.append(None)
             else:
@@ -148,11 +175,11 @@ class Calendar:
 
 
         schema_dict, _ = gtfs_checker.get_df_schema_dict("calendar.txt")  # assume same schema
-        calendar = utils.read_csv_list(calendar_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id)
+        calendar = io.read_csv_list(calendar_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id)
         if (calendar is None) or (calendar.select(pl.len()).collect().item() == 0):
             return None 
 
-        calendar = utils.filter_by_id_column(calendar, "service_id", service_ids)
+        calendar = geo_polars.filter_by_id_column(calendar, "service_id", service_ids)
 
         # Convert start_date and end_date (YYYYMMDD int) to days since year 1-01-01
         # Safely parse dates to integer days since 1970-01-01
@@ -191,31 +218,13 @@ class Calendar:
             warnings.warn(f"{num_invalid_rows} rows dropped due to invalid start/end dates.", UserWarning)
 
 
-        night_services = calendar.with_columns(
-            [
-                (pl.col("service_id") + "_night").alias("service_id"),
-                (pl.col("start_date") + 1).alias("start_date"),
-                (pl.col("end_date") + 1).alias("end_date"),
-                # Shift weekdays forward by one day
-                pl.col("sunday").alias("monday"),
-                pl.col("monday").alias("tuesday"),
-                pl.col("tuesday").alias("wednesday"),
-                pl.col("wednesday").alias("thursday"),
-                pl.col("thursday").alias("friday"),
-                pl.col("friday").alias("saturday"),
-                pl.col("saturday").alias("sunday"),
-            ]
-        )
-
-        calendar = pl.concat([calendar, night_services])
-
         return calendar
 
-    def __read_calendar_dates(
+    def _read_calendar_dates(
         self, paths, service_ids: Optional[List[str]], check_files=False, min_file_id=0
     ) -> Optional[pl.LazyFrame]:
         """
-        Reads the calendar_dates.txt files from all paths using utils.read_csv_list.
+        Reads the calendar_dates.txt files from all paths using io.read_csv_list.
 
         Args:
             service_ids (Optional[List[str]]): List of service IDs to filter.
@@ -226,20 +235,20 @@ class Calendar:
         calendar_dates_paths: List[Path] = []
         file = "calendar_dates.txt"
         for p in paths:
-            new_p = gtfs_checker.search_file(p, file=file)
+            new_p = io.search_file(p, file=file)
             if new_p is None:
                 calendar_dates_paths.append(None)
             else:
                 calendar_dates_paths.append(new_p)
 
         schema_dict, _ = gtfs_checker.get_df_schema_dict("calendar_dates.txt")
-        calendar_dates = utils.read_csv_list(
+        calendar_dates = io.read_csv_list(
             calendar_dates_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id
         )
         if (calendar_dates is None) or (calendar_dates.select(pl.len()).collect().item() == 0):
             return None 
         
-        calendar_dates = utils.filter_by_id_column(
+        calendar_dates = geo_polars.filter_by_id_column(
             calendar_dates, "service_id", service_ids
         )
 
@@ -285,19 +294,9 @@ class Calendar:
             warnings.warn(f"{num_invalid_rows} rows dropped due to invalid date or exception_type values.", UserWarning)
 
 
-        # Create night services by duplicating and shifting dates +1 day
-        night_services = calendar_dates.with_columns(
-            [
-                (pl.col("service_id") + "_night").alias("service_id"),
-                (pl.col("date") + 1).alias("date"),  # shift date one day forward
-            ]
-        )
-
-        calendar_dates = pl.concat([calendar_dates, night_services])
-
         return calendar_dates
 
-    def __get_min_max_dates(
+    def _get_min_max_dates(
         self, lf: pl.LazyFrame, exceptions_lf: pl.LazyFrame
     ) -> Tuple[date, date]:
         """
@@ -353,8 +352,8 @@ class Calendar:
         max_day_offset = max(date_bounds_as_days)
 
         # Convert the integer day offsets back into standard datetime.date objects.
-        min_date = utils.EPOCH + timedelta(days=min_day_offset)
-        max_date = utils.EPOCH + timedelta(days=max_day_offset)
+        min_date = date_parsing.EPOCH + timedelta(days=min_day_offset)
+        max_date = date_parsing.EPOCH + timedelta(days=max_day_offset)
 
         return min_date, max_date
 
@@ -371,7 +370,7 @@ class Calendar:
         Returns:
             list[str]: Sorted list of active service IDs on the given date.
         """
-        date_int = utils.datetime_to_days_since_epoch(date)
+        date_int = date_parsing.datetime_to_days_since_epoch(date)
         weekday = date.strftime("%A").lower()  # e.g., 'monday'
 
         # Filter calendar.txt for services active on this weekday and date
@@ -476,7 +475,7 @@ class Calendar:
             for i in range((end_date - start_date).days + 1)
         ]
         date_info = [
-            {"date": d.isoformat(), "weekday": d.strftime("%A").lower(), "date_int": int(utils.datetime_to_days_since_epoch(d))}
+            {"date": d.isoformat(), "weekday": d.strftime("%A").lower(), "date_int": int(date_parsing.datetime_to_days_since_epoch(d))}
             for d in date_list
         ]
 
@@ -495,8 +494,8 @@ class Calendar:
         }
 
         if self.lf is not None:
-            start_int = utils.datetime_to_days_since_epoch(start_date)
-            end_int = utils.datetime_to_days_since_epoch(end_date)
+            start_int = date_parsing.datetime_to_days_since_epoch(start_date)
+            end_int = date_parsing.datetime_to_days_since_epoch(end_date)
 
             calendar_df = (
                 self.lf.select(
@@ -546,8 +545,8 @@ class Calendar:
 
         # Apply exceptions from calendar_dates.txt
         if self.exceptions_lf is not None:
-            start_int = utils.datetime_to_days_since_epoch(start_date)
-            end_int = utils.datetime_to_days_since_epoch(end_date)
+            start_int = date_parsing.datetime_to_days_since_epoch(start_date)
+            end_int = date_parsing.datetime_to_days_since_epoch(end_date)
 
             calendar_dates_df = (
                 self.exceptions_lf.select(["date", "service_id", "exception_type"])
@@ -556,7 +555,7 @@ class Calendar:
             )
 
             for row in calendar_dates_df.iter_rows(named=True):
-                date_str = (utils.EPOCH + timedelta(days=row["date"])).isoformat()
+                date_str = (date_parsing.EPOCH + timedelta(days=row["date"])).isoformat()
                 service_id = row["service_id"]
                 exception = row["exception_type"]
 
@@ -586,119 +585,170 @@ class Calendar:
         )
 
         if date_type is not None:
-            valid_date_types = {
-                "workday",
-                "weekday",
-                "businessday",
-                "holiday",
-                "non_workday",
-                "non_businessday",
-                "non_weekday",
-                "weekend",
-                "monday",
-                "tuesday",
-                "wednesday",
-                "thursday",
-                "friday",
-                "saturday",
-                "sunday",
-            }
-
-            # Ensure date_type is a list
-            if isinstance(date_type, str):
-                date_type = [date_type]
-
-            # Normalize and validate
-            date_type = [dt.lower() for dt in date_type]
-            invalid = [dt for dt in date_type if dt not in valid_date_types]
-            if invalid:
-                raise Exception(f"Date type(s) not implemented: {invalid}")
-
-            if (
-                ("holiday" in date_type) or 
-                ("workday" in date_type) or 
-                ("businessday" in date_type) or 
-                ("non_workday" in date_type) or 
-                ("non_businessday" in date_type)               
-            ):
-                result = self.add_holidays_and_weekends(result, lon, lat)
-
-            # Apply filters one by one (AND logic)
-            if ("workday" in date_type) or ("businessday" in date_type):
-                result = result.filter(
-                    (~ pl.col("holiday"))
-                    & (~ pl.col("weekend"))
-                )
-
-            if "weekday" in date_type:
-                result = result.filter(
-                    (~ pl.col("weekend"))
-                )
-
-            if ("non_workday" in date_type) or ("non_businessday" in date_type):
-                result = result.filter(
-                    (pl.col("holiday")) | (pl.col("weekend"))
-                )
-
-            if "holiday" in date_type:
-                result = result.filter(pl.col("holiday"))
-
-            if ("weekend" in date_type) or ("non_weekday" in date_type):
-                result = result.filter(pl.col("weekend"))
-
-            for day in [
-                "monday",
-                "tuesday",
-                "wednesday",
-                "thursday",
-                "friday",
-                "saturday",
-                "sunday",
-            ]:
-                if day in date_type:
-                    result = result.filter(pl.col("weekday") == day)
-
-            if "holiday" in date_type:
-                result = result.drop("holiday", "weekend")
+            result = self.filter_by_date_type(result, date_type, lon, lat)
 
         return result
 
-    def add_holidays_and_weekends(self, data, lon, lat):
+    VALID_DATE_TYPES = {
+        "workday",
+        "weekday",
+        "businessday",
+        "holiday",
+        "non_workday",
+        "non_businessday",
+        "non_weekday",
+        "weekend",
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+    }
+
+    def filter_by_date_type(
+        self,
+        result: pl.DataFrame,
+        date_type: str | list[str],
+        lon: float | None,
+        lat: float | None,
+    ) -> pl.DataFrame:
+        """Filters a per-date DataFrame down to rows matching `date_type`.
+
+        Extracted out of `get_services_in_date_range` so `Feed` can reuse the
+        exact same weekday/weekend/holiday classification logic against a
+        *different* date column than the one the row was originally computed
+        for. This matters for multi-day trips: a stop_time's real calendar
+        date is `service_date + day_offset`, which can fall on a different
+        weekday (or even cross into a holiday) than its nominal service_date.
+        `Feed._filter_by_date_range` calls this with `result["date"]`/
+        `result["weekday"]` already replaced by the *offset-adjusted* real
+        date before requesting a "weekend"/"holiday"/etc. classification, so
+        the classification is always evaluated against the day a stop_time
+        actually, physically happens on.
+
+        Args:
+            result: DataFrame with at least `date` (pl.Date) and `weekday`
+                (lowercase weekday name) columns, one row per calendar date.
+            date_type: One or more of `VALID_DATE_TYPES`.
+            lon: Longitude used to resolve the country/subdivision for
+                holiday lookups (only needed if `date_type` requests
+                holiday-aware filtering).
+            lat: Latitude, see `lon`.
+
+        Returns:
+            pl.DataFrame: `result` filtered to rows matching every requested
+            `date_type` (AND semantics across multiple values).
+        """
+        if isinstance(date_type, str):
+            date_type = [date_type]
+
+        date_type = [dt.lower() for dt in date_type]
+        invalid = [dt for dt in date_type if dt not in self.VALID_DATE_TYPES]
+        if invalid:
+            raise Exception(f"Date type(s) not implemented: {invalid}")
+
+        needs_holiday_lookup = (
+            ("holiday" in date_type) or
+            ("workday" in date_type) or
+            ("businessday" in date_type) or
+            ("non_workday" in date_type) or
+            ("non_businessday" in date_type)
+        )
+        needs_weekend = (
+            needs_holiday_lookup
+            or ("weekend" in date_type)
+            or ("non_weekday" in date_type)
+        )
+        if needs_weekend:
+            result = self.add_holidays_and_weekends(
+                result, lon, lat, needs_holiday=needs_holiday_lookup
+            )
+
+        # Apply filters one by one (AND logic)
+        if ("workday" in date_type) or ("businessday" in date_type):
+            result = result.filter(
+                (~ pl.col("holiday"))
+                & (~ pl.col("weekend"))
+            )
+
+        if "weekday" in date_type:
+            result = result.filter(
+                (~ pl.col("weekend"))
+            )
+
+        if ("non_workday" in date_type) or ("non_businessday" in date_type):
+            result = result.filter(
+                (pl.col("holiday")) | (pl.col("weekend"))
+            )
+
+        if "holiday" in date_type:
+            result = result.filter(pl.col("holiday"))
+
+        if ("weekend" in date_type) or ("non_weekday" in date_type):
+            result = result.filter(pl.col("weekend"))
+
+        for day in [
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday",
+        ]:
+            if day in date_type:
+                result = result.filter(pl.col("weekday") == day)
+
+        if "holiday" in date_type:
+            result = result.drop("holiday", "weekend")
+
+        return result
+
+    def add_holidays_and_weekends(self, data, lon, lat, needs_holiday: bool = True):
+        """Adds `weekend` (always, purely from `weekday`, no network) and,
+        when `needs_holiday` is True, `holiday` (requires an external
+        country/subdivision lookup + holiday-calendar fetch via `utils`).
+
+        Split out so date_type filters that only need `weekend` (e.g. a
+        plain `"weekend"` request) never trigger the network-dependent
+        holiday lookup.
+        """
         # If LazyFrame, collect to DataFrame
         if isinstance(data, pl.LazyFrame):
             data = data.collect()
 
+        # Weekend: check if weekday is Saturday or Sunday (no network needed).
+        data = data.with_columns(
+            pl.col("weekday").is_in(["saturday", "sunday"]).alias("weekend")
+        )
+
+        if not needs_holiday:
+            return data
+
         # Determine country and subdivision (your utils function)
-        country_code, subdivision_code = utils.get_country_region(lat, lon)
+        country_code, subdivision_code = geocoding.get_country_region(lat, lon)
 
         # Extract unique years as list of ints
         years = data.select(pl.col("date").dt.year()).unique().to_series().to_list()
 
         # Collect holidays for each year
         holidays_df = [
-            utils.get_holidays(year, country_code, subdivision_code) for year in years
+            date_parsing.get_holidays(year, country_code, subdivision_code) for year in years
         ]
         holidays_df = pl.concat(holidays_df)
-
-        # Get min and max dates in data
-        # min_date = data.select(pl.col("date").min()).item()
-        # max_date = data.select(pl.col("date").max()).item()
 
         # Convert holidays_df 'date' column (assumed days since epoch) to datetime (Polars Date)
         holidays_df = holidays_df.with_columns(
             (
-                pl.lit(utils.EPOCH).cast(pl.Date) + pl.duration(days=pl.col("date"))
+                pl.lit(date_parsing.EPOCH).cast(pl.Date) + pl.duration(days=pl.col("date"))
             ).alias("date")
         )
 
-        # Add weekend and holiday flags
+        # Holiday: if 'date' is in holidays_df
         data = data.with_columns(
-            [
-                # Weekend: check if weekday is Saturday or Sunday
-                pl.col("weekday").is_in(["saturday", "sunday"]).alias("weekend"),
-                # Holiday: if 'date' is in holidays_df
-                pl.col("date").is_in(holidays_df.get_column("date")).alias("holiday"),
-            ]
+            pl.col("date").is_in(holidays_df.get_column("date")).alias("holiday")
         )
 
         return data

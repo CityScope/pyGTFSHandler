@@ -1,0 +1,2 @@
+﻿route_id,agency_id,route_short_name,route_long_name,route_desc,route_type,route_url,route_color,route_text_color
+L1-CE-OQ,MSVQL1,L1,Linea 1,Linea 1 que realiza el trayecto entre las estaciones de Ciudad Expo y Olivar de Quintos,1,https://www.metro-sevilla.es/mapa-y-trayectos,027A35,
