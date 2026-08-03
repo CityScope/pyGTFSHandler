@@ -439,7 +439,7 @@ class Feed(FeedFilteringMixin, FeedAnalysisMixin, FeedEdgeAnalysisMixin):
         # produced by `self.load(...)` above, so this direction_id assignment
         # -- and the warning it may emit -- only ever reflects the feed's
         # actually-in-scope shapes/trips, not the full unfiltered source data.
-        shapes.assign_direction_ids(trip_shape_ids_lf, trips.lf)
+        shapes.assign_direction_ids(trip_shape_ids_lf, trips.lf, stops.lf)
         return shapes, trip_shape_ids_lf
     
     def build_lf(self, calendar, routes, shapes, stop_times, stops, trips, trip_shape_ids_lf):

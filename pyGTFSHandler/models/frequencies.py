@@ -266,8 +266,7 @@ class FrequenciesMixin:
 
         Args:
             frequencies (pl.LazyFrame): The frequencies LazyFrame.
-            check_files (bool): When True (the GTFS-checker validation path),
-                log every individual change, not just a summary count.
+            check_files (bool): Unused; kept for call-site compatibility.
 
         Returns:
             pl.LazyFrame: Frequencies LazyFrame with reconciled windows.
@@ -290,7 +289,6 @@ class FrequenciesMixin:
         end_time_changes = 0
         start_time_shifts = 0
         dropped_rows = 0
-        change_log: List[str] = []
 
         out_rows: List[dict] = []
         for group in df.partition_by(chain_key, maintain_order=True):
@@ -312,29 +310,15 @@ class FrequenciesMixin:
 
                     if new_end != end:
                         end_time_changes += 1
-                        change_log.append(
-                            f"frequencies.txt window reconciled: trip_id={row.get('trip_id')} "
-                            f"start_time={start} end_time={end} -> {new_end} headway_secs={headway}"
-                        )
                         row["end_time"] = new_end
 
                     j = idx + 1
                     while j < n and new_end > recs[j]["start_time"]:
                         if new_end >= recs[j]["end_time"]:
-                            change_log.append(
-                                "frequencies.txt window dropped (fully subsumed by "
-                                f"preceding window): trip_id={recs[j].get('trip_id')} "
-                                f"start_time={recs[j]['start_time']} end_time={recs[j]['end_time']}"
-                            )
                             recs.pop(j)
                             n -= 1
                             dropped_rows += 1
                         else:
-                            change_log.append(
-                                "frequencies.txt window start_time pulled forward: "
-                                f"trip_id={recs[j].get('trip_id')} "
-                                f"start_time={recs[j]['start_time']} -> {new_end}"
-                            )
                             recs[j]["start_time"] = new_end
                             start_time_shifts += 1
                             break
@@ -343,15 +327,13 @@ class FrequenciesMixin:
                 idx += 1
 
         if end_time_changes or start_time_shifts or dropped_rows:
-            warnings.warn(
+            summary = (
                 f"Reconciled frequencies.txt windows against headway_secs: "
                 f"{end_time_changes} end_time(s) adjusted, "
                 f"{start_time_shifts} start_time(s) pulled forward, "
-                f"{dropped_rows} fully-subsumed window(s) dropped."
+                f"{dropped_rows} window(s) fully covered by a preceding window dropped."
             )
-            if check_files:
-                for line in change_log:
-                    warnings.warn(line)
+            warnings.warn(summary)
 
         result = pl.DataFrame(out_rows, schema=schema)
         return result.lazy()

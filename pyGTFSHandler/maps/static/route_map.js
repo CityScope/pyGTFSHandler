@@ -18,6 +18,7 @@
   Object.keys(DATA.stops).forEach(function (sid) {
     var p = DATA.stops[sid].parent || sid;
     (stopsByParent[p] = stopsByParent[p] || []).push(sid);
+    DATA.stops[sid].metric = (DATA.stop_metrics && DATA.stop_metrics[sid]) || null;
   });
 
   function fmtTime(seconds) {
@@ -106,6 +107,90 @@
     return h + "h" + (mm ? " " + mm + "min" : "");
   }
 
+  function fmtSpeed(v) {
+    return v === null || v === undefined || isNaN(v) ? "--" : v.toFixed(1) + " km/h";
+  }
+
+  function fmtHeadwayMin(v) {
+    return v === null || v === undefined || isNaN(v) ? "--" : (v < 60 ? Math.round(v) + " min" : fmtDuration(v * 60));
+  }
+
+  // ------------------------------------------------------------------
+  // Speed/headway color scales (approximating matplotlib's RdYlGn /
+  // RdYlGn_r) and black-silhouette emoji recoloring for the speed/headway
+  // map modes.
+  // ------------------------------------------------------------------
+  var COLOR_STOPS = [
+    [165, 0, 38], [215, 48, 39], [244, 109, 67], [253, 174, 97],
+    [254, 224, 139], [255, 255, 191], [217, 239, 139], [166, 217, 106],
+    [102, 189, 99], [26, 152, 80], [0, 104, 55],
+  ];
+  function lerp(a, b, t) { return a + (b - a) * t; }
+  function rdylgn(t) {
+    t = Math.max(0, Math.min(1, t));
+    var n = COLOR_STOPS.length - 1;
+    var idx = Math.min(n - 1, Math.floor(t * n));
+    var localT = t * n - idx;
+    var c0 = COLOR_STOPS[idx];
+    var c1 = COLOR_STOPS[idx + 1];
+    var r = Math.round(lerp(c0[0], c1[0], localT));
+    var g = Math.round(lerp(c0[1], c1[1], localT));
+    var b = Math.round(lerp(c0[2], c1[2], localT));
+    return "rgb(" + r + "," + g + "," + b + ")";
+  }
+  // speed: red (slow) -> green (fast). headway: green (frequent/low) ->
+  // red (infrequent/high), i.e. the reversed scale.
+  var MODE_SCALE = {
+    speed: { min: 10, max: 30, reversed: false },
+    headway: { min: 5, max: 60, reversed: true },
+  };
+  function metricColor(mode, value) {
+    if (value === null || value === undefined || isNaN(value)) return "#888888";
+    var scale = MODE_SCALE[mode];
+    var t = (value - scale.min) / (scale.max - scale.min);
+    if (scale.reversed) t = 1 - t;
+    return rdylgn(t);
+  }
+
+  // Renders an emoji glyph to an offscreen canvas once and caches its PNG
+  // data URL, keyed by the glyph itself -- used as a CSS mask-image so the
+  // glyph's own alpha channel (its silhouette) can be recolored with any
+  // background-color, regardless of the emoji font's original colors
+  // ("black and white, then recolored").
+  var emojiMaskCache = {};
+  function emojiMaskUrl(glyph) {
+    if (emojiMaskCache[glyph]) return emojiMaskCache[glyph];
+    var size = 64;
+    var canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    var ctx = canvas.getContext("2d");
+    ctx.font = (size * 0.82) + "px sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(glyph, size / 2, size / 2 + size * 0.04);
+    var url = canvas.toDataURL("image/png");
+    emojiMaskCache[glyph] = url;
+    return url;
+  }
+  // A colored, mask-recolored version of an emoji, as an inline-block span
+  // with the given pixel size.
+  function coloredEmojiHtml(glyph, color, sizePx) {
+    var url = emojiMaskUrl(glyph);
+    var style =
+      "display:inline-block;width:" + sizePx + "px;height:" + sizePx + "px;" +
+      "background-color:" + color + ";" +
+      "-webkit-mask-image:url(" + url + ");mask-image:url(" + url + ");" +
+      "-webkit-mask-size:contain;mask-size:contain;" +
+      "-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;" +
+      "-webkit-mask-position:center;mask-position:center;";
+    return '<span class="gtfs-rm-emoji-mask" style="' + style + '"></span>';
+  }
+
+  // Current map mode: "none" (plain colored emojis, no edges), "speed" or
+  // "headway" (edges + recolored stop emojis reflect that metric).
+  var currentMode = "none";
+
   // ------------------------------------------------------------------
   // Filter control panel (mode checkboxes)
   // ------------------------------------------------------------------
@@ -139,12 +224,27 @@
     }
   }
 
+  // Single-select "checkbox" group (radio inputs styled as the same
+  // checkbox-list look as the mode filters) letting the user pick at most
+  // one of speed/headway coloring, or none.
+  var MODE_OPTIONS = [
+    { key: "none", label: "None" },
+    { key: "speed", label: "\U0001F3CE️ Speed" },
+    { key: "headway", label: "⏱️ Headway" },
+  ];
+
   var FilterControl = L.Control.extend({
     options: { position: "topright" },
     onAdd: function () {
       var div = L.DomUtil.create("div", "gtfs-rm gtfs-rm-filter-panel");
       L.DomEvent.disableClickPropagation(div);
-      var html = "<h4>Modes</h4>";
+      var html = "<h4>Color by</h4>";
+      MODE_OPTIONS.forEach(function (opt) {
+        html +=
+          '<label><input type="checkbox" ' + (opt.key === "none" ? "checked" : "") +
+          ' data-mode="' + opt.key + '"> ' + opt.label + "</label>";
+      });
+      html += "<h4>Modes</h4>";
       presentTypes.forEach(function (t) {
         var emoji = routeTypeEmoji[t] || routeTypeEmojiFallback;
         var name = routeTypeName[t] || routeTypeNameFallback;
@@ -153,8 +253,25 @@
           emoji + " " + escapeHtml(name) + "</label>";
       });
       html += '<button type="button" class="gtfs-rm-lines-btn" id="gtfs-rm-lines-btn">Filter lines…</button>';
+      html += '<div class="gtfs-rm-legend" id="gtfs-rm-legend"></div>';
       div.innerHTML = html;
-      div.querySelectorAll("input[type=checkbox]").forEach(function (cb) {
+      div.querySelectorAll("input[data-mode]").forEach(function (cb) {
+        cb.addEventListener("change", function () {
+          var mode = cb.getAttribute("data-mode");
+          // Only one may be checked at a time: checking one unchecks the
+          // rest (including forcing "none" off whenever another is on).
+          div.querySelectorAll("input[data-mode]").forEach(function (other) {
+            other.checked = other === cb ? cb.checked : false;
+          });
+          currentMode = cb.checked ? mode : "none";
+          if (currentMode === "none" && mode !== "none") {
+            // Unchecking the only active mode falls back to "none".
+            div.querySelector('input[data-mode="none"]').checked = true;
+          }
+          setMode(currentMode);
+        });
+      });
+      div.querySelectorAll("input[data-type]").forEach(function (cb) {
         cb.addEventListener("change", function () {
           checkedTypes[cb.getAttribute("data-type")] = cb.checked;
           applyFilter();
@@ -168,6 +285,39 @@
     },
   });
   map.addControl(new FilterControl());
+
+  function renderLegend() {
+    var el = document.getElementById("gtfs-rm-legend");
+    if (!el) return;
+    if (currentMode === "none") {
+      el.innerHTML = "";
+      return;
+    }
+    var scale = MODE_SCALE[currentMode];
+    var stops = [];
+    for (var i = 0; i <= 4; i++) {
+      var t = i / 4;
+      var val = scale.min + t * (scale.max - scale.min);
+      stops.push(rdylgn(scale.reversed ? 1 - t : t));
+    }
+    var gradient = "linear-gradient(to right," + stops.join(",") + ")";
+    el.innerHTML =
+      '<div class="gtfs-rm-legend-title">' + (currentMode === "speed" ? "Speed (km/h)" : "Headway (min)") + "</div>" +
+      '<div class="gtfs-rm-legend-bar" style="background:' + gradient + '"></div>' +
+      '<div class="gtfs-rm-legend-range"><span>' + scale.min + "</span><span>" + scale.max + "</span></div>";
+  }
+
+  // Optional translucent "Google Hybrid" imagery layer, toggled on/off over
+  // the existing base map (not a replacement for it) via the standard
+  // Leaflet layer-switcher control, at 60% opacity so the base map still
+  // shows through.
+  var googleHybridLayer = L.tileLayer("https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}", {
+    maxZoom: 20,
+    subdomains: ["mt0", "mt1", "mt2", "mt3"],
+    opacity: 0.6,
+    attribution: "Imagery &copy; Google",
+  });
+  L.control.layers(null, { "Google Hybrid": googleHybridLayer }, { collapsed: true }).addTo(map);
 
   // ------------------------------------------------------------------
   // Z-order panes.
@@ -214,16 +364,103 @@
   // ------------------------------------------------------------------
   var markers = {};
   var highlightLayer = L.layerGroup().addTo(map);
+  var edgeLayer = L.layerGroup().addTo(map);
+
+  function bindStopTooltip(marker, sid) {
+    marker.unbindTooltip();
+    if (currentMode === "none") return;
+    var m = DATA.stop_metrics && DATA.stop_metrics[sid];
+    var val = m ? m[currentMode] : null;
+    var text = currentMode === "speed" ? "Speed: " + fmtSpeed(val) : "Headway: " + fmtHeadwayMin(val);
+    marker.bindTooltip(text, { direction: "top", offset: [0, -10], sticky: true });
+  }
+
+  // Redraws the edge layer with the currently-selected mode's representative
+  // shape geometry per edge (busiest shape for headway, fastest for speed),
+  // falling back to a straight line between the two stops when no shape
+  // geometry is available for that edge.
+  function drawEdgeLayer() {
+    edgeLayer.clearLayers();
+    if (currentMode === "none" || !DATA.edges) return;
+    var geomKey = currentMode === "speed" ? "geom_fast" : "geom_freq";
+    Object.keys(DATA.edges).forEach(function (key) {
+      var e = DATA.edges[key];
+      var val = e[currentMode];
+      var pts = e[geomKey];
+      if (!pts || pts.length < 2) {
+        var sa = DATA.stops[e.a];
+        var sb = DATA.stops[e.b];
+        if (!sa || !sb || sa.lat === null || sb.lat === null) return;
+        pts = [
+          [sa.lat, sa.lon],
+          [sb.lat, sb.lon],
+        ];
+      }
+      var color = metricColor(currentMode, val);
+      var label =
+        (currentMode === "speed" ? "Speed: " + fmtSpeed(val) : "Headway: " + fmtHeadwayMin(val)) +
+        (e.n_trips ? " (" + e.n_trips + " trips)" : "");
+      var line = L.polyline(pts, { color: color, weight: 4, opacity: 0.85 });
+      line.bindTooltip(label, { sticky: true });
+      line.on("mouseover", function () {
+        line.setStyle({ weight: 7, opacity: 1 });
+      });
+      line.on("mouseout", function () {
+        line.setStyle({ weight: 4, opacity: 0.85 });
+      });
+      line.addTo(edgeLayer);
+    });
+  }
+
+  // Rebuilds every marker's icon + hover tooltip in place (used on mode
+  // switch, since existing markers otherwise keep whatever icon they were
+  // last given) while preserving whatever highlight/selection is active.
+  function refreshAllIcons() {
+    var selSet = {};
+    var badgesBySid = {};
+    if (lastHighlight) {
+      (lastHighlight.selectedIds || []).forEach(function (id) {
+        selSet[id] = true;
+      });
+      badgesBySid = lastHighlight.badgesBySid || {};
+    }
+    Object.keys(markers).forEach(function (sid) {
+      var isSelected = !!selSet[sid];
+      var badges = badgesBySid[sid] ? visibleRoutes(badgesBySid[sid]) : null;
+      markers[sid].setIcon(makeIcon(DATA.stops[sid], isSelected, badges));
+      bindStopTooltip(markers[sid], sid);
+    });
+  }
+
+  function setMode(mode) {
+    currentMode = mode;
+    refreshAllIcons();
+    drawEdgeLayer();
+    renderLegend();
+  }
 
   function stopIconHtml(stop, selected, badgeRouteIds) {
-    var emojis = (stop.modes || [])
-      .map(function (t) {
-        return routeTypeEmoji[t] || routeTypeEmojiFallback;
-      })
-      .join("");
-    if (!emojis) emojis = routeTypeEmojiFallback;
-    var cls = "gtfs-rm-stop-icon" + (selected ? " gtfs-rm-selected" : "");
     var size = selected ? 30 : 20;
+    var emojis;
+    if (currentMode !== "none") {
+      var m = (stop && stop.metric) || null;
+      var color = metricColor(currentMode, m === null ? null : m[currentMode]);
+      var glyphs = (stop.modes || []).length ? stop.modes : ["_fallback"];
+      emojis = glyphs
+        .map(function (t) {
+          var glyph = routeTypeEmoji[t] || routeTypeEmojiFallback;
+          return coloredEmojiHtml(glyph, color, size);
+        })
+        .join("");
+    } else {
+      emojis = (stop.modes || [])
+        .map(function (t) {
+          return routeTypeEmoji[t] || routeTypeEmojiFallback;
+        })
+        .join("");
+      if (!emojis) emojis = routeTypeEmojiFallback;
+    }
+    var cls = "gtfs-rm-stop-icon" + (selected ? " gtfs-rm-selected" : "");
     var badgesHtml = "";
     if (badgeRouteIds && badgeRouteIds.length) {
       badgesHtml =
@@ -258,6 +495,7 @@
     marker.on("click", function () {
       selectStop(sid);
     });
+    bindStopTooltip(marker, sid);
     markers[sid] = marker;
     // Not added to the map here -- updateMarkers() (below, driven by zoom/
     // filter/highlight state) decides whether each stop renders as an
@@ -315,13 +553,12 @@
   // into grid cells (in screen-pixel space, so cell size stays constant on
   // screen regardless of zoom) and rendered as a single bubble per cell
   // showing the dominant mode's emoji + a stop count; clicking a bubble
-  // zooms/pans to fit its stops. Whatever's part of the *current* highlight
-  // (lastHighlight's selected/above-line stops -- a clicked stop's parent
-  // station, or a clicked trip's/route's stops) is always exempted from
-  // clustering and shown individually, even at very low zoom, since that's
-  // exactly what highlightStops() is drawing large icons/badges/z-order
-  // for; every other stop still clusters normally regardless of whether a
-  // box happens to be open.
+  // zooms/pans to fit its stops. Only the *exact* selected stops (a clicked
+  // stop's own parent-station group, or -- in the trip box -- that trip's
+  // own stops) are exempted from clustering and always shown individually;
+  // every other stop, including the rest of a highlighted route's stops
+  // (aboveLineIds), still clusters normally at low zoom regardless of
+  // whether a box happens to be open.
   // ------------------------------------------------------------------
   var CLUSTER_ZOOM = 15;
   var CLUSTER_CELL_PX = 56;
@@ -334,7 +571,6 @@
     var exempt = {};
     if (lastHighlight) {
       (lastHighlight.selectedIds || []).forEach(function (id) { exempt[id] = true; });
-      (lastHighlight.aboveLineIds || []).forEach(function (id) { exempt[id] = true; });
     }
 
     if (!clustering) {
@@ -714,12 +950,21 @@
     var departures = [];
     highlightSet.forEach(function (id) {
       (DATA.departures[id] || []).forEach(function (d) {
-        departures.push(d);
+        // origin (which exact stop_id this departure is from) is needed to
+        // look up that stop+route's own speed/headway below -- a merged
+        // parent-station timetable can combine departures from several
+        // platforms at once.
+        departures.push(Object.assign({ origin: id }, d));
       });
     });
     departures.sort(function (a, b) {
       return (a.dep_time || 0) - (b.dep_time || 0);
     });
+
+    function routeMetric(d) {
+      var byStop = DATA.stop_route_metrics && DATA.stop_route_metrics[d.origin];
+      return (byStop && byStop[d.route_id]) || null;
+    }
 
     // Multiple routes can be selected at once (Google-Maps-style): an empty
     // set means "no filter", i.e. every route's departures show, and every
@@ -739,6 +984,7 @@
       return filteredDepartures()
         .map(function (d) {
           var dest = DATA.stops[d.dest_stop_id] || {};
+          var metric = routeMetric(d);
           return (
             '<tr class="gtfs-rm-row-clickable" data-trip="' + d.trip_id + '">' +
             "<td>" + badgeHtml(d.route_id) + "</td>" +
@@ -748,20 +994,36 @@
               : "") +
             "</td>" +
             '<td class="gtfs-rm-time">' + fmtTime(d.dep_time) + "</td>" +
+            '<td class="gtfs-rm-metric">' + fmtSpeed(metric && metric.speed) + "</td>" +
+            '<td class="gtfs-rm-metric">' + fmtHeadwayMin(metric && metric.headway) + "</td>" +
             "</tr>"
           );
         })
         .join("");
     }
 
-    // Reflects the average headway of whatever's actually on screen right
-    // now (filtered_by the active route badge, if any) -- recomputed
-    // alongside the table every time that filter changes.
+    // Reflects the average headway/speed of whatever's actually on screen
+    // right now (filtered by the active route badge, if any) -- recomputed
+    // alongside the table every time that filter changes. Average speed is
+    // the mean of each visible departure's own (stop, route) speed, since
+    // -- unlike headway -- it can't be derived from the departure times
+    // alone.
     function updateHeadway() {
       var el = document.getElementById("gtfs-rm-headway");
       if (!el) return;
-      var avg = computeAvgHeadwaySecs(filteredDepartures());
-      el.textContent = "Avg. headway: " + fmtDuration(avg);
+      var rows = filteredDepartures();
+      var avgHeadway = computeAvgHeadwaySecs(rows);
+      var speeds = rows
+        .map(function (d) {
+          var m = routeMetric(d);
+          return m && m.speed;
+        })
+        .filter(function (v) {
+          return v !== null && v !== undefined && !isNaN(v);
+        });
+      var avgSpeed = speeds.length ? speeds.reduce(function (a, b) { return a + b; }, 0) / speeds.length : null;
+      el.innerHTML =
+        "Avg. headway: " + fmtDuration(avgHeadway) + " &nbsp;·&nbsp; Avg. speed: " + fmtSpeed(avgSpeed);
     }
 
     // No badge toggled off yet means every route's departures are showing --
@@ -807,7 +1069,7 @@
     // timetable out of view.
     var body =
       platformsHtml +
-      '<div class="gtfs-rm-box-tablewrap"><table class="gtfs-rm-table"><thead><tr><th>Route</th><th>Destination</th><th>Dep.</th></tr></thead>' +
+      '<div class="gtfs-rm-box-tablewrap"><table class="gtfs-rm-table"><thead><tr><th>Route</th><th>Destination</th><th>Dep.</th><th>Speed</th><th>Headway</th></tr></thead>' +
       '<tbody id="gtfs-rm-dep-tbody">' + renderRows() + "</tbody></table></div>";
 
     var title = singleStopMode ? stop.stop_name || sid : stop.parent_name || stop.stop_name || sid;
@@ -823,12 +1085,37 @@
     }
     wireRowClicks();
 
+    // Route icons in this pinned row are *only* a timetable filter -- they
+    // never change what's highlighted/elevated on the map (that stays
+    // whatever selectStop() set up for the whole highlightSet/aboveLineIds
+    // once, above). Toggle rules (all in terms of "active" = shown):
+    //  - every route active (the default) + click one -> isolate it (only
+    //    that one stays active).
+    //  - exactly one route active + click that same one -> back to every
+    //    route active.
+    //  - otherwise -> plain toggle of that one route's membership, folding
+    //    back to "every route active" (the canonical empty-set state) if
+    //    that happens to leave literally all of them checked.
+    function toggleRouteFilter(r) {
+      var keys = Object.keys(activeFilters);
+      var allActive = keys.length === 0 || keys.length === routeSet.length;
+      if (allActive) {
+        activeFilters = {};
+        activeFilters[r] = true;
+      } else if (keys.length === 1 && keys[0] === r) {
+        activeFilters = {};
+      } else if (activeFilters[r]) {
+        delete activeFilters[r];
+      } else {
+        activeFilters[r] = true;
+        if (Object.keys(activeFilters).length === routeSet.length) activeFilters = {};
+      }
+    }
+
     boxContainer.querySelectorAll(".gtfs-rm-badge-filter").forEach(function (b) {
       b.addEventListener("click", function (ev) {
         ev.stopPropagation();
-        var r = b.getAttribute("data-route");
-        if (activeFilters[r]) delete activeFilters[r];
-        else activeFilters[r] = true;
+        toggleRouteFilter(b.getAttribute("data-route"));
 
         var anyFilter = Object.keys(activeFilters).length > 0;
         // No filter active means every route's times are showing again --
@@ -839,44 +1126,6 @@
         document.getElementById("gtfs-rm-dep-tbody").innerHTML = renderRows();
         wireRowClicks();
         updateHeadway();
-
-        // Selecting one or more route badges is "selecting those routes":
-        // elevate every stop any of them serves above the line, each badged
-        // with its own parent station's *other* connections (the selected
-        // routes themselves are left off, same as any single-route
-        // highlight).
-        if (anyFilter) {
-          var selectedRoutes = Object.keys(activeFilters);
-          var routeStopIds = [];
-          var routeStopSet = {};
-          selectedRoutes.forEach(function (rid) {
-            (routeStops[rid] || []).forEach(function (id) {
-              if (!routeStopSet[id]) {
-                routeStopSet[id] = true;
-                routeStopIds.push(id);
-              }
-            });
-          });
-          var routeBadges = {};
-          routeStopIds.forEach(function (id) {
-            var others = routesForParentOfStop(id);
-            selectedRoutes.forEach(function (rid) {
-              others = excludeRoute(others, rid);
-            });
-            routeBadges[id] = others;
-          });
-          highlightSet.forEach(function (id) {
-            var others = DATA.stop_routes[id] || [];
-            selectedRoutes.forEach(function (rid) {
-              others = excludeRoute(others, rid);
-            });
-            routeBadges[id] = sortByService(others);
-          });
-          highlightStops(highlightSet, aboveLineIds.concat(routeStopIds), routeBadges);
-        } else {
-          highlightStops(highlightSet, aboveLineIds, badgesBySid);
-        }
-        updateMarkers();
       });
     });
   }

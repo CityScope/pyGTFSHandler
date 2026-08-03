@@ -29,6 +29,7 @@ from .style import (
     ROUTE_TYPE_NAME_FALLBACK,
     SQUARE_BADGE_ROUTE_TYPES,
 )
+from .edge_metrics import compute_edge_and_stop_metrics
 
 
 def _read_static(name: str) -> str:
@@ -360,6 +361,14 @@ def route_map(feed, date: date_type, m: Optional[folium.Map] = None, zoom_start:
     for key in route_trips:
         route_trips[key].sort(key=lambda t: (trip_first_dep.get(t) is None, trip_first_dep.get(t) or 0))
 
+    # ------------------------------------------------------------------
+    # Speed/headway metrics for the map's mode selector (edges drawn along
+    # real shape geometry -- busiest/fastest/shortest shape per stop pair --
+    # plus per-stop and per-(stop, route) values for the emoji recoloring
+    # and the timetable's Speed/Headway columns).
+    # ------------------------------------------------------------------
+    metrics = compute_edge_and_stop_metrics(day, stops_df, feed)
+
     data = {
         "stops": stops_json,
         "routes": routes_json,
@@ -375,6 +384,9 @@ def route_map(feed, date: date_type, m: Optional[folium.Map] = None, zoom_start:
         "route_type_name": ROUTE_TYPE_NAME,
         "route_type_name_fallback": ROUTE_TYPE_NAME_FALLBACK,
         "square_badge_route_types": sorted(SQUARE_BADGE_ROUTE_TYPES),
+        "edges": metrics["edges"],
+        "stop_metrics": metrics["stops"],
+        "stop_route_metrics": metrics["stop_routes_metrics"],
     }
 
     # ------------------------------------------------------------------

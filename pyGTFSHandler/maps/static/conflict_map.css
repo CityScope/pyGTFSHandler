@@ -1,0 +1,97 @@
+#conflict-panel-routes, #conflict-panel-shapes {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 320px;
+  max-height: 42vh;
+  overflow-y: auto;
+  background: white;
+  border: 1px solid #999;
+  border-radius: 6px;
+  padding: 10px;
+  font-family: sans-serif;
+  font-size: 13px;
+  z-index: 9999;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  display: none;
+}
+#conflict-panel-shapes { top: calc(42vh + 20px); }
+.conflict-route-btn {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin: 4px 0;
+  padding: 4px 6px;
+  cursor: pointer;
+  border: 1px solid #ccc;
+  background: #f7f7f7;
+  border-radius: 4px;
+}
+.conflict-route-btn:hover { background: #eee; }
+.conflict-close { float: right; cursor: pointer; font-weight: bold; }
+.conflict-shape-list {
+  max-height: 130px;
+  overflow-y: auto;
+  font-size: 12px;
+  background: #fafafa;
+  padding: 4px;
+  border-radius: 4px;
+}
+.conflict-shape-btn {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin: 2px 0;
+  padding: 3px 6px;
+  cursor: pointer;
+  border: 1px solid #e3b3b3;
+  background: #fff5f5;
+  border-radius: 4px;
+  font-size: 12px;
+}
+.conflict-shape-btn:hover { background: #ffe3e3; }
+.conflict-num-badge {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  color: white;
+  font-size: 11px;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid white;
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.6);
+}
+.conflict-legend {
+  background: white;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid #999;
+  font-family: sans-serif;
+  font-size: 12px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+  line-height: 1.7;
+}
+.conflict-legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+.conflict-legend-line {
+  display: inline-block;
+  width: 16px;
+  height: 3px;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.conflict-ok-slider {
+  width: 100%;
+  margin: 6px 0 2px 0;
+}
+#conflict-ok-slider-label {
+  font-size: 12px;
+  color: #333;
+}

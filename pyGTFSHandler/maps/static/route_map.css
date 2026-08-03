@@ -142,6 +142,23 @@
 .gtfs-rm-lines-btn:hover { background: #1e46b8; }
 .gtfs-rm-lines-btn:active { transform: scale(0.98); }
 
+/* ---- "Color by" speed/headway legend, shown under the mode checkboxes
+   whenever a mode other than "none" is active ---- */
+.gtfs-rm-legend { margin-top: 8px; }
+.gtfs-rm-legend-title { font-size: 11px; color: #666; margin-bottom: 3px; }
+.gtfs-rm-legend-bar {
+  height: 8px;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.15);
+}
+.gtfs-rm-legend-range {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: #888;
+  margin-top: 2px;
+}
+
 /* ---- generic pill buttons (Select all / Clear all, etc.) ---- */
 .gtfs-rm-btn {
   padding: 7px 14px;
@@ -390,6 +407,15 @@
 .gtfs-rm-table tr.gtfs-rm-row-clickable:hover { background: #f7f9ff; }
 .gtfs-rm-time { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .gtfs-rm-dest-parent { color: #999; font-size: 11px; display: block; }
+.gtfs-rm-metric { font-variant-numeric: tabular-nums; white-space: nowrap; color: #555; font-size: 11.5px; }
+.gtfs-rm-table th:nth-child(3), .gtfs-rm-table th:nth-child(4), .gtfs-rm-table th:nth-child(5),
+.gtfs-rm-table td:nth-child(3), .gtfs-rm-table td:nth-child(4), .gtfs-rm-table td:nth-child(5) {
+  width: 15%;
+}
+
+/* ---- black-silhouette emoji, recolored via mask-image + background-color
+   for the speed/headway map modes (see coloredEmojiHtml in route_map.js) ---- */
+.gtfs-rm-emoji-mask { vertical-align: middle; }
 
 /* ---- stop names in the trip-itinerary box: click to zoom to the stop ---- */
 .gtfs-rm-stop-link { cursor: pointer; }

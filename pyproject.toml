@@ -10,8 +10,10 @@ requires-python = ">=3.11"
 
 dependencies = [
     "geopandas>=1.1.1",
+    "geopy>=2.4.1",
+    "osmnx>=2.0.6",
     "pandas>=2.3.0",
-    "polars>=1.31.0",
+    "polars>=1.31.0,!=1.32.1",
     "pyarrow>=20.0.0",
     "pycountry>=24.6.1",
     "pyogrio>=0.11.0",
@@ -35,6 +37,7 @@ plot = [
     "plotly>=5.24.0",
     "seaborn>=0.13.2",
     "streamlit>=1.50.0",
+    "ipykernel>=7.3.0",
 ]
 
 dev = [

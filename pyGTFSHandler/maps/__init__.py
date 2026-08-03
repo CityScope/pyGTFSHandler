@@ -14,5 +14,6 @@ it stays readable/editable), into the map via a folium `MacroElement`.
 """
 
 from .route_map import route_map
+from .conflict_map import conflict_map
 
-__all__ = ["route_map"]
+__all__ = ["route_map", "conflict_map"]
