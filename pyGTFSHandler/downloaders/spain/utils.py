@@ -11,6 +11,7 @@ publications (`calendar.txt`/`calendar_dates.txt` trimming) ahead of
 """
 
 import csv
+import os
 import warnings
 from datetime import date, datetime, timedelta
 from typing import List, Optional, Tuple, Union
@@ -85,6 +86,73 @@ def _sniff_separator(path: str) -> str:
         sample = f.read(1024)
         dialect = csv.Sniffer().sniff(sample)
     return dialect.delimiter
+
+
+def resolve_publication_start_date(
+    calendar_path: Optional[str],
+    calendar_dates_path: Optional[str],
+    candidate_date: datetime,
+) -> datetime:
+    """Determine a historic publication's true service start date.
+
+    NAP's `/Fichero/historico` only exposes a publication/upload date
+    (`fecha`); that is not necessarily when the feed's own service
+    actually starts (publications are sometimes uploaded ahead of or
+    behind their own `calendar.txt`/`calendar_dates.txt` service period).
+    `_trim_calendars` needs a start date that is actually inside the
+    feed's service period, since it's used as the lower bound when
+    trimming the previous publication's `end_date` in `process_calendar`/
+    `process_calendar_dates`.
+
+    If `candidate_date` (the publication date) falls inside the feed's own
+    combined `calendar.txt`/`calendar_dates.txt` service date range, it is
+    used as-is. Otherwise, it isn't a meaningful anchor for this feed, so
+    the feed's own earliest service date is used instead.
+
+    Args:
+        calendar_path: Path to the feed's `calendar.txt`, or `None`/a
+            nonexistent path if the feed has none.
+        calendar_dates_path: Path to the feed's `calendar_dates.txt`, or
+            `None`/a nonexistent path if the feed has none.
+        candidate_date: The publication date to validate (NAP's `fecha`).
+
+    Returns:
+        `candidate_date` if it falls inside the feed's service date
+        range, otherwise the feed's earliest service date. Falls back to
+        `candidate_date` unchanged if no service dates could be read from
+        either file.
+    """
+    min_date, max_date = None, None
+
+    if calendar_path and os.path.isfile(calendar_path):
+        sep = _sniff_separator(calendar_path)
+        df = pd.read_csv(calendar_path, dtype=str, sep=sep)
+        df = df.rename(columns={c: normalize_string(c) for c in df.columns})
+        if len(df) and "start_date" in df.columns and "end_date" in df.columns:
+            starts = pd.to_datetime(df["start_date"], format="%Y%m%d", errors="coerce")
+            ends = pd.to_datetime(df["end_date"], format="%Y%m%d", errors="coerce")
+            if starts.notna().any():
+                min_date = starts.min() if min_date is None else min(min_date, starts.min())
+            if ends.notna().any():
+                max_date = ends.max() if max_date is None else max(max_date, ends.max())
+
+    if calendar_dates_path and os.path.isfile(calendar_dates_path):
+        sep = _sniff_separator(calendar_dates_path)
+        df = pd.read_csv(calendar_dates_path, dtype=str, sep=sep)
+        df = df.rename(columns={c: normalize_string(c) for c in df.columns})
+        if len(df) and "date" in df.columns:
+            dates = pd.to_datetime(df["date"], format="%Y%m%d", errors="coerce")
+            if dates.notna().any():
+                min_date = dates.min() if min_date is None else min(min_date, dates.min())
+                max_date = dates.max() if max_date is None else max(max_date, dates.max())
+
+    if min_date is None or max_date is None:
+        return candidate_date
+
+    if min_date <= candidate_date <= max_date:
+        return candidate_date
+
+    return min_date.to_pydatetime()
 
 
 def process_calendar(

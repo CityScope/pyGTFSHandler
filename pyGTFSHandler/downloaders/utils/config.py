@@ -14,10 +14,12 @@ one found:
 3. A local, gitignored JSON file mapping source names to keys, so a key
    doesn't have to be re-typed or re-exported every session. The file's
    location is `PYGTFSHANDLER_API_KEYS_FILE` if that environment variable
-   is set, otherwise `~/.pygtfshandler/api_keys.json`, otherwise
-   `api_keys.json` in the current working directory. `api_keys.example.json`
-   at the repository root documents the expected shape; the real
-   `api_keys.json` is listed in `.gitignore` so keys never get committed.
+   is set, otherwise `api_keys.json` in the current working directory or
+   any of its parent directories (so it's found whether a notebook/script
+   runs from the repo root or a subdirectory like `examples/`), otherwise
+   `~/.pygtfshandler/api_keys.json`. `api_keys.example.json` at the
+   repository root documents the expected shape; the real `api_keys.json`
+   is listed in `.gitignore` so keys never get committed.
 
 None of these are required -- a downloader with no key available simply
 gets `None` back, and raises its own `ValueError` if the source requires
@@ -42,14 +44,15 @@ def _candidate_config_paths() -> list:
     Returns:
         Candidate paths, in priority order (highest first): the path from
         `PYGTFSHANDLER_API_KEYS_FILE` (if set), `api_keys.json` in the
-        current working directory (e.g. a project-local file), and the
-        user's home config file.
+        current working directory or any of its parents (so it's found
+        whether the caller runs from the repo root or a subdirectory like
+        `examples/`), and the user's home config file.
     """
     paths = []
     env_path = os.getenv(CONFIG_FILE_ENV_VAR)
     if env_path:
         paths.append(Path(env_path))
-    paths.append(Path.cwd() / "api_keys.json")
+    paths.extend(d / "api_keys.json" for d in (Path.cwd(), *Path.cwd().parents))
     paths.append(DEFAULT_CONFIG_PATH)
     return paths
 

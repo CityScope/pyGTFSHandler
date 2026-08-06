@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 """Deterministic color helpers shared by `models/routes.py` (filling in
-missing `route_color`/`route_text_color`) and `maps/` (badge/icon styling).
+missing `route_color`/`route_text_color`), `maps/` (badge/icon styling), and
+`utils/plot_helpers.py`/example notebooks (the `CB_*` colorblind-safe
+palette, for matplotlib/folium plots that need a handful of clearly
+distinguishable categorical colors).
 
 Kept dependency-free (no matplotlib/colorsys needed beyond the stdlib) so it
 can be imported from the lightweight `models/routes.py` load path without
@@ -15,6 +18,34 @@ import hashlib
 # feeds with many routes missing route_color still end up visually distinct.
 _SATURATION = 0.55
 _LIGHTNESS = 0.5
+
+# Colorblind-safe qualitative palette (Okabe & Ito, 2008) -- use this
+# instead of matplotlib's default tab10 (or other hue-wheel palettes) for
+# any plot/map that needs a handful of clearly distinguishable categorical
+# colors. tab10's red/green and blue/purple pairs collapse under the
+# common forms of color vision deficiency; every pair in this palette
+# stays distinguishable under protanopia, deuteranopia, and tritanopia.
+# Named individually (rather than only as a list) so call sites can pick
+# specific, semantically-stable colors (e.g. always vermillion for
+# "flagged"/warning) instead of depending on list order.
+CB_BLUE = "#0072B2"
+CB_ORANGE = "#E69F00"
+CB_GREEN = "#009E73"
+CB_VERMILLION = "#D55E00"
+CB_SKY = "#56B4E9"
+CB_PURPLE = "#CC79A7"
+CB_YELLOW = "#F0E442"
+CB_BLACK = "#000000"
+
+# Same eight colors as an ordered list, for `zip`-ing against categories
+# (e.g. `dict(zip(sorted(shape_ids), COLORBLIND_SAFE_PALETTE))`). Blue
+# first since it's the most universally distinguishable against a white
+# background; black last since it doubles as this module's default
+# text/outline color and is usually wanted as an accent, not a category
+# fill.
+COLORBLIND_SAFE_PALETTE = [
+    CB_BLUE, CB_ORANGE, CB_GREEN, CB_VERMILLION, CB_SKY, CB_PURPLE, CB_YELLOW, CB_BLACK,
+]
 
 
 def route_id_to_color(route_id: str) -> str:

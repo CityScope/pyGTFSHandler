@@ -296,7 +296,16 @@ class Stops:
             return stop_coords.select("stop_id").with_row_index("cluster")
 
         indexed = stop_coords.with_row_index("idx")
-        reference_latitude = indexed["stop_lat"].mean()
+        # Rounded: polars' `.mean()` sums in parallel, and float addition
+        # isn't associative, so the exact result can differ in its last
+        # bit(s) between runs on identical input. This value only sets the
+        # grid's cos(lat) meters-per-degree scale (nothing needs it more
+        # precise than ~0.1m), but left unrounded, that run-to-run jitter
+        # can flip which grid cell a stop sitting right on a cell boundary
+        # falls into -- silently changing cluster membership (and so
+        # `parent_station`/`direction_conflict` results) between otherwise
+        # identical runs.
+        reference_latitude = round(indexed["stop_lat"].mean(), 6)
         cell_exprs = geo_polars.grid_cell_columns(
             "stop_lat", "stop_lon", cell_size_m=distance, reference_latitude_deg=reference_latitude
         )
@@ -322,7 +331,14 @@ class Stops:
         ).filter(pl.col("idx") < pl.col("idx_b"))
 
         candidate_pairs = candidate_pairs.with_columns(
-            geo_polars.haversine_distance_m("stop_lat", "stop_lon", "stop_lat_b", "stop_lon_b").alias("dist_m")
+            # Rounded to the millimeter: a pair sitting almost exactly on
+            # the `distance` threshold can otherwise flip in or out of
+            # range between runs from sub-micron floating-point jitter in
+            # the trig chain below (not something GTFS coordinate
+            # precision could ever resolve anyway) -- silently changing
+            # cluster/`parent_station` membership, and everything
+            # downstream of it, on identical input.
+            geo_polars.haversine_distance_m("stop_lat", "stop_lon", "stop_lat_b", "stop_lon_b").round(3).alias("dist_m")
         ).filter(pl.col("dist_m") <= distance)
 
         edges = list(zip(candidate_pairs["idx"].to_list(), candidate_pairs["idx_b"].to_list()))

@@ -192,7 +192,8 @@ class Feed(FeedFilteringMixin, FeedAnalysisMixin, FeedEdgeAnalysisMixin):
         stop_ids: Optional[List[str]] = None,
         route_ids: Optional[List[str]] = None,
         check_files:bool=True,
-        min_file_id=0
+        min_file_id=0,
+        load_shapes: bool = True,
     ):
         self.calendar, self.routes, self.gtfs_dir, self.stop_times, self.stops, self.trips = self.load(
             gtfs_dirs=gtfs_dirs,
@@ -212,7 +213,9 @@ class Feed(FeedFilteringMixin, FeedAnalysisMixin, FeedEdgeAnalysisMixin):
             min_file_id=min_file_id
         )
 
-        self.shapes, self.trip_shape_ids_lf = self.load_shapes(self.stops,self.stop_times,self.trips,self.gtfs_dir)
+        self.shapes, self.trip_shape_ids_lf = self.load_shapes(
+            self.stops, self.stop_times, self.trips, self.gtfs_dir, use_real_shapes=load_shapes
+        )
 
         self.lf = self.build_lf(
             self.calendar, 
@@ -404,7 +407,21 @@ class Feed(FeedFilteringMixin, FeedAnalysisMixin, FeedEdgeAnalysisMixin):
 
         return calendar, routes, gtfs_dir, stop_times, stops, trips
 
-    def load_shapes(self,stops,stop_times,trips,gtfs_dir):
+    def load_shapes(self, stops, stop_times, trips, gtfs_dir, use_real_shapes: bool = True):
+        """Builds `self.shapes`/`self.trip_shape_ids_lf`.
+
+        Args:
+            use_real_shapes: When `True` (default), real polyline geometry
+                is read from `shapes.txt` (if present) and each synthetic
+                shape's stops are inserted into it at their nearest-segment
+                position (see `Shapes._insert_stops_into_real_shapes`).
+                When `False`, `shapes.txt` is never read and every shape is
+                just a straight line stop-to-stop -- skips the real-geometry
+                matching entirely, which is the most expensive part of
+                loading a feed with a large `shapes.txt` (e.g. detailed
+                rail/metro polylines), for callers who don't need real
+                geometry and want faster loads.
+        """
         # --- 4. Load Shapes and Perform Advanced Time Interpolation ---
         trip_shape_ids_lf: pl.LazyFrame = (
             stop_times.generate_shape_ids().collect().lazy()
@@ -428,12 +445,23 @@ class Feed(FeedFilteringMixin, FeedAnalysisMixin, FeedEdgeAnalysisMixin):
             .join(trip_to_real_shape_id, on="trip_id", how="left")
             .filter(pl.col("real_shape_id").is_not_null() & (pl.col("real_shape_id") != ""))
             .group_by("shape_id")
-            .agg(pl.col("real_shape_id").mode().first().alias("real_shape_id"))
+            # `.mode()` can return more than one value when two or more
+            # `real_shape_id`s are tied for most-frequent within a
+            # synthetic group, in whatever order polars' internal
+            # (randomized-per-process) hashing happens to produce them --
+            # `.first()` alone would then pick a different winner on every
+            # run, attaching a different real geometry (and so a different
+            # `direction_id`/`direction_conflict` outcome) to the same
+            # synthetic shape from run to run on identical input. Sorting
+            # first makes the tie-break deterministic (alphabetically
+            # smallest `real_shape_id` wins ties).
+            .agg(pl.col("real_shape_id").mode().sort().first().alias("real_shape_id"))
         )
         trip_shape_ids_lf = trip_shape_ids_lf.join(real_shape_id_per_group, on="shape_id", how="left")
 
         shapes = Shapes()
-        shapes.load(gtfs_dir, trip_shape_ids_lf, stops.lf, check_files=False, min_file_id=0)
+        shapes_path = gtfs_dir if use_real_shapes else None
+        shapes.load(shapes_path, trip_shape_ids_lf, stops.lf, check_files=False, min_file_id=0)
         # `stops`/`stop_times`/`trips` here are already the post-filter (date,
         # time window, AOI, route_types, service/trip/stop/route id) versions
         # produced by `self.load(...)` above, so this direction_id assignment

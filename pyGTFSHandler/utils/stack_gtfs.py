@@ -43,7 +43,7 @@ def stop_ids_in_aoi(df, aoi=None):
 
 def load_stack(filename, paths, stop_ids=[], rename_service_ids=None):
     id_cols = ["trip_id", "service_id", "route_id", "stop_id", "shape_id"]
-    schema_dict = gtfs_checker.get_df_schema_dict(filename)
+    schema_dict, _ = gtfs_checker.get_df_schema_dict(filename)
     df = io.read_csv_list(
         [p / filename for p in paths], schema_overrides=schema_dict
     )

@@ -49,7 +49,13 @@ from ..base import BaseGTFSDownloader
 from ..utils.download import download_feeds
 from ..utils.models import GTFSFeedMetadata
 from ..utils.naming import normalize_text, sanitize_filename
-from .utils import input_date, process_calendar, process_calendar_dates
+from ..utils.historic import zip_stitched_feed
+from .utils import (
+    input_date,
+    process_calendar,
+    process_calendar_dates,
+    resolve_publication_start_date,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -519,7 +525,8 @@ class NAPDownloader(BaseGTFSDownloader):
                 stops.
 
         Returns:
-            Paths to each dataset's stitched feed folder.
+            Paths to each dataset's stitched
+            `{SOURCE_NAME}_{dataset_name}_{start}_{end}.zip`.
         """
         if not isinstance(datasets, list):
             datasets = [datasets]
@@ -554,10 +561,15 @@ class NAPDownloader(BaseGTFSDownloader):
         all_paths = []
         for dataset in datasets:
             main_name = sanitize_filename(dataset["nombre"])
+            zip_source_name = f"{self.SOURCE_NAME}_{main_name}"
             main_path = os.path.normpath(os.path.join(output_path, main_name))
-            if not overwrite and os.path.isdir(main_path):
-                all_paths.append(main_path)
-                logger.info(f"Dataset '{main_path}' already exists. Skipping.")
+            final_zip = os.path.join(
+                output_path,
+                f"{zip_source_name}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.zip",
+            )
+            if not overwrite and os.path.isfile(final_zip):
+                all_paths.append(final_zip)
+                logger.info(f"'{final_zip}' already exists. Skipping.")
                 continue
 
             entries = sorted(
@@ -577,14 +589,16 @@ class NAPDownloader(BaseGTFSDownloader):
                 os.remove(path_stack[-1] + ".zip")
 
             historic_stack(path_stack, main_path, aoi)
+            zip_path = zip_stitched_feed(main_path, zip_source_name, start_date, end_date, output_path)
             logger.info(f"Finished stitching historic dataset '{main_name}'.")
             for f in path_stack:
                 if os.path.isfile(f):
                     os.remove(f)
                 elif os.path.isdir(f):
                     shutil.rmtree(f)
+            shutil.rmtree(main_path)
 
-            all_paths.append(main_path)
+            all_paths.append(zip_path)
 
         return all_paths
 
@@ -685,22 +699,35 @@ class NAPDownloader(BaseGTFSDownloader):
         """
         calendar_path = os.path.normpath(os.path.join(file_path, "calendar.txt"))
         calendar_dates_path = os.path.normpath(os.path.join(file_path, "calendar_dates.txt"))
+        has_calendar = os.path.isfile(calendar_path)
+        has_calendar_dates = os.path.isfile(calendar_dates_path)
+
+        # NAP's publication date (`fecha`) is when the file was uploaded,
+        # not necessarily when its own service period starts. Only trust
+        # it as the trim anchor if it actually falls inside this feed's
+        # calendar/calendar_dates service range; otherwise anchor on the
+        # feed's own earliest service date instead.
+        resolved_date = resolve_publication_start_date(
+            calendar_path if has_calendar else None,
+            calendar_dates_path if has_calendar_dates else None,
+            file_date,
+        )
 
         next_index, min_end_date = None, None
-        if os.path.isfile(calendar_path):
+        if has_calendar:
             next_index, min_end_date = process_calendar(
-                calendar_path, file_date, dates, day_separation, calendar_path
+                calendar_path, resolved_date, dates, day_separation, calendar_path
             )
 
-        if os.path.isfile(calendar_dates_path):
+        if has_calendar_dates:
             next_index, min_end_date = process_calendar_dates(
                 calendar_dates_path,
-                file_date,
+                resolved_date,
                 dates,
                 day_separation,
                 calendar_dates_path,
                 next_index=next_index,
-                has_calendar=os.path.isfile(calendar_path),
+                has_calendar=has_calendar,
             )
 
         if not os.path.isfile(calendar_path) and not os.path.isfile(calendar_dates_path):

@@ -35,14 +35,26 @@ published GTFS static ZIP.
 """
 
 import logging
+import os
+import shutil
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import requests
 
+from ..utils.stack_gtfs import historic_stack
 from .base import BaseGTFSDownloader
 from .utils.aoi import AOIType, bbox_from_aoi
+from .utils.dates import DateLike, normalize_date_range
+from .utils.historic import (
+    cleanup_version_paths,
+    download_and_stitch_versions,
+    select_versions_covering_range,
+    zip_stitched_feed,
+)
 from .utils.http import request_json
 from .utils.models import GTFSFeedMetadata
+from .utils.naming import sanitize_filename
 
 logger = logging.getLogger(__name__)
 
@@ -237,3 +249,158 @@ class TransitLandDownloader(BaseGTFSDownloader):
             source=self.SOURCE_NAME,
             raw=raw,
         )
+
+    # -------------------------------------------------------------------
+    # Historic-version stitching
+    # -------------------------------------------------------------------
+
+    @staticmethod
+    def _version_start(version: Dict[str, Any]) -> Optional[datetime]:
+        d = version.get("earliest_calendar_date")
+        return datetime.strptime(d, "%Y-%m-%d") if d else None
+
+    @staticmethod
+    def _version_end(version: Dict[str, Any]) -> Optional[datetime]:
+        d = version.get("latest_calendar_date")
+        return datetime.strptime(d, "%Y-%m-%d") if d else None
+
+    def find_feed_version_history(self, feed_key: str, limit: int = 1000) -> List[Dict[str, Any]]:
+        """List every published static GTFS version recorded for a feed.
+
+        Uses `GET /feeds/{feed_key}/feed_versions`, which returns
+        Transitland's full archive of past fetches for the feed, each
+        tagged with `earliest_calendar_date`/`latest_calendar_date` -- the
+        real service period Transitland computed from that version's own
+        `calendar.txt`/`calendar_dates.txt`, not just when it was fetched
+        (`fetched_at`).
+
+        Args:
+            feed_key: Feed lookup key: an integer id or onestop id.
+            limit: Maximum number of feed versions to fetch.
+
+        Returns:
+            Raw feed_version dictionaries, sorted oldest to newest by
+            `earliest_calendar_date` (entries missing that field sort
+            last, in API order).
+        """
+        data = self._get(f"{self.BASE_URL}/feeds/{feed_key}/feed_versions", {"limit": limit})
+        versions = data.get("feed_versions", [])
+        versions.sort(key=lambda v: self._version_start(v) or datetime.max)
+        return versions
+
+    def _download_feed_version(self, version: Dict[str, Any], dest_zip_path: str) -> bool:
+        """Download a single feed_version's zip to `dest_zip_path`.
+
+        Downloading a *historic* (non-latest) feed_version requires a
+        paid Transitland Professional/Enterprise plan (or a free
+        Hobbyist/Academic plan); this surfaces that as a clear
+        `PermissionError` rather than a generic HTTP failure.
+        """
+        sha1 = version.get("sha1")
+        url = f"{self.BASE_URL}/feed_versions/{sha1}/download"
+        try:
+            response = requests.get(
+                url, params={"apikey": self.api_key}, stream=True, timeout=60
+            )
+            if response.status_code in (401, 402, 403):
+                raise PermissionError(
+                    f"Transitland denied downloading historic feed_version '{sha1}' "
+                    f"(HTTP {response.status_code}). Downloading historic (non-latest) "
+                    "feed versions requires a paid Transitland Professional/Enterprise "
+                    "plan, or a free Hobbyist/Academic plan."
+                )
+            response.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Error downloading feed_version '{sha1}': {e}")
+            return False
+
+        with open(dest_zip_path, "wb") as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+        return True
+
+    def download_historic_stack(
+        self,
+        output_path: str,
+        feed_key: str,
+        start_date: DateLike,
+        end_date: DateLike,
+        day_separation: int = 1,
+        overwrite: bool = False,
+        aoi=None,
+    ) -> Optional[str]:
+        """Download and stitch a feed's version history into one GTFS zip.
+
+        Mirrors `NAPDownloader.download_historic_stack`/
+        `MobilityDatabaseDownloader.download_historic_stack`, using
+        `find_feed_version_history`'s `earliest_calendar_date` as the
+        trim anchor -- already a real, Transitland-computed service start
+        date, unlike NAP's raw publication timestamp.
+
+        Note: downloading any feed_version other than the single most
+        recent one requires a paid (or free Hobbyist/Academic) Transitland
+        plan; see `_download_feed_version`.
+
+        Args:
+            output_path: Directory to assemble the stitched feed in.
+            feed_key: Feed lookup key: an integer id or onestop id.
+            start_date: Start of the date range to cover. Accepts
+                `"today"`, a `date`/`datetime`, or an ISO `"YYYY-MM-DD"`
+                string.
+            end_date: End of the date range to cover.
+            day_separation: Minimum number of days a version is assumed
+                to stay valid for, if service periods don't force it
+                shorter.
+            overwrite: If True, redo the feed even if its stitched output
+                zip already exists.
+            aoi: Optional AOI passed through to `historic_stack` to
+                restrict stops.
+
+        Returns:
+            Path to the written `{SOURCE_NAME}_{feed_key}_{start}_{end}.zip`,
+            or `None` if no feed versions were found covering the
+            requested range.
+        """
+        os.makedirs(output_path, exist_ok=True)
+        start_date, end_date = normalize_date_range(start_date, end_date)
+        main_name = sanitize_filename(str(feed_key))
+        zip_source_name = f"{self.SOURCE_NAME}_{main_name}"
+
+        final_zip = os.path.join(
+            output_path,
+            f"{zip_source_name}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.zip",
+        )
+        if not overwrite and os.path.isfile(final_zip):
+            logger.info(f"'{final_zip}' already exists. Skipping.")
+            return final_zip
+
+        history = self.find_feed_version_history(feed_key)
+        versions = select_versions_covering_range(
+            history, start_date, end_date, get_start=self._version_start
+        )
+        for version in versions:
+            version["start_date"] = self._version_start(version)
+
+        if not versions:
+            logger.warning(f"No feed versions found for feed '{feed_key}' in the requested range.")
+            return None
+
+        main_path = os.path.normpath(os.path.join(output_path, main_name))
+        path_stack = download_and_stitch_versions(
+            versions, main_path, day_separation, end_date, overwrite, self._download_feed_version
+        )
+        if not path_stack:
+            return None
+
+        if os.path.isfile(path_stack[-1] + ".zip"):
+            os.remove(path_stack[-1] + ".zip")
+
+        historic_stack(path_stack, main_path, aoi)
+        zip_path = zip_stitched_feed(main_path, zip_source_name, start_date, end_date, output_path)
+        logger.info(f"Finished stitching historic feed '{main_name}'.")
+
+        cleanup_version_paths(path_stack)
+        shutil.rmtree(main_path)
+
+        return zip_path

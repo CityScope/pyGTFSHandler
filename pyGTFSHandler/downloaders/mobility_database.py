@@ -30,15 +30,26 @@ from `downloaders.base.BaseGTFSDownloader`.
 
 import itertools
 import logging
+import os
+import shutil
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import requests
 
+from ..utils.stack_gtfs import historic_stack
 from .base import BaseGTFSDownloader
 from .utils.aoi import AOIType, bbox_from_aoi
+from .utils.dates import DateLike, normalize_date_range
+from .utils.historic import (
+    cleanup_version_paths,
+    download_and_stitch_versions,
+    select_versions_covering_range,
+    zip_stitched_feed,
+)
 from .utils.http import request_json
 from .utils.models import GTFSFeedMetadata
+from .utils.naming import sanitize_filename
 
 logger = logging.getLogger(__name__)
 
@@ -416,3 +427,153 @@ class MobilityDatabaseDownloader(BaseGTFSDownloader):
             source=self.SOURCE_NAME,
             raw=raw,
         )
+
+    # -------------------------------------------------------------------
+    # Historic-version stitching
+    # -------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_iso_datetime(value: Optional[str]) -> Optional[datetime]:
+        """Parse an ISO 8601 date-time string, dropping timezone info."""
+        if not value:
+            return None
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=None)
+
+    @classmethod
+    def _dataset_start(cls, dataset: Dict[str, Any]) -> Optional[datetime]:
+        return cls._parse_iso_datetime(dataset.get("service_date_range_start"))
+
+    @classmethod
+    def _dataset_end(cls, dataset: Dict[str, Any]) -> Optional[datetime]:
+        return cls._parse_iso_datetime(dataset.get("service_date_range_end"))
+
+    def find_dataset_history(
+        self,
+        feed_id: str,
+        limit: int = 1000,
+    ) -> List[Dict[str, Any]]:
+        """List every published dataset (version) recorded for a feed.
+
+        Uses `/v1/gtfs_feeds/{id}/datasets`, which -- unlike
+        `search_feeds`'s `latest_dataset` -- returns the full publication
+        history MobilityData has recorded for the feed, each already
+        tagged with `service_date_range_start`/`service_date_range_end`:
+        the real service period MobilityData computed from that dataset's
+        own `calendar.txt`/`calendar_dates.txt`, not just when it was
+        downloaded.
+
+        Args:
+            feed_id: Mobility Database feed id (e.g. `"mdb-10"`).
+            limit: Maximum number of dataset versions to fetch.
+
+        Returns:
+            Raw dataset dictionaries, sorted oldest to newest by
+            `service_date_range_start` (entries missing that field sort
+            last, in API order).
+        """
+        datasets = self._authorized_request(
+            "GET", f"{self.GTFS_FEEDS_ENDPOINT}/{feed_id}/datasets", params={"limit": limit}
+        )
+        datasets.sort(key=lambda d: self._dataset_start(d) or datetime.max)
+        return datasets
+
+    def _download_dataset_version(self, version: Dict[str, Any], dest_zip_path: str) -> bool:
+        """Download a single dataset version's zip to `dest_zip_path`."""
+        url = version.get("hosted_url")
+        if not url:
+            logger.warning(f"Dataset '{version.get('id')}' has no 'hosted_url'. Skipping.")
+            return False
+        try:
+            response = requests.get(url, stream=True, timeout=60)
+            response.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Error downloading dataset '{version.get('id')}': {e}")
+            return False
+
+        with open(dest_zip_path, "wb") as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+        return True
+
+    def download_historic_stack(
+        self,
+        output_path: str,
+        feed_id: str,
+        start_date: DateLike,
+        end_date: DateLike,
+        day_separation: int = 1,
+        overwrite: bool = False,
+        aoi=None,
+    ) -> Optional[str]:
+        """Download and stitch a feed's dataset history into one GTFS zip.
+
+        Mirrors `NAPDownloader.download_historic_stack`, but since
+        `find_dataset_history` already reports each version's real
+        service date range (computed by MobilityData from that version's
+        own calendar), no extra validation of the anchor date is needed
+        before trimming (contrast with NAP's raw publication timestamp,
+        handled by `downloaders.spain.utils.resolve_publication_start_date`).
+
+        Args:
+            output_path: Directory to assemble the stitched feed in.
+            feed_id: Mobility Database feed id (e.g. `"mdb-10"`).
+            start_date: Start of the date range to cover. Accepts
+                `"today"`, a `date`/`datetime`, or an ISO `"YYYY-MM-DD"`
+                string.
+            end_date: End of the date range to cover.
+            day_separation: Minimum number of days a version is assumed
+                to stay valid for, if service periods don't force it
+                shorter.
+            overwrite: If True, redo the feed even if its stitched output
+                zip already exists.
+            aoi: Optional AOI passed through to `historic_stack` to
+                restrict stops.
+
+        Returns:
+            Path to the written `{SOURCE_NAME}_{feed_id}_{start}_{end}.zip`,
+            or `None` if no dataset versions were found covering the
+            requested range.
+        """
+        os.makedirs(output_path, exist_ok=True)
+        start_date, end_date = normalize_date_range(start_date, end_date)
+        main_name = sanitize_filename(str(feed_id))
+        zip_source_name = f"{self.SOURCE_NAME}_{main_name}"
+
+        final_zip = os.path.join(
+            output_path,
+            f"{zip_source_name}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.zip",
+        )
+        if not overwrite and os.path.isfile(final_zip):
+            logger.info(f"'{final_zip}' already exists. Skipping.")
+            return final_zip
+
+        history = self.find_dataset_history(feed_id)
+        versions = select_versions_covering_range(
+            history, start_date, end_date, get_start=self._dataset_start
+        )
+        for version in versions:
+            version["start_date"] = self._dataset_start(version)
+
+        if not versions:
+            logger.warning(f"No dataset versions found for feed '{feed_id}' in the requested range.")
+            return None
+
+        main_path = os.path.normpath(os.path.join(output_path, main_name))
+        path_stack = download_and_stitch_versions(
+            versions, main_path, day_separation, end_date, overwrite, self._download_dataset_version
+        )
+        if not path_stack:
+            return None
+
+        if os.path.isfile(path_stack[-1] + ".zip"):
+            os.remove(path_stack[-1] + ".zip")
+
+        historic_stack(path_stack, main_path, aoi)
+        zip_path = zip_stitched_feed(main_path, zip_source_name, start_date, end_date, output_path)
+        logger.info(f"Finished stitching historic dataset '{main_name}'.")
+
+        cleanup_version_paths(path_stack)
+        shutil.rmtree(main_path)
+
+        return zip_path

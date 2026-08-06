@@ -144,6 +144,7 @@ class FeedAnalysisMixin:
         how: str = "all",
         n_divisions: int = 1,
         mix_directions:bool = False,
+        direction_method: str = "both",
         frequencies:bool=False,
         in_aoi:bool=True,
         delete_last_stop:bool = True
@@ -327,65 +328,86 @@ class FeedAnalysisMixin:
         # Number of angular bins (forward + backward)
         n_sectors = n_divisions * 2
 
-        # Adjust shape directions to ensure proper forward/backward separation
-        gtfs_lf = (
-            gtfs_lf.with_columns(
-                (
-                    pl.when(
-                        (
+        # Force forward/backward exactly 180 degrees apart before clustering
+        # -- only `shape_direction` (forward) is ever used downstream here
+        # (the widest-gap split and every sector assignment work off it
+        # alone), so `direction_method` only needs to decide what
+        # `shape_direction` itself becomes; there's no separate output
+        # column for backward to keep in sync, unlike
+        # `models.shapes._reconcile_fwd_bwd` (which this mirrors
+        # conceptually, for `direction_method="both"`).
+        if direction_method == "forward":
+            # Forward trusted as-is; whatever correction would be needed
+            # is implicitly left for backward to absorb (moot here, since
+            # backward isn't used downstream) -- so no adjustment at all.
+            pass
+        elif direction_method == "backward":
+            # Backward trusted as-is; forward is fully replaced by its
+            # antipode.
+            gtfs_lf = gtfs_lf.with_columns(
+                ((pl.col("shape_direction_backwards") + 180) % 360).alias("shape_direction")
+            )
+        else:
+            if direction_method != "both":
+                raise ValueError(f"direction_method must be 'both', 'forward', or 'backward', got {direction_method!r}")
+            gtfs_lf = (
+                gtfs_lf.with_columns(
+                    (
+                        pl.when(
                             (
-                                pl.col("shape_direction") + 360 - pl.col("shape_direction_backwards")
-                            ) % 360
-                        )
-                        > (
-                            (
-                                pl.col("shape_direction_backwards") + 360 - pl.col("shape_direction")
-                            ) % 360
-                        )
-                    )
-                    .then(
-                        -1
-                        * (
-                            180
-                            - (
                                 (
-                                    pl.col("shape_direction_backwards")
-                                    + 360
-                                    - pl.col("shape_direction")
-                                )
-                                % 360
+                                    pl.col("shape_direction") + 360 - pl.col("shape_direction_backwards")
+                                ) % 360
+                            )
+                            > (
+                                (
+                                    pl.col("shape_direction_backwards") + 360 - pl.col("shape_direction")
+                                ) % 360
                             )
                         )
-                        / 2
-                    )
-                    .otherwise(
-                        (
-                            180
-                            - (
-                                (
-                                    pl.col("shape_direction")
-                                    + 360
-                                    - pl.col("shape_direction_backwards")
+                        .then(
+                            -1
+                            * (
+                                180
+                                - (
+                                    (
+                                        pl.col("shape_direction_backwards")
+                                        + 360
+                                        - pl.col("shape_direction")
+                                    )
+                                    % 360
                                 )
-                                % 360
                             )
+                            / 2
                         )
-                        / 2
-                    )
-                ).alias("shape_diff")
+                        .otherwise(
+                            (
+                                180
+                                - (
+                                    (
+                                        pl.col("shape_direction")
+                                        + 360
+                                        - pl.col("shape_direction_backwards")
+                                    )
+                                    % 360
+                                )
+                            )
+                            / 2
+                        )
+                    ).alias("shape_diff")
+                )
+                .with_columns(
+                    pl.when(pl.col("shape_diff").is_null() | pl.col("shape_diff").is_nan())
+                    .then(pl.lit(0))
+                    .otherwise(pl.col("shape_diff"))
+                    .alias("shape_diff")
+                )
+                .with_columns(
+                    ((pl.col("shape_direction") + 360 + pl.col("shape_diff")) % 360)
+                    .alias("shape_direction")
+                )
+                .drop("shape_diff")
             )
-            .with_columns(
-                pl.when(pl.col("shape_diff").is_null() | pl.col("shape_diff").is_nan())
-                .then(pl.lit(0))
-                .otherwise(pl.col("shape_diff"))
-                .alias("shape_diff")
-            )
-            .with_columns(
-                ((pl.col("shape_direction") + 360 + pl.col("shape_diff")) % 360)
-                .alias("shape_direction")
-            )
-            .drop("shape_diff")
-        )
 
         # Compute direction split per stop
         gtfs_lf = gtfs_lf.group_by(at).agg(pl.all()).collect()
@@ -541,6 +563,7 @@ class FeedAnalysisMixin:
         how: str = "all",
         n_divisions: int = 1,
         mix_directions:bool = False,
+        direction_method: str = "both",
     ) -> pl.LazyFrame:
         """
         Compute the mean headway (service headway) within a time window.
@@ -569,8 +592,17 @@ class FeedAnalysisMixin:
             - "add": harmonic mean of all service headways together (route headways are added together)
         n_divisions : int, default 1
             Number of directional bins when using `shape_direction`.
-        mix_directions : bool, default False 
+        mix_directions : bool, default False
             For how 'mean' mix outbound and inbound directions of same route as different routes
+        direction_method : {"both", "forward", "backward"}, default "both"
+            Only used when `by="shape_direction"`: how the forward/backward
+            bearing pair at each stop is reconciled before clustering.
+            "both" splits the correction evenly between forward and
+            backward (the default); "forward" trusts the forward bearing
+            as-is; "backward" trusts the backward bearing as-is and
+            replaces forward with its antipode. See
+            `models.shapes._reconcile_fwd_bwd` for the equivalent used by
+            `direction_id` assignment.
 
         Returns
         -------
@@ -608,11 +640,12 @@ class FeedAnalysisMixin:
             how=how,
             n_divisions=n_divisions,
             mix_directions=mix_directions,
+            direction_method=direction_method,
             frequencies=True,
             in_aoi=False,
             delete_last_stop = False,
         )
-    
+
     def _frequencies_to_departures_lean(self, gtfs_lf: pl.LazyFrame) -> pl.LazyFrame:
         """Lightweight equivalent of `Feed._frequencies_to_stop_times` that only
         expands `frequencies.txt` rows into individual departure instants,
@@ -704,6 +737,7 @@ class FeedAnalysisMixin:
         how: str = "all",
         n_divisions: int = 1,
         mix_directions: bool = False,
+        direction_method: str = "both",
     ) -> pl.LazyFrame:
         """Equivalent to `get_headway_at_stops`, but avoids materializing a
         full per-departure stop_times row (via `Feed._frequencies_to_stop_times`)
@@ -770,6 +804,7 @@ class FeedAnalysisMixin:
             how=how,
             n_divisions=n_divisions,
             mix_directions=mix_directions,
+            direction_method=direction_method,
             frequencies=True,
             in_aoi=False,
             delete_last_stop=False,

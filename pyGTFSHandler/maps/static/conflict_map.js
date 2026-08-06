@@ -29,10 +29,11 @@
   var conflictLayer = null;
   var okCoords = [];
 
-  function numberedIcon(n, color) {
+  function numberedIcon(n, color, conflict) {
+    var star = conflict ? '<div class="conflict-star-badge">★</div>' : "";
     return L.divIcon({
       className: "",
-      html: '<div class="conflict-num-badge" style="background:' + color + '">' + n + "</div>",
+      html: '<div class="conflict-num-badge" style="background:' + color + '">' + n + "</div>" + star,
       iconSize: [22, 22],
       iconAnchor: [11, 11],
     });
@@ -54,6 +55,12 @@
   function stopPopupHtml(s) {
     var html = "<b>" + s.stop_id + "</b> (#" + s.__seq + ")<br>";
     html += "direction_id: <b>" + fmt(s.direction_id) + "</b><br>";
+    if (s.conflict) {
+      html +=
+        '<span style="color:#d62728">★ conflict -- this stop\'s own geometry actually ' +
+        "indicated direction_id <b>" + fmt(s.real_direction_id) + "</b>, not " + fmt(s.direction_id) +
+        "</span><br>";
+    }
     if (s.split_angle === null) {
       html += "split: n/a (nothing to split at this stop)<br>";
     } else {
@@ -81,8 +88,9 @@
         lon += OVERLAP_OFFSET;
       }
       s.__seq = i + 1;
-      L.marker([lat, lon], { icon: numberedIcon(i + 1, color) })
-        .bindTooltip(i + 1 + ": " + s.stop_id)
+      var tooltip = i + 1 + ": " + s.stop_id + (s.conflict ? " ★" : "");
+      L.marker([lat, lon], { icon: numberedIcon(i + 1, color, s.conflict) })
+        .bindTooltip(tooltip)
         .bindPopup(stopPopupHtml(s))
         .addTo(group);
     });
@@ -156,83 +164,72 @@
 
     var dirKeys = Object.keys(info.ok || {});
     if (dirKeys.length) {
-      html += "<u>Non-conflicting shape_ids (blue), by direction_id</u><br>";
+      html += "<u>By direction_id, longest shape_id first</u><br>";
+      // Only one direction_id's shape can be shown in blue/red-reference
+      // at a time (a single `okLayer`), so both dropdowns start on "None"
+      // and picking one resets the other back to it -- see
+      // `selectOkIndex`.
       dirKeys.forEach(function (dirKey) {
-        html +=
-          '<button class="conflict-route-btn" id="conflict-dir-btn-' +
+        var list = info.ok[dirKey];
+        html += '<div style="margin-top:6px"><b>direction_id ' + dirKey + "</b> (" + list.length + ")<br>";
+        html += '<select class="conflict-ok-select" id="conflict-dir-select-' +
           dirKey +
-          '" onclick="window.__selectOkDirection(\'' +
+          '" onchange="window.__selectOkIndex(\'' +
           stationId +
           "','" +
           routeId +
           "','" +
           dirKey +
-          '\')">direction_id ' +
-          dirKey +
-          " (" +
-          info.ok[dirKey].length +
-          ")</button>";
+          "', this.value)\">";
+        html += '<option value="-1">None</option>';
+        list.forEach(function (entry, i) {
+          var label =
+            entry.shape_id + " (" + entry.length + "m, " + entry.stops.length + " stops)" +
+            (entry.conflict ? " -- direction_conflict" : "");
+          html +=
+            '<option value="' + i + '"' + (entry.conflict ? ' style="color:#d62728"' : "") + ">" + label + "</option>";
+        });
+        html += "</select></div>";
       });
-      html += '<div id="conflict-ok-slider-box"></div>';
     } else {
-      html += "<i>No non-conflicting shape_id for this route at this station.</i>";
+      html += "<i>No shape_id for this route at this station.</i>";
     }
 
     shapesPanel.innerHTML = html;
     shapesPanel.style.display = "block";
-  }
-
-  function selectOkDirection(stationId, routeId, dirKey) {
-    var info = DATA.conflicts[stationId][routeId];
-    var list = info.ok[dirKey];
-    if (!list || !list.length) return;
-
-    document.querySelectorAll(".conflict-route-btn").forEach(function (b) {
-      b.classList.remove("active");
-    });
-    var btn = document.getElementById("conflict-dir-btn-" + dirKey);
-    if (btn) btn.classList.add("active");
-
-    var box = document.getElementById("conflict-ok-slider-box");
-    box.innerHTML =
-      '<input type="range" min="0" max="' +
-      (list.length - 1) +
-      '" value="0" step="1" class="conflict-ok-slider" ' +
-      'oninput="window.__selectOkIndex(\'' +
-      stationId +
-      "','" +
-      routeId +
-      "','" +
-      dirKey +
-      '\', this.value)"><br>' +
-      '<span id="conflict-ok-slider-label"></span>';
-
-    selectOkIndex(stationId, routeId, dirKey, 0);
+    // Both dropdowns default to "None" -- nothing drawn until the user
+    // picks a direction.
   }
 
   function selectOkIndex(stationId, routeId, dirKey, idx) {
     var info = DATA.conflicts[stationId][routeId];
-    var entry = info.ok[dirKey][idx];
-    if (!entry) return;
 
-    var label = document.getElementById("conflict-ok-slider-label");
-    if (label) {
-      label.textContent =
-        (parseInt(idx, 10) + 1) + " / " + info.ok[dirKey].length + ": " + entry.shape_id +
-        " (" + entry.length + "m, " + entry.stops.length + " stops)";
-    }
+    // Only one non-conflicting/reference shape (one `okLayer`) can be on
+    // the map at a time. Picking a shape in one direction's dropdown
+    // resets every *other* direction's dropdown back to "None", so the
+    // two can never both claim to be the one shown.
+    Object.keys(info.ok || {}).forEach(function (otherDirKey) {
+      if (otherDirKey === dirKey) return;
+      var otherSelect = document.getElementById("conflict-dir-select-" + otherDirKey);
+      if (otherSelect) otherSelect.value = "-1";
+    });
 
     if (okLayer) {
       map.removeLayer(okLayer);
       okLayer = null;
+      okCoords = [];
     }
-    okLayer = drawSequence(entry.stops, COLOR_OK);
+
+    var entry = info.ok[dirKey][idx];
+    if (!entry) return; // idx === "-1" ("None"), or invalid -- leave cleared.
+
+    okLayer = drawSequence(entry.stops, entry.conflict ? COLOR_CONFLICT : COLOR_OK);
     okCoords = entry.stops.map(function (s) {
       return [s.lat, s.lon];
     });
     // Redraw the conflicting layer (if any) on top, so its markers stay
     // above -- and stay correctly offset against -- the newly-selected
-    // non-conflicting sequence.
+    // sequence.
     if (window.__lastConflictShape) {
       drawConflictShape(window.__lastConflictShape.stationId, window.__lastConflictShape.routeId, window.__lastConflictShape.shapeId);
     }
@@ -252,7 +249,6 @@
 
   window.__closeConflictPanels = closePanels;
   window.__showConflictShapes = showShapes;
-  window.__selectOkDirection = selectOkDirection;
   window.__selectOkIndex = selectOkIndex;
   window.__drawConflictShape = drawConflictShape;
 
@@ -284,7 +280,10 @@
       '"></span>Longest non-conflicting shape_id</div>' +
       '<div><span class="conflict-legend-line" style="background:' +
       COLOR_CONFLICT +
-      '"></span>Selected conflicting shape_id</div>';
+      '"></span>Selected conflicting shape_id</div>' +
+      '<div><span style="color:' +
+      COLOR_CONFLICT +
+      '">★</span> Stop where the geometry disagreed with the shape\'s reported direction_id</div>';
     return div;
   };
   legend.addTo(map);

@@ -6,25 +6,41 @@ are grouped by `parent_station` (falling back to `stop_id` itself when a
 stop has none), same as `route_map` does -- a station's separate platform
 `stop_id`s are where GTFS conflicts are computed, but a rider (and this
 map's marker/panel) thinks in terms of one station, not each individual
-platform. Every station with at least one `direction_id_issues=True` row
+platform. Every station with at least one `direction_conflict=True` row
 (see `Shapes.assign_direction_ids` in `models/shapes.py`) at any of its
 platforms is drawn as a red marker, every other station as a small gray
 dot. Clicking a red station opens a panel listing the `route_id`s that
 conflict there (pooled across all of that station's platforms); clicking a
-second panel listing that route's conflicting `shape_id`s at that stop
-alongside every non-conflicting `shape_id` of that route at that stop,
-grouped by `direction_id` (0 and/or 1) and ordered longest-to-shortest (by
-`shape_total_distance`). Selecting a direction and stepping a slider
-through its shape_ids draws exactly one at a time on the map in blue,
-numbered 1, 2, 3, ... in visit order; clicking any conflicting `shape_id`
-in the list draws that shape's own stop sequence the same way, in red, on
-top of it -- so the two can be visually compared stop-by-stop. Clicking any
-individual numbered stop marker (in either sequence) pops up that
-shape/stop's `direction_id`, the local widest-gap split's two angle ranges
-(see `models.shapes._split_angle`), and both the raw and forward/backward-
-forced-180 (`models.shapes._reconcile_fwd_bwd`) bearings -- the same inputs
-`assign_direction_ids` itself used to make that call, for auditing exactly
-why a given stop got the direction it did.
+second panel listing that route's conflicting `shape_id`s at that stop,
+plus two dropdowns -- one per `direction_id` (0 and/or 1) -- each listing
+every `shape_id` of that route at that stop, longest-to-shortest (by
+`shape_total_distance`). Each dropdown lists its genuinely non-conflicting
+shape_ids first; any conflicting shape_id whose *real* local direction
+(the geometry-supported one, see below) matches that dropdown's
+direction_id is appended after them, labeled in red with a
+"direction_conflict" suffix -- so a flagged shape can be compared against
+the direction its own geometry actually suggests it belongs to, without
+losing the reminder that it's still officially flagged. Picking an entry
+draws that shape_id's stop sequence on the map, numbered 1, 2, 3, ... in
+visit order, in blue (or red, for an appended conflicting entry); clicking
+any conflicting `shape_id` in the top list draws that shape's own stop
+sequence the same way, in red, on top of it -- so the two can be visually
+compared stop-by-stop. A
+conflicting shape's numbered markers additionally get a small star badge
+at the specific stop(s) where `direction_conflict=True` -- since
+`assign_direction_ids` now reports one constant `direction_id` for the
+whole shape (see step 8 of `Shapes._assign_direction_ids_for_route`), the
+star is the only visual sign that *this* stop's own geometry actually
+disagreed with the shape's reported direction. Clicking any individual
+numbered stop marker (in either sequence) pops up that shape/stop's
+reported `direction_id` (and, at a starred stop, the differing "real"
+local direction the geometry there actually indicated -- the other of the
+two binary values, since a flagged stop's local evidence is by definition
+the opposite of what got reported), the local widest-gap split's two angle
+ranges (see `models.shapes._split_angle`), and both the raw and
+forward/backward-forced-180 (`models.shapes._reconcile_fwd_bwd`) bearings
+-- the same inputs `assign_direction_ids` itself used to make that call,
+for auditing exactly why a given stop got the direction it did.
 
 Same JSON-blob + hand-written JS/CSS technique as `route_map` (see that
 module's docstring for why), split into its own small map rather than added
@@ -69,7 +85,7 @@ def conflict_map(feed, zoom_start: int = 12) -> folium.Map:
                 "shape_total_distance",
                 "route_id",
                 "direction_id",
-                "direction_id_issues",
+                "direction_conflict",
                 "shape_direction",
                 "shape_direction_backwards",
             ]
@@ -88,7 +104,7 @@ def conflict_map(feed, zoom_start: int = 12) -> folium.Map:
         pl.col("shape_pt_lon").mean().alias("lon"),
     )
     conflict_per_station = stop_shapes_df.group_by("station").agg(
-        pl.col("direction_id_issues").any().alias("conflict")
+        pl.col("direction_conflict").any().alias("conflict")
     )
     stations_meta = station_pos.join(conflict_per_station, on="station")
 
@@ -121,6 +137,16 @@ def conflict_map(feed, zoom_start: int = 12) -> folium.Map:
             corrected = _reconcile_fwd_bwd(r["shape_direction"], r["shape_direction_backwards"])
             corrected_fwd = corrected[0] if len(corrected) >= 1 else None
             corrected_bwd = corrected[1] if len(corrected) >= 2 else None
+            # `direction_id` is constant across every stop of a shape (see
+            # step 8 of `_assign_direction_ids_for_route`); `conflict`
+            # marks the specific stop(s) where that reported value
+            # disagreed with the local geometry. Since direction_id is
+            # always binary, the disagreeing stop's *actual* local reading
+            # is simply the other value -- surfaced here as
+            # `real_direction_id` so the map can show it without
+            # recomputing anything.
+            conflict = bool(r["direction_conflict"])
+            real_direction_id = (1 - r["direction_id"]) if (conflict and r["direction_id"] is not None) else r["direction_id"]
             out.append(
                 {
                     "stop_id": r["stop_id"],
@@ -128,6 +154,8 @@ def conflict_map(feed, zoom_start: int = 12) -> folium.Map:
                     "lat": r["shape_pt_lat"],
                     "lon": r["shape_pt_lon"],
                     "direction_id": r["direction_id"],
+                    "conflict": conflict,
+                    "real_direction_id": real_direction_id,
                     "split_angle": _round_or_none(split_angle_by_route_station.get((route_id, r["station"]))),
                     "fwd_raw": _round_or_none(r["shape_direction"]),
                     "bwd_raw": _round_or_none(r["shape_direction_backwards"]),
@@ -140,16 +168,31 @@ def conflict_map(feed, zoom_start: int = 12) -> folium.Map:
     conflicts = {}
     for station in stations_meta.filter(pl.col("conflict"))["station"]:
         sub = stop_shapes_df.filter(pl.col("station") == station)
-        route_ids = sub.filter(pl.col("direction_id_issues"))["route_id"].unique().to_list()
+        route_ids = sub.filter(pl.col("direction_conflict"))["route_id"].unique().to_list()
         route_entries = {}
         for route_id in route_ids:
             route_sub = sub.filter(pl.col("route_id") == route_id)
 
             conflicting_shape_ids = sorted(
-                route_sub.filter(pl.col("direction_id_issues"))["shape_id"].unique().to_list()
+                route_sub.filter(pl.col("direction_conflict"))["shape_id"].unique().to_list()
             )
             conflicting = {
                 shape_id: {"stops": _shape_stops(shape_id, route_id)}
+                for shape_id in conflicting_shape_ids
+            }
+
+            # Every conflicting shape_id's reported `direction_id` is constant
+            # (see step 8 of `_assign_direction_ids_for_route`), so its
+            # "real" direction -- the one its own geometry actually
+            # supports, at least at this flagged station -- is simply the
+            # other binary value. These get appended to that direction's
+            # dropdown too (after the genuinely non-conflicting shapes),
+            # so a conflicting shape can be visually compared against the
+            # direction its geometry suggests it actually belongs to; the
+            # `conflict: True` flag lets the UI render that entry's label
+            # in red as a reminder it's not an unconditional match.
+            conflict_real_direction = {
+                shape_id: 1 - route_sub.filter(pl.col("shape_id") == shape_id)["direction_id"][0]
                 for shape_id in conflicting_shape_ids
             }
 
@@ -157,21 +200,47 @@ def conflict_map(feed, zoom_start: int = 12) -> folium.Map:
             for dir_value in (0, 1):
                 candidates = (
                     route_sub.filter(
-                        (~pl.col("direction_id_issues")) & (pl.col("direction_id") == dir_value)
+                        (~pl.col("direction_conflict")) & (pl.col("direction_id") == dir_value)
                     )
                     .select(["shape_id", "shape_total_distance"])
                     .unique()
                     .sort("shape_total_distance", descending=True)
                 )
-                if candidates.height > 0:
-                    ok_by_direction[str(dir_value)] = [
-                        {
-                            "shape_id": r["shape_id"],
-                            "length": None if r["shape_total_distance"] is None else round(float(r["shape_total_distance"]), 1),
-                            "stops": _shape_stops(r["shape_id"], route_id),
-                        }
-                        for r in candidates.iter_rows(named=True)
-                    ]
+                entries = [
+                    {
+                        "shape_id": r["shape_id"],
+                        "length": None if r["shape_total_distance"] is None else round(float(r["shape_total_distance"]), 1),
+                        "stops": _shape_stops(r["shape_id"], route_id),
+                        "conflict": False,
+                    }
+                    for r in candidates.iter_rows(named=True)
+                ]
+
+                conflicting_candidates = sorted(
+                    (
+                        shape_id
+                        for shape_id in conflicting_shape_ids
+                        if conflict_real_direction[shape_id] == dir_value
+                    ),
+                    key=lambda shape_id: route_sub.filter(pl.col("shape_id") == shape_id)["shape_total_distance"][0] or 0,
+                    reverse=True,
+                )
+                entries += [
+                    {
+                        "shape_id": shape_id,
+                        "length": (
+                            None
+                            if route_sub.filter(pl.col("shape_id") == shape_id)["shape_total_distance"][0] is None
+                            else round(float(route_sub.filter(pl.col("shape_id") == shape_id)["shape_total_distance"][0]), 1)
+                        ),
+                        "stops": _shape_stops(shape_id, route_id),
+                        "conflict": True,
+                    }
+                    for shape_id in conflicting_candidates
+                ]
+
+                if entries:
+                    ok_by_direction[str(dir_value)] = entries
 
             route_entries[route_id] = {"conflicting": conflicting, "ok": ok_by_direction}
         conflicts[station] = route_entries

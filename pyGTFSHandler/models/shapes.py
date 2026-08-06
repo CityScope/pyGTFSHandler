@@ -30,6 +30,42 @@ Given that, this module:
     distance math. `shapely`/`geopandas` are only used at the very end, to
     build an optional `GeoDataFrame` (`self.gdf`) of the resulting
     linestrings for callers who want one.
+
+Direction assignment pipeline (`direction_id` from geometry alone):
+---------------------------------------------------------------------
+Separately from the polyline/distance handling above, this module also
+derives a `direction_id` (0/1) for every `(shape_id, stop_id)` row in
+`stop_shapes`, purely from geometry -- no reliance on `trips.txt`'s own
+`direction_id` field, which real-world feeds frequently leave null or set
+inconsistently. The pipeline, in the order data flows through it:
+
+1.  `_reconcile_fwd_bwd` -- per `(station, shape_id)`, forces that shape's
+    raw incoming/outgoing bearings through the stop to be exactly 180
+    degrees apart, so a lone noisy reading is never trusted over the
+    other, and a shape's own antipodal pair is always available to anchor
+    the far side of the compass circle at that station.
+2.  `_widest_gap_split` (via `_split_angle`) -- pools every shape's
+    reconciled bearings at one station and clusters them into two local
+    bins by finding the widest gap on the compass circle and splitting at
+    its midpoint. The resulting bin numbers (0 vs 1) are only meaningful
+    *at that one station*; nothing yet ties "0" at one station to "0" at
+    another.
+3.  `Shapes._assign_direction_ids_for_route` -- reconciles those
+    independent per-station local bins into one consistent, route-wide
+    0/1 numbering per `shape_id`, anchored at the most-corroborated
+    station and walked outward to every other station in ascending order
+    of support. Flags any row whose final value still disagrees with that
+    same shape's own majority value as `direction_conflict=True` -- a
+    genuine, unresolvable branching ambiguity, not a bug. See its
+    docstring for the full step-by-step algorithm.
+4.  `Shapes.assign_direction_ids` -- the public entry point: maps every
+    `shape_id` to its `route_id`, groups `stop_shapes` by `route_id`, runs
+    step 3 per route, and writes the resulting `route_id`/`direction_id`/
+    `direction_conflict` columns back onto `self.stop_shapes`.
+5.  `Shapes._warn_about_direction_conflict` -- after every route has been
+    processed, emits one feed-wide `RuntimeWarning` summarizing how many
+    distinct shapes/stops ended up with unresolved conflicts, so a caller
+    isn't silently handed inconsistent data.
 """
 
 import math
@@ -47,30 +83,61 @@ from ..utils import geo_polars
 TRIP_ROUND_TIME = 120
 
 
-def _reconcile_fwd_bwd(fwd: Optional[float], bwd: Optional[float]) -> List[float]:
-    """Forces a shape's forward bearing through a stop and its backward
-    bearing to be exactly 180 degrees apart, by rotating *both* toward each
-    other by the same magnitude (in opposite directions) -- e.g. forward=30,
-    backward=100 are 70 degrees short of the ideal 180 degrees apart, so
-    forward moves -35 and backward moves +35, landing at 355/175 (175-355
-    = -180 = 180 mod 360). Neither raw reading is trusted over the other;
-    each is corrected by the same amount.
+def _reconcile_fwd_bwd(fwd: Optional[float], bwd: Optional[float], method: str = "both") -> List[float]:
+    """Forces a shape's forward/backward bearings through a stop to be exactly 180 degrees apart.
 
-    Always returns a 2-element antipodal pair (exactly 180 degrees apart),
-    except when neither raw reading is available at all (e.g. a shape with
-    only one stop total, so there's no previous/next point to compute a
-    bearing from either way) -- then an empty list. At a shape's very
-    first/last stop, only one of forward/backward exists (no previous/next
-    point on that side); rather than returning that single reading alone --
-    which would deny that stop the antipodal pair every other stop gets,
-    reintroducing the near-duplicate-points-always-split problem right at
-    what's often the anchor stop, since termini tend to have the most
-    corroborating shapes -- the missing side is filled in as the existing
-    reading plus 180."""
+    `method` controls how the necessary rotation is distributed between
+    the two raw readings:
+
+    - `"both"` (default): rotates *both* readings toward each other by
+      half the discrepancy, in opposite directions -- e.g. forward=30,
+      backward=100 are 70 degrees short of the ideal 180 degrees apart,
+      so forward moves -35 and backward moves +35, landing at 355/175.
+      Neither raw reading is trusted over the other; each is corrected by
+      the same amount.
+    - `"forward"`: forward is left exactly as read; backward is fully
+      replaced by `forward + 180`. Use when the forward bearing is the
+      more trustworthy reading at this stop (e.g. it's a normal
+      mid-shape point, while the backward reading comes from a noisier
+      or more sparsely-spaced segment).
+    - `"backward"`: backward is left exactly as read; forward is fully
+      replaced by `backward + 180`. The mirror image of `"forward"`.
+
+    At a shape's very first/last stop, only one of `fwd`/`bwd` exists (no
+    previous/next point on that side). Rather than returning that single
+    reading alone -- which would deny that stop the antipodal pair every
+    other stop gets, reintroducing the near-duplicate-points-always-split
+    problem right at what's often the anchor stop, since termini tend to
+    have the most corroborating shapes -- the missing side is filled in as
+    the existing reading plus 180. (`method` has no effect in this case --
+    there's only one raw reading to keep either way.)
+
+    Args:
+        fwd: The raw forward bearing in degrees from north, or `None`/`NaN`
+            if this stop is the shape's last point (no next point to
+            compute a forward bearing from).
+        bwd: The raw backward bearing in degrees from north, or
+            `None`/`NaN` if this stop is the shape's first point.
+        method: `"both"`, `"forward"`, or `"backward"` -- see above.
+
+    Returns:
+        A 2-element `[forward, backward]` pair, always exactly 180 degrees
+        apart. An empty list if neither `fwd` nor `bwd` was available at
+        all (e.g. a shape with only one stop total, so there's no
+        previous/next point to compute a bearing from either way).
+    """
+    if method not in ("both", "forward", "backward"):
+        raise ValueError(f"method must be 'both', 'forward', or 'backward', got {method!r}")
+
     fwd_ok = fwd is not None and not math.isnan(fwd) and math.isfinite(fwd)
     bwd_ok = bwd is not None and not math.isnan(bwd) and math.isfinite(bwd)
     if fwd_ok and bwd_ok:
-        # How far `bwd - fwd` is from the ideal 180, folded into (-180, 180].
+        if method == "forward":
+            return [fwd, (fwd + 180) % 360]
+        if method == "backward":
+            return [(bwd + 180) % 360, bwd]
+        # method == "both": how far `bwd - fwd` is from the ideal 180,
+        # folded into (-180, 180].
         excess = ((bwd - fwd - 180 + 540) % 360) - 180
         adjustment = excess / 2
         return [(fwd + adjustment) % 360, (bwd - adjustment) % 360]
@@ -83,13 +150,23 @@ def _reconcile_fwd_bwd(fwd: Optional[float], bwd: Optional[float]) -> List[float
 
 
 def _split_angle(bearings: Dict[str, List[float]]) -> Optional[float]:
-    """The widest-gap split boundary `_widest_gap_split` bisects a stop's
-    bearings at, split out on its own so callers that need the boundary
-    itself (e.g. `maps.conflict_map`, to show *why* a stop got the
-    direction_id it did) can get it without duplicating this computation.
-    Bin 0 is the half-circle `[split_angle, split_angle + 180)`, bin 1 is
-    `[split_angle + 180, split_angle + 360)`. Returns `None` when there's
-    at most one distinct bearing across all shapes (nothing to split)."""
+    """Computes the widest-gap split boundary `_widest_gap_split` bisects a stop's bearings at.
+
+    Split out on its own so callers that need the boundary itself (e.g.
+    `maps.conflict_map`, to show *why* a stop got the direction_id it did)
+    can get it without duplicating this computation.
+
+    Args:
+        bearings: `{shape_id: [angles, ...]}` -- every shape's antipodal
+            bearing pair(s) observed at one stop, in degrees from north,
+            as produced by `_reconcile_fwd_bwd`.
+
+    Returns:
+        The split angle in degrees from north, such that bin 0 is the
+        half-circle `[split_angle, split_angle + 180)` and bin 1 is
+        `[split_angle + 180, split_angle + 360)`. `None` when there's at
+        most one distinct bearing across all shapes (nothing to split).
+    """
     all_points = [round(angle, 9) for angles in bearings.values() for angle in angles]
     unique_bearings = sorted(set(all_points))
     if len(unique_bearings) <= 1:
@@ -109,9 +186,10 @@ def _split_angle(bearings: Dict[str, List[float]]) -> Optional[float]:
 
 
 def _widest_gap_split(bearings: Dict[str, List[float]]) -> Dict[str, int]:
-    """Clusters a stop's per-`shape_id` bearings into two local bins (0/1) by
-    finding the widest circular gap between the distinct observed bearings
-    and splitting at its midpoint -- the same "widest separation angle" idea
+    """Clusters a stop's per-shape bearings into two local direction bins.
+
+    Finds the widest circular gap between the distinct observed bearings
+    and splits at its midpoint -- the same "widest separation angle" idea
     `analysis/stops.py` uses, but applied to *deduplicated* per-shape
     bearings rather than per-departure-instance rows. That dedup matters:
     clustering on the raw per-departure rows makes the widest-gap tie-break
@@ -129,10 +207,17 @@ def _widest_gap_split(bearings: Dict[str, List[float]]) -> Dict[str, int]:
     rather than the (irrelevant) tiny gap between two near-identical
     bearings on the same side.
 
-    Returned bin numbers (0 vs 1) are only meaningful *within this one
-    stop*; they carry no relationship to numbering at any other stop, which
-    is exactly why `_assign_direction_ids_for_route` below has to reconcile
-    them across stops rather than using them directly.
+    Args:
+        bearings: `{shape_id: [angles, ...]}` -- every shape's antipodal
+            bearing pair(s), as produced by `_reconcile_fwd_bwd`, observed
+            at one stop, in degrees from north.
+
+    Returns:
+        `{shape_id: 0 or 1}`. Bin numbers are only meaningful *within this
+        one stop*; they carry no relationship to numbering at any other
+        stop, which is exactly why `Shapes._assign_direction_ids_for_route`
+        has to reconcile them across stops rather than using them
+        directly.
     """
     split_angle = _split_angle(bearings)
     if split_angle is None:
@@ -162,8 +247,11 @@ class Shapes:
         stop_shapes (pl.LazyFrame): The subset of `lf` rows that are stops
             (i.e. `stop_id` is not null) -- what `Feed.build_lf` joins against.
             After `assign_direction_ids` runs (during `Feed` construction),
-            this also carries `route_id`, a resolved `direction_id` (0/1),
-            and a boolean `direction_id_issues` flag -- see that method.
+            this also carries `route_id`, a resolved `direction_id` (0/1,
+            constant across every row of a given `shape_id`), and a boolean
+            `direction_conflict` flag marking rows where the geometry
+            actually disagreed with that shape's reported direction -- see
+            that method.
         gdf (gpd.GeoDataFrame): One row per `shape_id`, with a LINESTRING (or
             POINT, if degenerate) geometry built from `lf`'s points.
     """
@@ -518,19 +606,34 @@ class Shapes:
 
         How it works: the real shape's points define consecutive segments
         (`shift(-1)` per `real_shape_id`, ordered by `shape_pt_sequence`).
-        Each stop is joined against every segment of its shape (bounded --
-        typically dozens of points per route, not a feed-wide cross join)
-        and, using a local planar approximation (equirectangular projection
-        centered on each segment), we compute the projection scalar `t`
-        (clamped to `[0, 1]`) and perpendicular offset; the nearest segment
-        per stop is the row with minimum perpendicular offset. The stop's
-        position within the merged sequence is then `segment_index + t`
-        (a fractional key sorting it correctly between the segment's two
-        endpoints, and correctly relative to other stops on the same
-        segment), and its along-shape distance is `segment_start_distance +
-        t * segment_length` (using the exact haversine segment length, not
-        the planar approximation, which is only used to rank candidate
+        Each *distinct* `(real_shape_id, stop_id)` pair is joined against
+        every segment of that real shape (bounded -- typically dozens of
+        points per route, not a feed-wide cross join) and, using a local
+        planar approximation (equirectangular projection centered on each
+        segment), we compute the projection scalar `t` (clamped to `[0,
+        1]`) and perpendicular offset; the nearest segment per stop is the
+        row with minimum perpendicular offset. The stop's position within
+        the merged sequence is then `segment_index + t` (a fractional key
+        sorting it correctly between the segment's two endpoints, and
+        correctly relative to other stops on the same segment), and its
+        along-shape distance is `segment_start_distance + t *
+        segment_length` (using the exact haversine segment length, not the
+        planar approximation, which is only used to rank candidate
         segments).
+
+        Deduplicating to `(real_shape_id, stop_id)` before this join matters:
+        many *synthetic* `shape_id`s (one per distinct stop-sequence +
+        travel-time bucket, see `StopTimes.generate_shape_ids`) commonly
+        share the same underlying `real_shape_id` -- e.g. one bus route
+        pattern with many travel-time variants. Joining per synthetic
+        `shape_id` instead would repeat the identical stop-vs-segment
+        geometry once per variant, multiplying the join size (and memory)
+        by however many synthetic shapes share that real shape. The
+        nearest-segment result depends only on the stop's own coordinates
+        and which real shape it's mapped to, never on the synthetic
+        `shape_id` or `stop_sequence`, so it's computed once per distinct
+        pair and broadcast back to every synthetic shape/stop_sequence that
+        needs it afterward.
         """
         real_shape_ids = groups_with_real_shape["real_shape_id"].unique().to_list()
         shape_points = (
@@ -558,9 +661,14 @@ class Shapes:
             "seg_end_lat", "seg_end_lon", "seg_start_sequence", "seg_length_m",
         )
 
-        stops_with_segments = stops.select(
+        all_stop_rows = stops.select(
             "shape_id", "real_shape_id", "stop_id", "stop_sequence", "stop_lat", "stop_lon"
-        ).join(segments, on="real_shape_id", how="inner")
+        )
+        distinct_stops = all_stop_rows.select(
+            "real_shape_id", "stop_id", "stop_lat", "stop_lon"
+        ).unique(["real_shape_id", "stop_id"])
+
+        stops_with_segments = distinct_stops.join(segments, on="real_shape_id", how="inner")
 
         # Local planar (equirectangular) projection of the stop onto each
         # candidate segment -- only used to pick the *nearest* segment; the
@@ -581,9 +689,21 @@ class Shapes:
             t.alias("t"), perp_dist_deg.alias("perp_dist_deg")
         )
 
+        # `sort(...).group_by(...).agg(pl.all().first())` alone does not
+        # reliably keep that sort order through a lazy, parallel group-by
+        # aggregation -- on a stop with two (near-)tied nearest segments,
+        # which one "wins" as first() could vary between runs, silently
+        # changing the stop's inserted position (and everything downstream
+        # of it: bearings, direction_id, direction_conflict) on identical
+        # input. Filtering to the true minimum first, then breaking any
+        # remaining tie deterministically by `segment_id` via an explicit
+        # sort + `maintain_order=True` group_by, removes that dependence on
+        # incidental execution order.
+        min_perp_dist = pl.col("perp_dist_deg").min().over(["real_shape_id", "stop_id"])
         best_segment = (
-            stops_with_segments.sort("perp_dist_deg")
-            .group_by(["shape_id", "stop_id", "stop_sequence"])
+            stops_with_segments.filter(pl.col("perp_dist_deg") == min_perp_dist)
+            .sort(["real_shape_id", "stop_id", "segment_id"])
+            .group_by(["real_shape_id", "stop_id"], maintain_order=True)
             .agg(pl.all().first())
         )
 
@@ -596,9 +716,14 @@ class Shapes:
             (
                 pl.col("seg_start_lon") + pl.col("t") * (pl.col("seg_end_lon") - pl.col("seg_start_lon"))
             ).alias("shape_pt_lon"),
-        )
+        ).select("real_shape_id", "stop_id", "shape_pt_sequence", "shape_pt_lat", "shape_pt_lon")
 
-        return best_segment.select(
+        # Broadcast the once-computed nearest-segment position back out to
+        # every synthetic `shape_id`/`stop_sequence` that shares this
+        # `(real_shape_id, stop_id)` pair.
+        return all_stop_rows.select("shape_id", "real_shape_id", "stop_id", "stop_sequence").join(
+            best_segment, on=["real_shape_id", "stop_id"], how="inner"
+        ).select(
             "shape_id", "stop_id", "stop_sequence", "shape_pt_sequence", "shape_pt_lat", "shape_pt_lon"
         )
 
@@ -691,12 +816,18 @@ class Shapes:
         return gpd.GeoDataFrame(df, geometry="geometry", crs="EPSG:4326")
 
     def assign_direction_ids(
-        self, trip_shape_ids_lf: pl.LazyFrame, trips_lf: pl.LazyFrame, stops_lf: Optional[pl.LazyFrame] = None
+        self, trip_shape_ids_lf: pl.LazyFrame, trips_lf: pl.LazyFrame, stops_lf: Optional[pl.LazyFrame] = None,
+        method: str = "both",
     ) -> pl.LazyFrame:
-        """Integrates a globally-reconciled `direction_id` (0/1) directly
-        into `self.stop_shapes`, alongside a `route_id` and a boolean
-        `direction_id_issues` flag, on top of the raw `shape_direction`/
-        `shape_direction_backwards` bearings already there.
+        """Integrates a globally-reconciled `direction_id` into `self.stop_shapes`.
+
+        See the module docstring's "Direction assignment pipeline" section
+        for how this fits together with `_assign_direction_ids_for_route`
+        and the module-level bearing helpers. In short: adds a `route_id`,
+        a resolved `direction_id` (0/1), and a boolean `direction_conflict`
+        flag directly onto `self.stop_shapes`, on top of the raw
+        `shape_direction`/`shape_direction_backwards` bearings already
+        there.
 
         Bearings are gathered and split per `(route_id, parent_station)`,
         not per raw `stop_id` (falling back to `stop_id` itself when
@@ -713,35 +844,33 @@ class Shapes:
         produces labels that are meaningful *at that one station*; a route
         whose shapes branch (e.g. one trip pattern continuing straight,
         another turning off) can trivially get inconsistent 0/1 numbering
-        between stations if each is labelled independently. This reconciles
-        that, per `route_id`, by:
-
-        1. Picking the station with the most distinct `shape_id`s as the
-           anchor -- the station with the most corroborating shapes is the
-           most reliable reference for what "0" and "1" mean for this
-           route.
-        2. Walking every other station in ascending order of distinct
-           `shape_id` count (fewest first), so well-supported stations
-           resolve before sparser, branch-only ones.
-        3. At each station, choosing whichever of {keep the local 0/1
-           labels as-is, flip them} agrees with more already-resolved
-           shape_ids there -- then assigning newly-seen shape_ids their
-           (possibly flipped) local label as their first, canonical
-           `direction_id`.
-        4. Any already-resolved shape_id that disagrees with the chosen
-           orientation at this station is a genuine conflict: its row at
-           this one station is forced to the majority's value (not its own
-           previously-established one) and `direction_id_issues` is set to
-           `True` there. This is the only way a single `shape_id` ends up
-           with rows of both `direction_id` values -- a real branching
-           ambiguity, not a bug -- so it's also what the final feed-wide
-           warning counts.
+        between stations if each is labelled independently.
+        `_assign_direction_ids_for_route` reconciles that per `route_id` --
+        see its docstring for the full algorithm.
 
         A `shape_id` shared by more than one `route_id` (uncommon, but
         possible) gets one row per `(shape_id, stop_id, route_id)` here,
         since direction is inherently a per-route concept -- so
-        `stop_shapes` may end up with more rows than before for such
+        `self.stop_shapes` may end up with more rows than before for such
         shapes.
+
+        Args:
+            trip_shape_ids_lf: Output of `StopTimes.generate_shape_ids`,
+                mapping each synthetic `shape_id` to its member `trip_ids`.
+            trips_lf: The feed's trips LazyFrame, at least `trip_id` and
+                `route_id` columns.
+            stops_lf: The feed's stops LazyFrame (`stop_id`,
+                `parent_station`), used to pool bearings by station rather
+                than by raw `stop_id`. When omitted, every stop is treated
+                as its own station.
+            method: `"both"`, `"forward"`, or `"backward"` -- passed
+                through to `_reconcile_fwd_bwd` for every bearing pair;
+                see its docstring for what each does.
+
+        Returns:
+            `self.stop_shapes` with `route_id`, `direction_id`, and
+            `direction_conflict` columns added -- also stored back onto
+            `self.stop_shapes` as a side effect.
         """
         shape_route_map = (
             trip_shape_ids_lf.select(["shape_id", "trip_ids"])
@@ -772,7 +901,7 @@ class Shapes:
             self.stop_shapes = stop_shapes_df.with_columns(
                 pl.lit(None, dtype=pl.Utf8).alias("route_id"),
                 pl.lit(None, dtype=pl.Int32).alias("direction_id"),
-                pl.lit(False, dtype=pl.Boolean).alias("direction_id_issues"),
+                pl.lit(False, dtype=pl.Boolean).alias("direction_conflict"),
             ).lazy()
             return self.stop_shapes
 
@@ -781,16 +910,16 @@ class Shapes:
             self.stop_shapes = stop_shapes_df.with_columns(
                 pl.lit(None, dtype=pl.Utf8).alias("route_id"),
                 pl.lit(None, dtype=pl.Int32).alias("direction_id"),
-                pl.lit(False, dtype=pl.Boolean).alias("direction_id_issues"),
+                pl.lit(False, dtype=pl.Boolean).alias("direction_conflict"),
             ).lazy()
             return self.stop_shapes
 
         result_frames = [
-            self._assign_direction_ids_for_route(route_df)
+            self._assign_direction_ids_for_route(route_df, method=method)
             for _, route_df in base.group_by("route_id", maintain_order=True)
         ]
         directions = pl.concat(result_frames, how="vertical_relaxed")
-        self._warn_about_direction_id_issues(directions)
+        self._warn_about_direction_conflict(directions)
 
         # Left join: shapes that matched no route (shouldn't normally
         # happen, but e.g. a trip with no route_id) keep their original
@@ -798,45 +927,169 @@ class Shapes:
         self.stop_shapes = (
             stop_shapes_df.join(
                 directions.select(
-                    ["shape_id", "stop_id", "stop_sequence", "route_id", "direction_id", "direction_id_issues"]
+                    ["shape_id", "stop_id", "stop_sequence", "route_id", "direction_id", "direction_conflict"]
                 ),
                 on=["shape_id", "stop_id", "stop_sequence"],
                 how="left",
             )
-            .with_columns(pl.col("direction_id_issues").fill_null(False))
+            .with_columns(pl.col("direction_conflict").fill_null(False))
             .lazy()
         )
         return self.stop_shapes
 
-    def _assign_direction_ids_for_route(self, route_df: pl.DataFrame) -> pl.DataFrame:
-        """Implements the anchor + ascending-support-order reconciliation
+    def _assign_direction_ids_for_route(self, route_df: pl.DataFrame, method: str = "both") -> pl.DataFrame:
+        """Reconciles per-station local direction bins into one route-wide `direction_id`.
+
+        Implements the anchor + ascending-support-order reconciliation
         described in `assign_direction_ids`, for the shapes of a single
         `route_id`. Grouped by `station` (`parent_station`, falling back to
         `stop_id`) throughout, not raw `stop_id` -- see that method's
-        docstring for why."""
-        bearings_by_station: Dict[str, Dict[str, List[float]]] = {}
-        # A shape's very last stop is where the vehicle terminates -- there
-        # is no onward travel to have a "direction" through, so its own
-        # bearing there (a lone forward-or-backward reading, forced to an
-        # arbitrary antipodal pair by `_reconcile_fwd_bwd` for lack of a
-        # real second reading) is not meaningful evidence for a split.
-        # Excluded here from ever contributing to any station's bearings,
-        # then back-filled below from the shape's own already-resolved
-        # stations.
+        docstring for why.
+
+        Concretely, in order:
+
+        1. **Gather bearings, excluding each shape's own first and last
+           station.** For every `(station, shape_id)` pair, `_reconcile_
+           fwd_bwd` turns that row's raw `shape_direction`/`shape_
+           direction_backwards` into a forward/backward-forced-180
+           antipodal pair (see that function). A shape's own *first* and
+           *last* station in its sequence are skipped here entirely --
+           there is no real "direction of travel" through a point where the
+           vehicle starts or terminates, so whichever lone reading exists
+           there (only one of forward/backward is even computable at a true
+           endpoint) is unreliable signal, and letting it into the pool
+           would let a degenerate reading distort that station's split for
+           every *other* shape serving it too. `bearings_by_station
+           [station][shape_id]` ends up holding every shape's antipodal
+           pair at every station it passes *through*, never at one it
+           starts or ends at. A station that happens to be *only* ever an
+           endpoint (for every shape that serves it -- typically a genuine
+           route terminus) naturally ends up with zero or few contributing
+           shapes here, which is exactly why step 3 below never needs a
+           separate "is this an endpoint" check of its own: a pure terminus
+           already can't out-compete a real through-station on shape count.
+
+        2. **Split each station locally.** `_widest_gap_split` clusters
+           each station's pooled bearings into two local bins, 0 and 1 --
+           meaningful only *at that one station*; nothing ties "0" at one
+           station to "0" at another yet.
+
+        3. **Pick an anchor.** Reconciling those independent local bins
+           into one consistent, route-wide numbering starts from a single
+           reference station: the one with the most distinct `shape_id`s
+           surviving step 1's endpoint exclusion -- the most corroborated,
+           and therefore most reliable, split.
+
+        4. **Walk every other station in ascending order of distinct
+           `shape_id` count** (fewest first), deciding at each one whether
+           to keep its local 0/1 labels as-is or flip them -- whichever
+           agrees with more already-resolved shape_ids there -- then
+           recording that (possibly flipped) label as each shape's
+           first-seen, canonical `direction_id`.
+
+        5. **Force disagreements to the local majority.** Any
+           already-canonical shape_id whose local orientation at a station
+           disagrees with its own established value is overwritten to the
+           station majority's value there (not left at its own prior
+           value) -- but *not* flagged yet; flagging is deferred to step 8,
+           after step 7 has had a chance to revise this row further. This
+           is the only way one `shape_id` ends up with rows of more than
+           one `direction_id` value.
+
+        6. **Back-fill each shape's excluded first/last station** with the
+           most frequent `direction_id` among that shape's own other,
+           already-resolved stations -- inherited, not compared against
+           anything. (The first station is typically already resolved via
+           some *other* shape that merely passes through it; only truly
+           falls back to "no data at all" -- staying `None` -- when nothing
+           else ever pins that station down either.)
+
+        7. **Refine remaining disagreements by shared-edge corroboration.**
+           A station forced to the majority in step 5 might share one of
+           its own immediate edges -- the (previous_station, this_station)
+           or (this_station, next_station) pair from that shape's own
+           sequence -- with a *different* shape_id of this same route that
+           wasn't itself forced to the majority there. Since that donor
+           traverses the exact same physical edge, its direction_id there
+           is direct evidence for what this station's direction_id actually
+           is; take it. This can only ever change *which* value a
+           still-disagreeing row holds, never whether it's flagged --
+           that's decided once, globally, in step 8.
+
+        8. **Collapse each shape to a single `direction_id`, flag by final
+           self-consistency.** Only now, with every row's value settled
+           (steps 5-7 done revising them), is each shape_id's "true" value
+           decided: its majority `direction_id` across *all* of its own
+           rows (including the step 7-revised ones). Every row of that
+           shape_id is then set to that one majority value -- so a single
+           `shape_id` never ends up with rows of more than one
+           `direction_id` in the output, whatever steps 5-7 computed along
+           the way -- and `direction_conflict` is set `True` on exactly the
+           rows where the settled (pre-collapse) value disagreed with that
+           majority, i.e. where the geometry genuinely couldn't be
+           reconciled into the shape's single reported direction. This is
+           deliberately a single, final, holistic pass over each shape's
+           own settled values -- not an incremental flag/unflag threaded
+           through steps 5 and 7 -- so a row's flag reflects whether it's
+           *actually* still inconsistent with that shape's own data,
+           regardless of which step last touched its value. A row that
+           step 7 revises to agree with the shape's own majority elsewhere
+           is correctly never flagged; a row step 7 leaves disagreeing (as
+           here, where the donor's value doesn't happen to match the
+           shape's own majority) is correctly still flagged -- and is
+           still reported with the shape's majority `direction_id`, not
+           the disagreeing one, since a single shape can only sensibly
+           report one direction. The disagreeing (pre-collapse) value
+           itself isn't lost: since `direction_id` is always binary (0/1),
+           a flagged row's actual local reading is simply `1 -
+           direction_id` -- which is what `maps.conflict_map` shows.
+
+        Args:
+            route_df: All `stop_shapes` rows for a single `route_id`, with
+                at least `shape_id`, `station`, `stop_sequence`,
+                `shape_direction`, and `shape_direction_backwards` columns
+                (the `station` column is `parent_station`, falling back to
+                `stop_id`, as prepared by `assign_direction_ids`).
+            method: `"both"`, `"forward"`, or `"backward"` -- passed
+                through to `_reconcile_fwd_bwd` (step 1's raw bearing
+                inputs) for every `(station, shape_id)` pair.
+
+        Returns:
+            `route_df` with `direction_id` (nullable `Int32`) and
+            `direction_conflict` (`Boolean`) columns added, one row per
+            input row. `direction_id` is `None` for every row when no
+            station in this route had a computable bearing at all (e.g.
+            every shape here is a single, degenerate point); otherwise
+            it's constant across every row of a given `shape_id` -- see
+            step 8.
+        """
+        # See step 1 above.
+        first_seq_by_shape: Dict[str, int] = {}
         last_seq_by_shape: Dict[str, int] = {}
         for shape_id, sub_shape in route_df.group_by("shape_id", maintain_order=True):
             shape_id = shape_id[0] if isinstance(shape_id, tuple) else shape_id
+            first_seq_by_shape[shape_id] = sub_shape["stop_sequence"].min()
             last_seq_by_shape[shape_id] = sub_shape["stop_sequence"].max()
 
+        bearings_by_station: Dict[str, Dict[str, List[float]]] = {}
         for station, sub in route_df.group_by("station", maintain_order=True):
             station = station[0] if isinstance(station, tuple) else station
+            # Sorted by stop_sequence (rather than left as whatever row
+            # order `route_df` -- itself downstream of a hash join with no
+            # guaranteed row order -- happens to have) so that a shape
+            # visiting this station more than once (e.g. a loop route
+            # passing the same stop on the way out and back) resolves the
+            # `shape_angles[shape_id] = ...` overwrite below deterministically
+            # (last-by-stop_sequence wins), instead of incidentally to
+            # upstream join/thread ordering.
+            sub = sub.sort("stop_sequence")
             shape_angles: Dict[str, List[float]] = {}
             for shape_id, seq, fwd, bwd in zip(
                 sub["shape_id"], sub["stop_sequence"], sub["shape_direction"], sub["shape_direction_backwards"]
             ):
-                if seq == last_seq_by_shape.get(shape_id):
+                if seq == first_seq_by_shape.get(shape_id) or seq == last_seq_by_shape.get(shape_id):
                     continue
-                angles = _reconcile_fwd_bwd(fwd, bwd)
+                angles = _reconcile_fwd_bwd(fwd, bwd, method=method)
                 if angles:
                     shape_angles[shape_id] = angles
             if shape_angles:
@@ -847,7 +1100,7 @@ class Shapes:
             # shape here is a single, degenerate point) -- nothing to assign.
             return route_df.with_columns(
                 pl.lit(None, dtype=pl.Int32).alias("direction_id"),
-                pl.lit(False, dtype=pl.Boolean).alias("direction_id_issues"),
+                pl.lit(False, dtype=pl.Boolean).alias("direction_conflict"),
             )
 
         local_bins = {station: _widest_gap_split(bearings) for station, bearings in bearings_by_station.items()}
@@ -863,7 +1116,12 @@ class Shapes:
         row_direction: Dict[tuple, int] = {
             (anchor_station, shape_id): direction_id for shape_id, direction_id in canonical.items()
         }
-        issue_rows: set = set()  # {(station, shape_id)} that lost a conflict
+        # {(station, shape_id)} rows step 5 forced to the local majority
+        # against that shape's own established value -- candidates for
+        # step 7's donor lookup, and for step 8's final flagging (unless
+        # step 7 revises them back into agreement first). Not the final
+        # `direction_conflict` output; see step 8.
+        forced_rows: set = set()
 
         for station in other_stations:
             bins = local_bins[station]
@@ -883,38 +1141,43 @@ class Shapes:
                     if oriented_bin == canonical[shape_id]:
                         row_direction[(station, shape_id)] = canonical[shape_id]
                     else:
-                        # Genuine conflict: this station's majority
-                        # orientation disagrees with the shape's own
-                        # established value. The row is forced to the
-                        # majority (not the shape's own preference), and
-                        # flagged.
+                        # Disagreement with this shape's own established
+                        # value: the row is forced to the station majority
+                        # (not the shape's own preference). Not flagged
+                        # here -- see step 8.
                         row_direction[(station, shape_id)] = oriented_bin
-                        issue_rows.add((station, shape_id))
+                        forced_rows.add((station, shape_id))
                 else:
                     canonical[shape_id] = oriented_bin
                     row_direction[(station, shape_id)] = oriented_bin
 
-        # Back-fill each shape's excluded last stop with the most frequent
-        # direction_id among that shape's own already-resolved (non-last)
-        # stations -- not flagged as an issue, since it was never compared
-        # against anything, just inherited.
-        last_station_by_shape: Dict[str, str] = {}
+        # Back-fill each shape's excluded first/last station (step 6) with
+        # the most frequent direction_id among that shape's own other,
+        # already-resolved stations -- not flagged as an issue, since it
+        # was never compared against anything, just inherited. The first
+        # station is filled in before the last one so that, for a 2-station
+        # shape, the last station's back-fill can see the first station's
+        # freshly-inherited value too (rather than finding no data at all
+        # for either).
+        endpoint_stations_by_shape: Dict[str, List[str]] = {}
         for shape_id, sub_shape in route_df.group_by("shape_id", maintain_order=True):
             shape_id = shape_id[0] if isinstance(shape_id, tuple) else shape_id
+            first_row = sub_shape.filter(pl.col("stop_sequence") == first_seq_by_shape[shape_id])
             last_row = sub_shape.filter(pl.col("stop_sequence") == last_seq_by_shape[shape_id])
-            last_station_by_shape[shape_id] = last_row["station"][0]
+            endpoint_stations_by_shape[shape_id] = [first_row["station"][0], last_row["station"][0]]
 
-        for shape_id, last_station in last_station_by_shape.items():
-            if (last_station, shape_id) in row_direction:
-                continue  # e.g. a single-stop shape: first station == last station
-            values = [
-                direction_id
-                for (station, sid), direction_id in row_direction.items()
-                if sid == shape_id
-            ]
-            if values:
-                mode = 0 if values.count(0) >= values.count(1) else 1
-                row_direction[(last_station, shape_id)] = mode
+        for shape_id, (first_station, last_station) in endpoint_stations_by_shape.items():
+            for endpoint_station in (first_station, last_station):
+                if (endpoint_station, shape_id) in row_direction:
+                    continue  # e.g. a single-station shape: first == last
+                values = [
+                    direction_id
+                    for (station, sid), direction_id in row_direction.items()
+                    if sid == shape_id
+                ]
+                if values:
+                    mode = 0 if values.count(0) >= values.count(1) else 1
+                    row_direction[(endpoint_station, shape_id)] = mode
 
         # Last resolution pass: a still-flagged station might share one of
         # its own immediate edges -- the (previous_station, this_station)
@@ -938,7 +1201,7 @@ class Shapes:
                 edges.add((station, seq[idx + 1]))
             return edges
 
-        for station, shape_id in list(issue_rows):
+        for station, shape_id in sorted(forced_rows):
             seq = shape_station_seq.get(shape_id)
             if not seq or station not in seq:
                 continue
@@ -947,10 +1210,17 @@ class Shapes:
                 continue
 
             donor_direction = None
-            for donor_shape_id, donor_seq in shape_station_seq.items():
+            # Sorted by shape_id (rather than dict/insertion order, which
+            # traces back to `route_df`'s row order -- not guaranteed
+            # stable across runs of polars' multi-threaded lazy execution)
+            # so that when more than one shape_id could donate here, which
+            # one wins is a deterministic, reproducible choice rather than
+            # incidental to unrelated upstream ordering.
+            for donor_shape_id in sorted(shape_station_seq):
+                donor_seq = shape_station_seq[donor_shape_id]
                 if donor_shape_id == shape_id:
                     continue
-                if (station, donor_shape_id) in issue_rows:
+                if (station, donor_shape_id) in forced_rows:
                     continue
                 if (station, donor_shape_id) not in row_direction:
                     continue
@@ -962,34 +1232,75 @@ class Shapes:
 
             if donor_direction is not None:
                 row_direction[(station, shape_id)] = donor_direction
-                issue_rows.discard((station, shape_id))
+
+        # Step 8 (see docstring): each shape's majority direction_id across
+        # all of its own settled rows is its one "true" value -- flag
+        # exactly the rows that disagreed with it, then collapse every row
+        # of that shape_id to the majority, so `direction_id` is always
+        # constant per shape_id in the output.
+        values_by_shape: Dict[str, List[int]] = {}
+        for (_station, shape_id), direction_id in row_direction.items():
+            values_by_shape.setdefault(shape_id, []).append(direction_id)
+
+        majority_by_shape = {
+            shape_id: (0 if values.count(0) >= values.count(1) else 1)
+            for shape_id, values in values_by_shape.items()
+        }
+
+        issue_rows = {
+            (station, shape_id)
+            for (station, shape_id), direction_id in row_direction.items()
+            if direction_id != majority_by_shape[shape_id]
+        }
 
         direction_id_col = []
         issues_col = []
         for row in route_df.iter_rows(named=True):
             key = (row["station"], row["shape_id"])
-            direction_id_col.append(row_direction.get(key))
+            if key in row_direction:
+                # Report the shape's own majority everywhere, not the
+                # (possibly disagreeing) per-row value steps 5-7 settled
+                # on -- see step 8's docstring for why, and for how to
+                # recover the disagreeing reading at a flagged row.
+                direction_id_col.append(majority_by_shape[row["shape_id"]])
+            else:
+                direction_id_col.append(None)
             issues_col.append(key in issue_rows)
 
         return route_df.with_columns(
             pl.Series("direction_id", direction_id_col, dtype=pl.Int32),
-            pl.Series("direction_id_issues", issues_col, dtype=pl.Boolean),
+            pl.Series("direction_conflict", issues_col, dtype=pl.Boolean),
         )
 
-    def _warn_about_direction_id_issues(self, directions: pl.DataFrame) -> None:
-        """Feed-wide summary warning: how many distinct shape_ids ended up
-        with rows of *both* direction_id values somewhere in their own stop
-        sequence (a genuine branching ambiguity `assign_direction_ids`
-        couldn't fully resolve), and at how many distinct stops that
-        happened -- both as absolute counts and as a percentage of all
-        shape_ids/stop_ids assign_direction_ids actually processed."""
+    def _warn_about_direction_conflict(self, directions: pl.DataFrame) -> None:
+        """Emits a feed-wide summary `RuntimeWarning` about unresolved `direction_id` conflicts.
+
+        Counts how many distinct shape_ids have at least one
+        `direction_conflict=True` row -- a stop where the geometry
+        genuinely disagreed with that shape's single reported
+        `direction_id` (a real branching ambiguity
+        `_assign_direction_ids_for_route` couldn't fully reconcile away --
+        see its step 8) -- and at how many distinct stops that happened,
+        both as absolute counts and as a percentage of all shape_ids/
+        stop_ids actually processed. No-ops (emits nothing) when
+        `directions` is empty or has no flagged rows.
+
+        Args:
+            directions: The concatenated per-route output of
+                `_assign_direction_ids_for_route`, with `direction_id`/
+                `direction_conflict` already populated.
+
+        Returns:
+            None. Emits a `RuntimeWarning` (via `warnings.warn`) as a side
+            effect when at least one row is flagged.
+        """
         if directions.height == 0:
             return
 
         total_shape_ids = directions["shape_id"].n_unique()
         total_stop_ids = directions["stop_id"].n_unique()
 
-        issue_rows = directions.filter(pl.col("direction_id_issues"))
+        issue_rows = directions.filter(pl.col("direction_conflict"))
         if issue_rows.height == 0:
             return
 
@@ -1000,8 +1311,8 @@ class Shapes:
 
         warnings.warn(
             f"direction_id assignment: {n_shape_ids_with_issues} of {total_shape_ids} "
-            f"shape_ids ({shape_pct:.1f}%) had unresolved direction conflicts "
-            f"(both direction_id values in their own stop sequence), across "
-            f"{n_stops_with_issues} of {total_stop_ids} stop(s) ({stop_pct:.1f}%).",
+            f"shape_ids ({shape_pct:.1f}%) had at least one stop where the geometry "
+            f"disagreed with their reported direction_id (direction_conflict=True), "
+            f"across {n_stops_with_issues} of {total_stop_ids} stop(s) ({stop_pct:.1f}%).",
             RuntimeWarning,
         )

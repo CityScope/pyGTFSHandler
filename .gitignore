@@ -28,8 +28,6 @@ examples/*/
 
 # Exclude files that start with "local" (both .py and .ipynb or any extension)
 examples/local*
-examples/map.html
-examples/conflict_map.html
 
 # Downloader API keys -- never commit real keys, see api_keys.example.json
 api_keys.json
