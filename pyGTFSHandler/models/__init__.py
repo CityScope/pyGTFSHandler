@@ -6,10 +6,10 @@ from .routes import Routes
 from .shapes import Shapes
 
 __all__ = [
-    StopTimes.__name__,
-    Stops.__name__,
-    Trips.__name__,
-    Calendar.__name__,
-    Routes.__name__,
-    Shapes.__name__,
+    "StopTimes",
+    "Stops",
+    "Trips",
+    "Calendar",
+    "Routes",
+    "Shapes",
 ]

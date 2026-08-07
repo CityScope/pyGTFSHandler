@@ -255,7 +255,20 @@ class Shapes:
         gdf (gpd.GeoDataFrame): One row per `shape_id`, with a LINESTRING (or
             POINT, if degenerate) geometry built from `lf`'s points.
     """
-    def __init__(self,lf=None,stop_shapes=None,gdf=None) -> None:
+    def __init__(
+        self,
+        lf: Optional[pl.LazyFrame] = None,
+        stop_shapes: Optional[pl.LazyFrame] = None,
+        gdf: Optional[gpd.GeoDataFrame] = None,
+    ) -> None:
+        """Wraps already-loaded shape frames, or leaves them empty for `load` to fill in.
+
+        Args:
+            lf: Optional pre-loaded shape-points LazyFrame.
+            stop_shapes: Optional pre-computed stop-subset LazyFrame (see
+                the class docstring).
+            gdf: Optional pre-built per-`shape_id` GeoDataFrame.
+        """
         self.lf = lf
         self.stop_shapes = stop_shapes
         self.gdf = gdf
@@ -263,11 +276,11 @@ class Shapes:
     def load(
         self,
         path: Union[str, Path, List[Union[str, Path]], None],
-        trip_shape_ids_lf,
-        stops_lf,
+        trip_shape_ids_lf: pl.LazyFrame,
+        stops_lf: pl.LazyFrame,
         check_files: bool = False,
-        min_file_id=0,
-    ):
+        min_file_id: int = 0,
+    ) -> None:
         """Builds `self.lf`/`self.stop_shapes`/`self.gdf`.
 
         Args:

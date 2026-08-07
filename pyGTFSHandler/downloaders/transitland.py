@@ -328,7 +328,7 @@ class TransitLandDownloader(BaseGTFSDownloader):
         end_date: DateLike,
         day_separation: int = 1,
         overwrite: bool = False,
-        aoi=None,
+        aoi: Optional[AOIType] = None,
     ) -> Optional[str]:
         """Download and stitch a feed's version history into one GTFS zip.
 

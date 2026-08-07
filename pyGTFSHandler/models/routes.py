@@ -42,8 +42,14 @@ class Routes:
         paths (List[Path]): List of directory paths containing `routes.txt` files.
         lf (pl.LazyFrame): A Polars LazyFrame containing the (optionally filtered) routes data.
     """
-    def __init__(self,lf=None,route_ids=None) -> None:
-        self.lf = lf 
+    def __init__(self, lf: Optional[pl.LazyFrame] = None, route_ids: Optional[List[str]] = None) -> None:
+        """Wraps an already-loaded routes LazyFrame, or leaves it empty for `load` to fill in.
+
+        Args:
+            lf: Optional pre-loaded `routes.txt` LazyFrame.
+            route_ids: Optional pre-computed list of in-scope `route_id`s.
+        """
+        self.lf = lf
         self.route_ids = route_ids
 
     def load(

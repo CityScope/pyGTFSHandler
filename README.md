@@ -1,81 +1,92 @@
-# PyGTFSHandler
+# pyGTFSHandler
 
-**A Python package to download, load, and pre-process GTFS public transport timetable files.**
+**A Python package to download, load, and pre-process GTFS public transport timetable files, built on [Polars](https://pola.rs) for speed.**
 
-`PyGTFSHandler` is a comprehensive Python library designed to handle GTFS (General Transit Feed Specification) data. It provides functionalities to download, load, and pre-process GTFS files.
+`pyGTFSHandler` loads one or more [GTFS](https://gtfs.org/) (General Transit Feed Specification) static feeds into a single, denormalized `Feed` object and gives you:
 
-## Features
+- Fast, lazy loading of large GTFS feeds using Polars `LazyFrame`s.
+- Geographic filtering of stops/trips to an Area of Interest (AOI).
+- Date-range, time-range, `route_type`, and id-based filtering.
+- Expansion of `frequencies.txt`-defined trips into concrete departures.
+- Geometry-derived `direction_id` assignment and stop/edge-level speed and headway analysis.
+- Interactive Leaflet route maps and conflict maps.
+- Downloaders for the [Mobility Database](https://mobilitydatabase.org/), [TransitLand](https://www.transit.land/), and Spain's NAP open-data portal (with room to add more countries).
 
-- **Download and Load GTFS Files**: Easily download and load GTFS files into your Python environment.
-- **Pre-process GTFS Data**: Clean and prepare GTFS data for analysis.
-- **Geographic Filtering**: Select trips within specified geographic bounds.
-- **Stop and Trip Grouping**: Cluster stops and trips based on distance and overlap.
-- **Service Date and Time Filtering**: Filter trips based on service date and time. It can search the date with the maximum amount of services.
-- **Route Filtering**: Filter routes based on custom criteria.
+Full docs (API reference, methodology notes, runnable example notebooks): **https://CityScope.github.io/pyGTFSHandler/**
 
 ## Installation
 
-To install `PyGTFSHandler`, use pip:
-
 ```bash
-pip install git+https://github.com/GeomaticsCaminosUPM/pyGTFSHandler.git
+pip install git+https://github.com/CityScope/pyGTFSHandler.git
 ```
 
-## Usage
+Optional extras:
 
-### Initialization
+```bash
+pip install "pyGTFSHandler[plot]"      # matplotlib/folium/plotly/streamlit map & plotting helpers
+pip install "pyGTFSHandler[geocoding]" # geopy-based geocoding/reverse-geocoding helpers
+pip install "pyGTFSHandler[docs]"      # build the documentation site locally
+```
 
-The `GTFS` object loads and pre-processes a list of uncompressed GTFS files.
+This project uses [uv](https://docs.astral.sh/uv/) for development; from a clone of the repo:
+
+```bash
+uv sync --extra docs --extra plot --extra dev
+```
+
+## Quickstart
 
 ```python
-from pygtfshandler import GTFS
+from pyGTFSHandler import Feed
 
-gtfs = GTFS(
-    gtfs_dir='path/to/gtfs_files',  # List of paths pointing to uncompressed folders with .txt files in GTFS format
-    service_date='YYYY-MM-DD',  # Date to select the trips. If 'max' select the date with the maximum amount of services.
-    start_time='00:00:00',  # Start time for filtering trips
-    end_time='00:00:00',  # End time for filtering trips
-    bounds=None,  # Polygon with geographic bounds to select trips within the bounds
-    strict_bounds=True,  # If True, delete stops outside the bounds
-    stop_group_distance=0,  # Cluster all stops using this distance
-    trip_group_distance=0,  # Trips with stops less than this distance apart are considered overlapping
-    trip_group_overlap=0.75,  # Minimum percentage of the trip that has to overlap with another to be considered a branch of the same line
-    correct_stop_sequence=True,  # Revise the stop_sequence column
-    crs=4326,  # EPSG code for geographic coordinates
-    route_filter=None,  # Filter routes if the trip contains
-    all_stops=True  # If False, delete stops that do not have any trips
+# Load one or more GTFS directories/zips into a single Feed
+feed = Feed(
+    gtfs_dirs="path/to/gtfs_folder",   # or a list of paths, one per feed
+    stop_group_distance=20,             # merge stops within 20m into one parent_station
+)
+
+# Interactive route/timetable map for a given service date
+from pyGTFSHandler.maps import route_map
+m = route_map(feed, date="2024-05-06")
+
+# Headway (mean interval between trips) at every stop, grouped by geometric direction
+headway = feed.get_headway_at_stops(
+    date="2024-05-06",
+    by="shape_direction",
 )
 ```
 
-### Methods
+`feed.lf` is a single Polars `LazyFrame` joining `stops.txt`, `stop_times.txt`, `trips.txt`, `routes.txt`, `calendar.txt`/`calendar_dates.txt` and `shapes.txt` into one denormalized schedule table, ready for your own analysis.
 
-- **`get_tph_by_line(trip_groups: bool = True)`**: Returns a DataFrame with the number of trips per hour for each `rep_trip_id`.
+## Downloading GTFS feeds
 
-- **`get_tph_at_stops(stop_groups: bool = True)`**: Returns a DataFrame with the number of trips per hour for each `stop_id`.
+```python
+from pyGTFSHandler.downloaders import MobilityDatabaseDownloader
 
-- **`get_lines_gdf()`**: Returns a GeoDataFrame with line geometry for each `rep_trip_id`.
+downloader = MobilityDatabaseDownloader()  # or api_key=..., falls back to env var
+feeds = downloader.search_feeds(country_code="ES")
+downloader.download_feeds(feeds, download_folder="path/to/download")
+```
 
-- **`get_line_stops_gdf(trip_groups: bool = True)`**: Returns a GeoDataFrame with records for each stop for each `rep_trip_id`.
+`TransitLandDownloader` and Spain's `downloaders.spain.NAPDownloader` follow the same interface. See the [downloaders API reference](https://CityScope.github.io/pyGTFSHandler/api/downloaders/base/) for details.
 
-- **`get_line_time(trip_groups: bool = True)`**: Returns a DataFrame with the total service time for each `rep_trip_id`.
+## Documentation
 
-- **`get_service_hours_by_line()`**: Returns a DataFrame with the number of service hours for each `rep_trip_id`.
+- **[Examples](https://CityScope.github.io/pyGTFSHandler/examples/)** — runnable notebooks, including a full Cambridge, MA case study and a walkthrough of the direction/headway methodology.
+- **[API Reference](https://CityScope.github.io/pyGTFSHandler/api/)** — full class/method documentation.
+- **[Methodology](https://CityScope.github.io/pyGTFSHandler/methodology/)** — the math behind calendar resolution, frequency expansion, and the direction/headway algorithms.
 
-- **`get_routes_by_stops(stop_groups: bool = True)`**: Returns a DataFrame with a list of stops for each `rep_trip_id`.
+To build the docs locally:
 
-- **`get_total_trips_by_line(trip_groups: bool = True)`**: Returns a DataFrame with the total number of trips for each `rep_trip_id`.
+```bash
+uv sync --extra docs
+uv run mkdocs serve   # live-reloading dev server at http://127.0.0.1:8000
+```
 
-- **`get_schedule_symmetry(trip_groups: bool = True)`**: Returns a number between 0 and 1 indicating how symmetric the timetable is.
+## Related project
 
-- **`get_cph_by_line(trip_groups: bool = True, stop_groups: bool = True, agg: str = 'max', exclude_first_stop: bool = False)`**: Returns a DataFrame with the number of trips per hour for each `rep_trip_id`.
-  - **`agg`**: The aggregation method used to determine the frequency of trips. Options include:
-    - **`'max'`**: Selects the line with the maximum frequency.
-    - **`'sum'`**: Adds all the frequencies of all lines.
-    - **`'agg_sum'`**: Sums all frequencies to the maximum frequency, multiplied by an aggregation factor (`agg_factor`).
-  - **`exclude_first_stop`**: It is recommended to set this to True to avoid counting the same line twice.
-  
-- **`get_cph_at_stops(trip_groups: bool = True, stop_groups: bool = True, agg: str = 'max', agg_factor: float = 1, exclude_first_stop: bool = True)`**: Returns a DataFrame with the number of trips per hour for each `stop_id`.
+[`UrbanAccessAnalyzer`](https://github.com/CityScope/UrbanAccessAnalyzer) builds on `pyGTFSHandler` to compute full accessibility indicators (isochrones, POI access, public-transport quality scores) from GTFS, OSM, and population data.
 
-- **`stop_service_quality(frequencies: list, start_time=None, end_time=None, agg='max', agg_factor: float = 1, exclude_first_stop: bool = True)`**: Returns an integer for each stop indicating the service quality based on the frequency of trips.
+## License
 
-
+[GNU General Public License v3.0](LICENSE)

@@ -40,7 +40,7 @@ from datetime import datetime
 import os
 import csv
 import re
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Union
 import warnings
 import zipfile
 import shutil
@@ -137,6 +137,22 @@ def parse_time(t: str) -> str:
 # SCHEMA DEFINITION
 # ------------------------------
 def get_df_schema_dict(path: str) -> Tuple[Dict[str, Any], List[str]]:
+    """Returns the expected Polars dtype schema and mandatory columns for a GTFS file.
+
+    Used throughout `models/*.py` to pass `schema_overrides` to
+    `utils.io.read_csv_list`/`read_csv_lazy` and to know which columns
+    `check_files` must validate as present/non-null.
+
+    Args:
+        path: A GTFS filename or path (only the basename, e.g.
+            `"stops.txt"`, is inspected -- any directory portion or
+            extension besides `.txt` is normalized away).
+
+    Returns:
+        Tuple[Dict[str, Any], List[str]]: `(schema_dict, mandatory_cols)`
+        where `schema_dict` maps column name to Python/Polars type and
+        `mandatory_cols` lists the GTFS-required columns for that file.
+    """
     path = os.path.splitext(path)[0]
     path += ".txt"
     if "stops.txt" in str(path):
@@ -315,7 +331,24 @@ def _try_normalize_route_type_name(route_type):
         return None
 
 
-def normalize_route_type(route_type):
+def normalize_route_type(route_type: Union[int, str]) -> Optional[int]:
+    """Normalizes a route type (int code or name string) to its integer GTFS code.
+
+    Accepts either the standard/extended numeric `route_type` code
+    (returned as-is) or a human-friendly name (e.g. `"bus"`, `"subway"`),
+    which is mapped to the corresponding standard code. Used by `Feed`
+    and `Routes.load` to normalize the caller-supplied `route_types`
+    filter before comparing it against `routes.txt`.
+
+    Args:
+        route_type: An `int` GTFS route type code, or a `str` that is
+            either an integer-like code or a recognized route type name.
+
+    Returns:
+        int | None: The normalized integer route type code, or `None` if
+        `route_type` could not be parsed as an int and did not match a
+        known name.
+    """
     if isinstance(route_type,int):
         return route_type 
 
@@ -448,7 +481,20 @@ def extended_to_standard_route_type(route_type: int) -> int | None:
     return None
 
 
-def route_type_to_str(route_type):
+def route_type_to_str(route_type: int) -> str:
+    """Converts a standard GTFS `route_type` integer code to its lowercase name.
+
+    Inverse of the numeric side of `normalize_route_type`.
+
+    Args:
+        route_type: A standard GTFS route type code (`int`), e.g. `3`.
+
+    Returns:
+        str: The lowercase route type name, e.g. `"bus"`.
+
+    Raises:
+        Exception: If `route_type` is not an `int`.
+    """
     if not isinstance(route_type, int):
         raise Exception(f"route_type must be an int, got {type(route_type)}")
 

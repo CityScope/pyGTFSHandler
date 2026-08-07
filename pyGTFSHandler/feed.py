@@ -54,6 +54,8 @@ the direction with less remaining stops
 - TODO What about services with different timezones?
 """
 
+from __future__ import annotations
+
 """TODO: revise filter_by_time_range with frequencies
 TODO: revise headway func to work with all possible by, at and hows especially 'shape_direction' 'all' instead of 'max'
 """
@@ -75,9 +77,31 @@ SECS_PER_DAY: int = 86400
 
 
 def concat_feeds(
-    feeds,
-    stop_group_distance=0
-):  
+    feeds: "Feed | list[Feed]",
+    stop_group_distance: float = 0
+) -> "Feed":
+    """Concatenate several already-loaded `Feed` objects into one.
+
+    Combines the `calendar`, `routes`, `stop_times`, `stops` and `trips`
+    components of every feed in `feeds` by concatenating their underlying
+    Polars/GeoPandas frames, then rebuilds shapes (`load_shapes`) and the
+    integrated `lf` (`build_lf`) on top of the combined data. Useful for
+    merging multiple regional GTFS feeds (e.g. one `Feed` per operator)
+    into a single queryable object.
+
+    Args:
+        feeds: A single `Feed`, or a list of `Feed` objects to merge. If a
+            single `Feed` is passed it is returned unchanged.
+        stop_group_distance: If greater than 0, stops within this distance
+            (in the stops' CRS units) are clustered together after
+            concatenation via `Stops.group_stops`.
+
+    Returns:
+        Feed: The first feed in `feeds`, mutated in place so its
+        `calendar`, `routes`, `stop_times`, `stops`, `trips`, `shapes`,
+        `trip_shape_ids_lf` and `lf` attributes reflect the combined data
+        of every feed passed in.
+    """
     if isinstance(feeds,Feed):
         return feeds
 
@@ -192,9 +216,52 @@ class Feed(FeedFilteringMixin, FeedAnalysisMixin, FeedEdgeAnalysisMixin):
         stop_ids: Optional[List[str]] = None,
         route_ids: Optional[List[str]] = None,
         check_files:bool=True,
-        min_file_id=0,
+        min_file_id: int = 0,
         load_shapes: bool = True,
     ):
+        """Loads, filters and integrates one or more GTFS directories into a `Feed`.
+
+        This is the main entry point of the library: pass one or more
+        uncompressed GTFS directories (or zip files) and get back a `Feed`
+        whose `self.lf` is a single denormalized LazyFrame joining stops,
+        stop_times, trips, routes, calendar and shapes. Internally this
+        just calls `self.load(...)` (component loading/filtering), then
+        `self.load_shapes(...)` and `self.build_lf(...)` -- see those
+        methods' docstrings for the detailed pipeline.
+
+        Args:
+            gtfs_dirs: One or more paths to GTFS directories or `.zip` files.
+            aoi: Optional Area of Interest (GeoDataFrame/GeoSeries) used to
+                geospatially filter stops.
+            stop_group_distance: If greater than 0, cluster stops within
+                this distance of each other under a shared `parent_station`.
+            start_date: Inclusive lower bound on service dates to load.
+            end_date: Inclusive upper bound on service dates to load.
+            date_type: Optional weekday/weekend/holiday classification
+                filter (see `Calendar.filter_by_date_type`).
+            start_time: Lower bound of the daily time window to load.
+            end_time: Upper bound of the daily time window to load.
+            route_types: Optional route type filter (names, codes, or a
+                mix); `None`/`"all"` keeps every route type.
+            service_ids: Optional explicit `service_id` allow-list.
+            trip_ids: Optional explicit `trip_id` allow-list.
+            stop_ids: Optional explicit `stop_id` allow-list.
+            route_ids: Optional explicit `route_id` allow-list.
+            check_files: If `True` (default), validate each GTFS file's
+                schema/mandatory columns via `utils.gtfs_checker` while loading.
+            min_file_id: Starting index used to tag rows with which source
+                `gtfs_dirs` entry they came from (`file_id` column); relevant
+                mainly when merging feeds with `concat_feeds`.
+            load_shapes: If `True` (default), read real `shapes.txt`
+                geometry where available; if `False`, always use
+                straight-line stop-to-stop shapes (faster, see
+                `load_shapes`'s docstring).
+
+        Raises:
+            ValueError: If any of `gtfs_dirs` is not a valid directory/zip.
+            Exception: If the combination of filters leaves no stops,
+                routes, services, trips, or stop_times.
+        """
         self.calendar, self.routes, self.gtfs_dir, self.stop_times, self.stops, self.trips = self.load(
             gtfs_dirs=gtfs_dirs,
             aoi=aoi,
@@ -470,7 +537,42 @@ class Feed(FeedFilteringMixin, FeedAnalysisMixin, FeedEdgeAnalysisMixin):
         shapes.assign_direction_ids(trip_shape_ids_lf, trips.lf, stops.lf)
         return shapes, trip_shape_ids_lf
     
-    def build_lf(self, calendar, routes, shapes, stop_times, stops, trips, trip_shape_ids_lf):
+    def build_lf(
+        self,
+        calendar: Calendar,
+        routes: Optional[Routes],
+        shapes: Shapes,
+        stop_times: StopTimes,
+        stops: Stops,
+        trips: Trips,
+        trip_shape_ids_lf: pl.LazyFrame,
+    ) -> pl.LazyFrame:
+        """Joins the loaded components into the single integrated `self.lf`.
+
+        Starts from `stop_times.lf`, left-joins frequencies (if present),
+        trips (`service_id`, `route_id`, `direction_id`), shape ids,
+        `parent_station` (deduplicating consecutive stops at the same
+        parent station within a trip), route metadata, and per-stop
+        shape geometry fields (`shape_dist_traveled`, `shape_direction`,
+        ...). If `stop_times.fixed_times` is set, also runs the
+        shape-distance-based interpolation (`_fix_null_times`) for any
+        still-missing arrival/departure times. Finally flags each row with
+        `isin_aoi` based on the AOI-filtered stop set computed in `load`.
+
+        Args:
+            calendar: Loaded `Calendar` instance.
+            routes: Loaded `Routes` instance (or `None`).
+            shapes: Loaded `Shapes` instance.
+            stop_times: Loaded `StopTimes` instance.
+            stops: Loaded `Stops` instance.
+            trips: Loaded `Trips` instance.
+            trip_shape_ids_lf: Mapping from synthetic `shape_id` to member
+                `trip_id`s, as produced by `load_shapes`.
+
+        Returns:
+            pl.LazyFrame: The denormalized schedule, one row per
+            (trip, stop) pair, assigned to `self.lf`.
+        """
         # --- 5. Build the Main Integrated LazyFrame (`lf`) ---
         # Start with the core stop_times data.
         lf: pl.LazyFrame = stop_times.lf.select(

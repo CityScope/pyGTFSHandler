@@ -156,7 +156,7 @@ def connected_components_from_edges(n_nodes: int, edge_index_pairs: list[tuple[i
     return labels.tolist()
 
 
-def filter_by_id_column(lf, column, ids: list | None = []):
+def filter_by_id_column(lf: Optional[pl.LazyFrame], column: str, ids: list | None = []) -> Optional[pl.LazyFrame]:
     """Semi-joins `lf` down to rows whose `column` value is in `ids`.
 
     IDs read from any single GTFS file are always suffixed with

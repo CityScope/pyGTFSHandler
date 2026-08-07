@@ -504,7 +504,7 @@ class MobilityDatabaseDownloader(BaseGTFSDownloader):
         end_date: DateLike,
         day_separation: int = 1,
         overwrite: bool = False,
-        aoi=None,
+        aoi: Optional[AOIType] = None,
     ) -> Optional[str]:
         """Download and stitch a feed's dataset history into one GTFS zip.
 

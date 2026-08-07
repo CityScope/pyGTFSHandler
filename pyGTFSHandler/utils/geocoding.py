@@ -15,9 +15,9 @@ Why this module exists and how it's organized:
 - **`get_city_geometry`**/**`get_geographic_suggestions_from_string`**/
   **`get_geographic_suggestions_from_aoi`**: user-facing convenience helpers
   (e.g. for interactively picking an AOI/city before constructing a `Feed`),
-  not called anywhere internally. These import `osmnx`/`geopy` lazily,
-  inside the function body, so merely `import pyGTFSHandler` doesn't require
-  installing those optional extras.
+  not called anywhere internally. These import `geopy` lazily, inside the
+  function body, so merely `import pyGTFSHandler` doesn't require installing
+  that optional extra.
 """
 
 import warnings
@@ -27,21 +27,30 @@ import geopandas as gpd
 import pycountry
 import requests
 from difflib import get_close_matches
-from shapely.geometry import MultiPolygon, Point, Polygon
+from shapely.geometry import MultiPolygon, Point, Polygon, shape as shapely_shape
 
 import logging
 logger = logging.getLogger(__name__)
 
 
-def get_city_geometry(city_name: str) -> gpd.GeoDataFrame:
-    """Retrieve city boundary geometry from OpenStreetMap using OSMnx.
+def get_city_geometry(city_name: str, user_agent: str = "pyGTFSHandlerClient") -> gpd.GeoDataFrame:
+    """Retrieve a place's boundary geometry from OpenStreetMap/Nominatim.
 
-    Requires the `osm` optional extra (`pip install pyGTFSHandler[osm]`).
+    Uses `geopy`'s Nominatim geocoder with GeoJSON polygon output, so it
+    needs no extra dependency beyond the `geocoding` optional extra
+    (`pip install pyGTFSHandler[geocoding]`) already used by the other
+    functions in this module.
     """
-    import osmnx as ox
+    from geopy.geocoders import Nominatim
 
-    gdf = ox.geocode_to_gdf(city_name)
-    return gdf.to_crs(epsg=4326)
+    geolocator = Nominatim(user_agent=user_agent, timeout=10)
+    location = geolocator.geocode(city_name, geometry="geojson")
+    if location is None or "geojson" not in location.raw:
+        raise ValueError(f"Could not find boundary geometry for {city_name!r}.")
+
+    geometry = shapely_shape(location.raw["geojson"])
+    gdf = gpd.GeoDataFrame({"name": [location.address]}, geometry=[geometry], crs="EPSG:4326")
+    return gdf
 
 
 def get_geographic_suggestions_from_string(

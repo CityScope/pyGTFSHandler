@@ -35,9 +35,29 @@ ROUTE_TYPE_NAME_FALLBACK = "Other"
 SQUARE_BADGE_ROUTE_TYPES = {0, 1, 2, 5, 6, 7}
 
 
-def route_type_emoji(route_type) -> str:
+def route_type_emoji(route_type: int | str) -> str:
+    """Returns a display emoji for a GTFS `route_type` code.
+
+    Args:
+        route_type: A GTFS route type code (standard or extended), as an
+            int or a string coercible to one of the known codes.
+
+    Returns:
+        str: The matching emoji, or a generic fallback emoji if the code
+        is not recognized.
+    """
     return ROUTE_TYPE_EMOJI.get(str(route_type), ROUTE_TYPE_EMOJI_FALLBACK)
 
 
-def route_type_name(route_type) -> str:
+def route_type_name(route_type: int | str) -> str:
+    """Returns a human-readable name for a GTFS `route_type` code.
+
+    Args:
+        route_type: A GTFS route type code (standard or extended), as an
+            int or a string coercible to one of the known codes.
+
+    Returns:
+        str: The matching name (e.g. `"Bus"`), or a generic fallback name
+        if the code is not recognized.
+    """
     return ROUTE_TYPE_NAME.get(str(route_type), ROUTE_TYPE_NAME_FALLBACK)

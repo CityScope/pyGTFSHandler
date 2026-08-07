@@ -108,8 +108,25 @@ class StopTimes(FrequenciesMixin):
         frequencies (Optional[pl.LazyFrame]): A LazyFrame for processed frequencies data,
                                                or None if not present.
     """
-    def __init__(self,lf=None,frequencies=None,fixed_times=None,trips_lf=None) -> None:
-        self.lf = lf 
+    def __init__(
+        self,
+        lf: Optional[pl.LazyFrame] = None,
+        frequencies: Optional[pl.LazyFrame] = None,
+        fixed_times: Optional[bool] = None,
+        trips_lf: Optional[pl.LazyFrame] = None,
+    ) -> None:
+        """Wraps already-loaded stop_times/frequencies frames, or leaves them empty for `load` to fill in.
+
+        Args:
+            lf: Optional pre-loaded, processed `stop_times.txt` LazyFrame.
+            frequencies: Optional pre-loaded, processed `frequencies.txt`
+                LazyFrame, or `None` if the feed has no frequencies.
+            fixed_times: Optional flag recording whether any times were
+                interpolated during loading.
+            trips_lf: Optional trips LazyFrame updated with any synthetic
+                trips generated from `frequencies.txt`.
+        """
+        self.lf = lf
         self.frequencies = frequencies 
         self.fixed_times = fixed_times
         self.trips_lf = trips_lf

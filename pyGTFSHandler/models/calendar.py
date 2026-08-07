@@ -41,8 +41,43 @@ from pathlib import Path
 import warnings
 
 class Calendar:
-    def __init__(self,lf=None,exceptions_lf=None,min_date=None,max_date=None,service_ids=None) -> None:
-        self.lf = lf 
+    """Represents `calendar.txt` + `calendar_dates.txt` for one or more GTFS feeds.
+
+    Holds the raw (unmodified) weekday/date-range rows (`self.lf`) and the
+    single-date exceptions (`self.exceptions_lf`), plus the resolved
+    `min_date`/`max_date` validity window and, once `load`/filtering has
+    run, the `service_ids` in scope. See the module docstring for how
+    overnight trips are handled without duplicating rows.
+
+    Attributes:
+        lf (pl.LazyFrame | None): Raw `calendar.txt` rows.
+        exceptions_lf (pl.LazyFrame | None): Raw `calendar_dates.txt` rows.
+        min_date (int | None): Earliest date covered, as days since epoch.
+        max_date (int | None): Latest date covered, as days since epoch.
+        service_ids (List[str] | None): `service_id`s in scope, if filtered.
+    """
+
+    def __init__(
+        self,
+        lf: Optional[pl.LazyFrame] = None,
+        exceptions_lf: Optional[pl.LazyFrame] = None,
+        min_date: Optional[int] = None,
+        max_date: Optional[int] = None,
+        service_ids: Optional[List[str]] = None,
+    ) -> None:
+        """Wraps already-loaded calendar frames, or leaves them empty for `load` to fill in.
+
+        Args:
+            lf: Optional pre-loaded `calendar.txt` LazyFrame (e.g. when
+                reconstructing a `Calendar` from `concat_feeds`).
+            exceptions_lf: Optional pre-loaded `calendar_dates.txt` LazyFrame.
+            min_date: Optional pre-computed min date (days since epoch);
+                if omitted and `lf`/`exceptions_lf` are given, it is derived
+                via `_get_min_max_dates`.
+            max_date: Optional pre-computed max date (days since epoch).
+            service_ids: Optional pre-computed list of in-scope `service_id`s.
+        """
+        self.lf = lf
         self.exceptions_lf = exceptions_lf 
         if (lf is not None) or (exceptions_lf is not None):
             if min_date is None:

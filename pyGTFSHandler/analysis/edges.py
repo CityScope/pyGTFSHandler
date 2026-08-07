@@ -33,13 +33,42 @@ class FeedEdgeAnalysisMixin:
             start_time: datetime | time = time.min,
             end_time: datetime | time = time.max,
             route_types: list | int | str | None = None,
-            by="edge_id",
-            at="parent_station",
-            how="mean",
+            by: str = "edge_id",
+            at: str = "parent_station",
+            how: str = "mean",
             min_trips:int=2,
             mix_directions:bool=False,
-        ):
+        ) -> pl.DataFrame:
+        """Computes headway (mean interval between trips) per edge (stop-to-stop segment).
 
+        Filters the feed to `date`/`start_time`/`end_time`/`route_types`,
+        builds edges between consecutive stops of each trip, and aggregates
+        the same RMS-style headway statistic used by
+        `FeedAnalysisMixin.get_headway_at_stops` (see the direction/headway
+        methodology docs), grouped by edge instead of by stop.
+
+        Args:
+            date: Service date to evaluate.
+            start_time: Start of the time window (default midnight).
+            end_time: End of the time window (default end of day).
+            route_types: Optional route type filter (name(s), code(s), or
+                a mix), same semantics as `Feed`'s constructor.
+            by: Grouping key for aggregating trips into a "line", e.g.
+                `"edge_id"`, `"route_id"`, or `"shape_direction"`.
+            at: Which edge identity column to report (e.g. `"parent_station"`
+                pairs vs. raw `"stop_id"` pairs).
+            how: Aggregation strategy across groups sharing an edge
+                (`"mean"`, `"max"`, `"add"`, ... consistent with
+                `get_headway_at_stops`).
+            min_trips: Minimum number of trips required on an edge for a
+                headway to be reported.
+            mix_directions: Whether to combine opposite-direction traffic
+                on the same physical edge into one headway.
+
+        Returns:
+            pl.DataFrame: One row per edge (grouped as requested by `by`/
+            `how`), with a `headway` column in seconds.
+        """
         gtfs_lf = self.filter(
             date=date,
             start_time=start_time,
@@ -272,12 +301,35 @@ class FeedEdgeAnalysisMixin:
             start_time: datetime | time = time.min,
             end_time: datetime | time = time.max,
             route_types: list | int | str | None = None,
-            by="edge_id",
-            at="parent_station",
-            how="mean",
+            by: str = "edge_id",
+            at: str = "parent_station",
+            how: str = "mean",
             min_trips:int=2,
-        ):
+        ) -> pl.DataFrame:
+        """Computes average travel speed per edge (stop-to-stop segment).
 
+        Filters the feed to `date`/`start_time`/`end_time`/`route_types`,
+        derives travel time and great-circle distance between each pair of
+        consecutive stops, and aggregates distance/time into a speed per
+        edge grouped as requested.
+
+        Args:
+            date: Service date to evaluate.
+            start_time: Start of the time window (default midnight).
+            end_time: End of the time window (default end of day).
+            route_types: Optional route type filter.
+            by: Grouping key for aggregating trips sharing an edge, e.g.
+                `"edge_id"` or `"route_id"`.
+            at: Which edge identity column to report.
+            how: Aggregation strategy across trips on the same edge
+                (`"mean"`, `"max"`, ...).
+            min_trips: Minimum number of trips required on an edge for a
+                speed to be reported.
+
+        Returns:
+            pl.DataFrame: One row per edge, with distance, travel time, and
+            a `speed` column (meters/second unless converted by the caller).
+        """
         gtfs_lf = self.filter(
             date=date,
             start_time=start_time,

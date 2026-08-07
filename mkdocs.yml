@@ -1,0 +1,117 @@
+site_name: pyGTFSHandler
+site_description: Handle GTFS files fast in python
+repo_url: https://github.com/CityScope/pyGTFSHandler
+repo_name: pyGTFSHandler
+
+not_in_nav: |
+  HOSTING.md
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.suggest
+
+nav:
+  - Home: index.md
+  - GTFS Format Reference: gtfs-format.md
+  - API Reference:
+      - Overview: api/index.md
+      - Feed: api/feed.md
+      - Models:
+          - Calendar: api/models/calendar.md
+          - Frequencies: api/models/frequencies.md
+          - Routes: api/models/routes.md
+          - Shapes: api/models/shapes.md
+          - Stops: api/models/stops.md
+          - Stop Times: api/models/stop_times.md
+          - Trips: api/models/trips.md
+      - Analysis:
+          - Edges: api/analysis/edges.md
+          - Filtering: api/analysis/filtering.md
+          - Stops: api/analysis/stops.md
+      - Downloaders:
+          - Base: api/downloaders/base.md
+          - Mobility Database: api/downloaders/mobility_database.md
+          - TransitLand: api/downloaders/transitland.md
+          - Spain (NAP): api/downloaders/spain.md
+      - Maps:
+          - Conflict Map: api/maps/conflict_map.md
+          - Edge Metrics: api/maps/edge_metrics.md
+          - Route Map: api/maps/route_map.md
+          - Style: api/maps/style.md
+      - Utils: api/utils.md
+  - Methodology:
+      - Overview: methodology/index.md
+      - Calendar Handling: methodology/calendar.md
+      - Frequency Expansion: methodology/frequencies.md
+      - Direction & Headway: methodology/direction-headway.md
+      - Edges & Filtering: methodology/edges-filtering.md
+  - Examples:
+      - Overview: examples/index.md
+      - Quickstart: examples/quickstart.ipynb
+      - Cambridge, MA Example: examples/cambridge_massachusetts_usa_example.ipynb
+      - Direction & Headway Methodology (notebook): examples/direction_and_headway_methodology.ipynb
+      - Direction Conflicts (notebook): examples/direction_conflicts.ipynb
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true
+
+extra_javascript:
+  - javascripts/mathjax.js?v=2
+  - javascripts/vendor/tex-svg.js?v=2
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: ["."]
+          options:
+            docstring_style: google
+            show_source: true
+            show_root_heading: true
+            show_root_full_path: false
+            merge_init_into_class: true
+            separate_signature: true
+            show_signature_annotations: true
+            members_order: source
+            filters: ["!^_"]
+  - mkdocs-jupyter:
+      include: ["*.ipynb"]
+      ignore: ["*.md"]
+      include_source: true
+      execute: false
+      ignore_h1_titles: true
+
+extra_css:
+  - stylesheets/extra.css

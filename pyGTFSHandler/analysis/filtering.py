@@ -402,6 +402,16 @@ class FeedFilteringMixin:
     def filter_by_route_type(
         self, route_types: list | int | str
     ) -> pl.LazyFrame:
+        """Filters `self.lf` down to rows whose `route_type` matches `route_types`.
+
+        Args:
+            route_types: One or more route type names (e.g. `"bus"`) or
+                GTFS route type codes (e.g. `3`), normalized the same way
+                as the `route_types` argument of `Feed`'s constructor.
+
+        Returns:
+            pl.LazyFrame: `self.lf` filtered to the requested route types.
+        """
         return self._filter_by_route_type(self.lf,route_types)
 
     def filter(
@@ -414,9 +424,38 @@ class FeedFilteringMixin:
             end_time: datetime | time = time(hour=23, minute=59, second=59),
             route_types: list | int | str | None = None,
             frequencies:bool = True,
-            in_aoi:bool = False, 
+            in_aoi:bool = False,
             delete_last_stop:bool = False
-        ):
+        ) -> pl.LazyFrame:
+        """Filters the integrated feed LazyFrame (`self.lf`) by date/time/route/AOI.
+
+        Central helper used by most `Feed` analysis methods
+        (`get_headway_at_stops`, `get_headway_at_edges`, etc.) to narrow
+        `self.lf` down to a single service window before aggregating.
+
+        Args:
+            start_date: Inclusive start of a date range filter. Ignored if
+                `date` is given.
+            end_date: Inclusive end of a date range filter. Ignored if
+                `date` is given.
+            date: A single service date; takes precedence over
+                `start_date`/`end_date` when given.
+            date_type: Optional weekday/weekend/holiday classification
+                filter (see `Calendar.filter_by_date_type`).
+            start_time: Start of the daily time window.
+            end_time: End of the daily time window.
+            route_types: Optional route type filter.
+            frequencies: If `True` (default), `frequencies.txt`-defined
+                trips are left as unexpanded templates. If `False`, they are
+                expanded into concrete, individually addressable departures
+                (via `_frequencies_to_stop_times`) before filtering.
+            in_aoi: If `True`, restrict to stops flagged `isin_aoi`.
+            delete_last_stop: If `True`, drop each trip's final stop (useful
+                when computing edge-based, not stop-based, metrics).
+
+        Returns:
+            pl.LazyFrame: The filtered LazyFrame.
+        """
         lf = self.lf
         return self._filter(
             lf,
@@ -432,7 +471,21 @@ class FeedFilteringMixin:
             delete_last_stop
         ) 
     
-    def calendar_new_end_date(self, new_end_date: datetime | date, file_id=None,gtfs_name=None):
+    def calendar_new_end_date(self, new_end_date: datetime | date, file_id: int | None = None, gtfs_name: str | None = None):
+        """Overwrites `end_date` in `self.calendar.lf` (calendar.txt rows), in place.
+
+        Useful for extending/truncating a feed's validity window (e.g.
+        before combining several historical feeds) without re-loading from
+        disk.
+
+        Args:
+            new_end_date: Replacement end date.
+            file_id: If given, only rows loaded from this source file index
+                are updated.
+            gtfs_name: If given (and `file_id` is not), only rows whose
+                `gtfs_name` matches are updated. If neither is given, every
+                row's `end_date` is overwritten.
+        """
         end_date = int(date_parsing.datetime_to_days_since_epoch(new_end_date))
         if self.calendar.lf is not None:
             if file_id is not None:
@@ -458,7 +511,21 @@ class FeedFilteringMixin:
                     pl.lit(end_date).alias("end_date")
                 )
 
-    def calendar_new_start_date(self, new_start_date: datetime | date, file_id=None,gtfs_name=None):
+    def calendar_new_start_date(self, new_start_date: datetime | date, file_id: int | None = None, gtfs_name: str | None = None):
+        """Overwrites `start_date` in `self.calendar.lf` (calendar.txt rows), in place.
+
+        Mirror of `calendar_new_end_date` for the start of the validity
+        window; see that method for the `file_id`/`gtfs_name` selection
+        semantics.
+
+        Args:
+            new_start_date: Replacement start date.
+            file_id: If given, only rows loaded from this source file index
+                are updated.
+            gtfs_name: If given (and `file_id` is not), only rows whose
+                `gtfs_name` matches are updated. If neither is given, every
+                row's `start_date` is overwritten.
+        """
         start_date = int(date_parsing.datetime_to_days_since_epoch(new_start_date))
         if self.calendar.lf is not None:
             if file_id is not None:

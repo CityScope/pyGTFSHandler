@@ -46,6 +46,7 @@ from rapidfuzz import fuzz, process
 from ...utils import hashing
 from ...utils.stack_gtfs import historic_stack
 from ..base import BaseGTFSDownloader
+from ..utils.aoi import AOIType
 from ..utils.download import download_feeds
 from ..utils.models import GTFSFeedMetadata
 from ..utils.naming import normalize_text, sanitize_filename
@@ -496,7 +497,7 @@ class NAPDownloader(BaseGTFSDownloader):
         end_date: Union[str, datetime],
         day_separation: int = 1,
         overwrite: bool = False,
-        aoi=None,
+        aoi: Optional[AOIType] = None,
     ) -> List[str]:
         """Download and stitch a dataset's publication history into one feed.
 

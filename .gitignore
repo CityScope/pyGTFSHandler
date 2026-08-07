@@ -32,3 +32,9 @@ examples/local*
 # Downloader API keys -- never commit real keys, see api_keys.example.json
 api_keys.json
 .pygtfshandler/
+# MkDocs
+site/
+.cache/
+docs/HOSTING.md
+
+report/

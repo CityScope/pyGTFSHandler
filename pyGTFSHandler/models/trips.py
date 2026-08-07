@@ -33,8 +33,14 @@ class Trips:
         lf (pl.LazyFrame): A Polars LazyFrame containing the (optionally filtered) trips data.
     """
 
-    def __init__(self,lf=None,trip_ids=None) -> None:
-        self.lf = lf 
+    def __init__(self, lf: Optional[pl.LazyFrame] = None, trip_ids: Optional[List[str]] = None) -> None:
+        """Wraps an already-loaded trips LazyFrame, or leaves it empty for `load` to fill in.
+
+        Args:
+            lf: Optional pre-loaded `trips.txt` LazyFrame.
+            trip_ids: Optional pre-computed list of in-scope `trip_id`s.
+        """
+        self.lf = lf
         self.trip_ids = trip_ids
 
     def load(

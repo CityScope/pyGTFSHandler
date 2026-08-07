@@ -53,18 +53,22 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import folium
 import polars as pl
 
 from ..models.shapes import _reconcile_fwd_bwd, _split_angle
 
+if TYPE_CHECKING:
+    from ..feed import Feed
+
 
 def _read_static(name: str) -> str:
     return (Path(__file__).parent / "static" / name).read_text(encoding="utf-8")
 
 
-def conflict_map(feed, zoom_start: int = 12) -> folium.Map:
+def conflict_map(feed: "Feed", zoom_start: int = 12) -> folium.Map:
     """Builds the `direction_id` conflict inspector map for `feed`.
 
     Args:

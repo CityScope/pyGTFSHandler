@@ -33,7 +33,7 @@ import polars as pl
 import geopandas as gpd
 import pandas as pd
 from pathlib import Path
-from typing import Union, List
+from typing import Union, List, Optional
 from ..utils import gtfs_checker
 from ..utils import io
 from ..utils import geo_polars
@@ -56,7 +56,24 @@ class Stops:
         paths (List[Path]): List of GTFS paths (directories).
     """
 
-    def __init__(self,lf=None,gdf=None,stop_ids=None, mean_lon=None, mean_lat=None):
+    def __init__(
+        self,
+        lf: Optional[pl.LazyFrame] = None,
+        gdf: Optional[gpd.GeoDataFrame] = None,
+        stop_ids: Optional[List[str]] = None,
+        mean_lon: Optional[float] = None,
+        mean_lat: Optional[float] = None,
+    ) -> None:
+        """Wraps already-loaded stops frames, or leaves them empty for `load` to fill in.
+
+        Args:
+            lf: Optional pre-loaded `stops.txt` LazyFrame.
+            gdf: Optional pre-built GeoDataFrame of `stop_id` + geometry.
+            stop_ids: Optional pre-computed list of in-scope `stop_id`s.
+            mean_lon: Optional mean stop longitude (used for e.g. holiday
+                lookups elsewhere that need an approximate feed location).
+            mean_lat: Optional mean stop latitude.
+        """
         self.lf = lf
         self.gdf = gdf 
         self.stop_ids = stop_ids
@@ -475,7 +492,28 @@ class Stops:
 
         return lf, gdf
 
-    def reload_stops_lf(self, path, stop_ids=None):
+    def reload_stops_lf(
+        self,
+        path: Union[str, Path, List[Union[str, Path]]],
+        stop_ids: Optional[pl.LazyFrame] = None,
+    ) -> None:
+        """Re-reads `stops.txt` from `path` and replaces `self.lf`.
+
+        Used by `Feed.load` after `stop_times.txt` has been loaded, so that
+        stops referenced by in-scope stop_times but dropped by the earlier
+        AOI/stop_id filtering (e.g. a bordering trip's next stop just
+        outside the AOI) are brought back into `self.lf`.
+
+        Args:
+            path: One or more GTFS directory paths (str, Path, or a list of
+                either) to search for `stops.txt`.
+            stop_ids: Optional lazyframe/expression of `stop_id` values used
+                to restrict which stops are (re)loaded. If `None`, all
+                stops found in `stops.txt` are kept.
+
+        Returns:
+            None. `self.lf` is updated in place.
+        """
         if isinstance(path, (str, Path)):
             paths = [Path(path)]
         else:

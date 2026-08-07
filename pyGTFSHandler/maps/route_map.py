@@ -17,7 +17,7 @@ import json
 from datetime import date as date_type
 from importlib import resources
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 import folium
 import polars as pl
@@ -30,6 +30,9 @@ from .style import (
     SQUARE_BADGE_ROUTE_TYPES,
 )
 from .edge_metrics import compute_edge_and_stop_metrics
+
+if TYPE_CHECKING:
+    from ..feed import Feed
 
 
 def _read_static(name: str) -> str:
@@ -116,7 +119,7 @@ def _expand_frequencies(day: pl.DataFrame) -> pl.DataFrame:
     return result.join(trip_signature, on="trip_id", how="semi")
 
 
-def route_map(feed, date: date_type, m: Optional[folium.Map] = None, zoom_start: int = 13) -> folium.Map:
+def route_map(feed: "Feed", date: date_type, m: Optional[folium.Map] = None, zoom_start: int = 13) -> folium.Map:
     """Builds a self-contained interactive Leaflet map of `feed`'s stops and
     routes active on `date`.
 

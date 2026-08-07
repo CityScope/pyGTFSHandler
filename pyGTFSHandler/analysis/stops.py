@@ -816,12 +816,38 @@ class FeedAnalysisMixin:
             start_time: datetime | time = time.min,
             end_time: datetime | time = time.max,
             route_types: list | int | str | None = None,
-            by="route_id",
-            at="parent_station",
-            how="mean",
-            direction="both",
-            time_step=15
-        ):
+            by: str = "route_id",
+            at: str = "parent_station",
+            how: str = "mean",
+            direction: str = "both",
+            time_step: int = 15
+        ) -> pl.DataFrame:
+        """Computes average travel speed of trips passing through each stop.
+
+        Filters the feed to `date`/`start_time`/`end_time`/`route_types`,
+        derives per-trip speed from consecutive stop distances/times, and
+        aggregates it per stop.
+
+        Args:
+            date: Service date to evaluate.
+            start_time: Start of the time window (default midnight).
+            end_time: End of the time window (default end of day).
+            route_types: Optional route type filter.
+            by: Grouping key for aggregating trips into a "line" (e.g.
+                `"route_id"` or `"shape_direction"`).
+            at: Which stop identity column to report (e.g.
+                `"parent_station"` vs raw `"stop_id"`).
+            how: Aggregation strategy across trips at a stop (`"mean"`,
+                `"max"`, ...).
+            direction: Which travel direction(s) to include (`"both"`,
+                `"forward"`, `"backward"`).
+            time_step: Bucket size in minutes used for intermediate
+                time-binning of speed samples.
+
+        Returns:
+            pl.DataFrame: One row per stop (grouped as requested), with a
+            `speed` column.
+        """
         gtfs_lf = self.filter(
             date=date,
             start_time=start_time,
@@ -1021,7 +1047,25 @@ class FeedAnalysisMixin:
         
         return gtfs_lf.filter(pl.col("isin_aoi") == True).drop("isin_aoi").collect()
 
-    def add_stop_coords(self,df:pd.DataFrame|pl.DataFrame|pl.LazyFrame):
+    def add_stop_coords(self,df:pd.DataFrame|pl.DataFrame|pl.LazyFrame) -> pd.DataFrame|pl.DataFrame|pl.LazyFrame:
+        """Joins `stop_lat`/`stop_lon` (and `stop_name`) onto a result DataFrame.
+
+        Looks for a stop-identity column in `df` (checked in priority order:
+        `stop_id`, `parent_station`, `stop_id_A`, `parent_station_A`, the
+        last two being edge-result columns) and left-joins the matching
+        coordinates from `self.stops`.
+
+        Args:
+            df: A pandas/polars DataFrame or polars LazyFrame produced by
+                one of this class's `get_*_at_stops`/`get_*_at_edges`
+                methods (or any frame containing one of the recognized
+                stop-id columns).
+
+        Returns:
+            Same type as `df`, with stop coordinate columns added. Returned
+            unchanged (with a warning) if no recognized stop-id column is
+            found.
+        """
         if isinstance(df,pd.DataFrame):
             lf = pl.from_pandas(df).lazy()
         elif isinstance(df,pl.DataFrame):
@@ -1138,7 +1182,22 @@ class FeedAnalysisMixin:
             return lf.collect().lazy()
 
 
-    def add_route_names(self,df:pd.DataFrame|pl.DataFrame|pl.LazyFrame):
+    def add_route_names(self,df:pd.DataFrame|pl.DataFrame|pl.LazyFrame) -> pd.DataFrame|pl.DataFrame|pl.LazyFrame:
+        """Joins route names (e.g. `route_short_name`) onto a result DataFrame.
+
+        Looks for `route_id` or `route_ids` (list column, from grouped
+        results) in `df` and left-joins the matching name(s) from
+        `self.routes`.
+
+        Args:
+            df: A pandas/polars DataFrame or polars LazyFrame containing a
+                `route_id` or `route_ids` column.
+
+        Returns:
+            Same type as `df`, with route name column(s) added. Returned
+            unchanged (with a warning) if neither `route_id` nor
+            `route_ids` is present.
+        """
         if isinstance(df,pd.DataFrame):
             lf = pl.from_pandas(df).lazy()
         elif isinstance(df,pl.DataFrame):
