@@ -1,0 +1,2743 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Handle GTFS files fast in python">
+      
+      
+      
+      
+        <link rel="prev" href="../routes/">
+      
+      
+        <link rel="next" href="../stops/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Shapes - pyGTFSHandler</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#shapes" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="pyGTFSHandler" class="md-header__button md-logo" aria-label="pyGTFSHandler" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            pyGTFSHandler
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Shapes
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/CityScope/pyGTFSHandler" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    pyGTFSHandler
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../../gtfs-format/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  GTFS Format Reference
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../../" class="md-tabs__link">
+          
+  
+  
+  API Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../methodology/" class="md-tabs__link">
+          
+  
+  
+  Methodology
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../../examples/" class="md-tabs__link">
+          
+  
+  
+  Examples
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="pyGTFSHandler" class="md-nav__button md-logo" aria-label="pyGTFSHandler" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    pyGTFSHandler
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/CityScope/pyGTFSHandler" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    pyGTFSHandler
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../gtfs-format/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GTFS Format Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../feed/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Feed
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3_3" id="__nav_3_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Models
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Models
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../calendar/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calendar
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../frequencies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Frequencies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../routes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Routes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Shapes
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Shapes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#pyGTFSHandler.models.shapes.Shapes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shapes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Shapes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyGTFSHandler.models.shapes.Shapes.load" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        load
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyGTFSHandler.models.shapes.Shapes.assign_direction_ids" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        assign_direction_ids
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stops/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stops
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stop_times/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stop Times
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../trips/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Trips
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Analysis
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Analysis
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../analysis/edges/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Edges
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../analysis/filtering/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Filtering
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../analysis/stops/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stops
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_5" id="__nav_3_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Downloaders
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Downloaders
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../downloaders/base/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Base
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../downloaders/mobility_database/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mobility Database
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../downloaders/transitland/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    TransitLand
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../downloaders/spain/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Spain (NAP)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+          
+          
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_6" id="__nav_3_6_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Maps
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Maps
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../maps/conflict_map/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Conflict Map
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../maps/edge_metrics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Edge Metrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../maps/route_map/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Route Map
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../maps/style/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Style
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../utils/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Utils
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Methodology
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Methodology
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../methodology/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../methodology/calendar/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Calendar Handling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../methodology/frequencies/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Frequency Expansion
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../methodology/direction-headway/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Direction & Headway
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../methodology/edges-filtering/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Edges & Filtering
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Examples
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Examples
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../examples/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../examples/quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../examples/cambridge_massachusetts_usa_example/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cambridge, MA Example
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../examples/direction_and_headway_methodology/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Direction & Headway Methodology (notebook)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../examples/direction_conflicts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Direction Conflicts (notebook)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#pyGTFSHandler.models.shapes.Shapes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shapes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Shapes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pyGTFSHandler.models.shapes.Shapes.load" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        load
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pyGTFSHandler.models.shapes.Shapes.assign_direction_ids" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        assign_direction_ids
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="shapes">Shapes<a class="headerlink" href="#shapes" title="Permanent link">&para;</a></h1>
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h2 id="pyGTFSHandler.models.shapes.Shapes" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">Shapes</span>
+
+
+<a href="#pyGTFSHandler.models.shapes.Shapes" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">Shapes</span><span class="p">(</span><span class="n">lf</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">LazyFrame</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">stop_shapes</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">LazyFrame</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">gdf</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">GeoDataFrame</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents first">
+
+
+
+        <p>Manage GTFS shapes.txt data using Polars LazyFrames.</p>
+
+
+<p><span class="doc-section-title">Attributes:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td><code><span title="pyGTFSHandler.models.shapes.Shapes.lf">lf</span></code></td>
+            <td>
+                  <code><span title="polars.LazyFrame">LazyFrame</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>One row per point (real shape point or inserted
+stop) per synthetic <code>shape_id</code>, ordered by <code>shape_pt_sequence</code>,
+with cumulative <code>shape_dist_traveled</code>/<code>shape_total_distance</code>.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="pyGTFSHandler.models.shapes.Shapes.stop_shapes">stop_shapes</span></code></td>
+            <td>
+                  <code><span title="polars.LazyFrame">LazyFrame</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The subset of <code>lf</code> rows that are stops
+(i.e. <code>stop_id</code> is not null) -- what <code>Feed.build_lf</code> joins against.
+After <code>assign_direction_ids</code> runs (during <code>Feed</code> construction),
+this also carries <code>route_id</code>, a resolved <code>direction_id</code> (0/1,
+constant across every row of a given <code>shape_id</code>), and a boolean
+<code>direction_conflict</code> flag marking rows where the geometry
+actually disagreed with that shape's reported direction -- see
+that method.</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td><code><span title="pyGTFSHandler.models.shapes.Shapes.gdf">gdf</span></code></td>
+            <td>
+                  <code><span title="geopandas.GeoDataFrame">GeoDataFrame</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>One row per <code>shape_id</code>, with a LINESTRING (or
+POINT, if degenerate) geometry built from <code>lf</code>'s points.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+        <p>Wraps already-loaded shape frames, or leaves them empty for <code>load</code> to fill in.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>lf</code>
+            </td>
+            <td>
+                  <code><span title="typing.Optional">Optional</span>[<span title="polars.LazyFrame">LazyFrame</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Optional pre-loaded shape-points LazyFrame.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>stop_shapes</code>
+            </td>
+            <td>
+                  <code><span title="typing.Optional">Optional</span>[<span title="polars.LazyFrame">LazyFrame</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Optional pre-computed stop-subset LazyFrame (see
+the class docstring).</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>gdf</code>
+            </td>
+            <td>
+                  <code><span title="typing.Optional">Optional</span>[<span title="geopandas.GeoDataFrame">GeoDataFrame</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Optional pre-built per-<code>shape_id</code> GeoDataFrame.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+
+
+
+
+
+
+                  <details class="mkdocstrings-source">
+                    <summary>Source code in <code>pyGTFSHandler/models/shapes.py</code></summary>
+                    <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-258">258</a></span>
+<span class="normal"><a href="#__codelineno-0-259">259</a></span>
+<span class="normal"><a href="#__codelineno-0-260">260</a></span>
+<span class="normal"><a href="#__codelineno-0-261">261</a></span>
+<span class="normal"><a href="#__codelineno-0-262">262</a></span>
+<span class="normal"><a href="#__codelineno-0-263">263</a></span>
+<span class="normal"><a href="#__codelineno-0-264">264</a></span>
+<span class="normal"><a href="#__codelineno-0-265">265</a></span>
+<span class="normal"><a href="#__codelineno-0-266">266</a></span>
+<span class="normal"><a href="#__codelineno-0-267">267</a></span>
+<span class="normal"><a href="#__codelineno-0-268">268</a></span>
+<span class="normal"><a href="#__codelineno-0-269">269</a></span>
+<span class="normal"><a href="#__codelineno-0-270">270</a></span>
+<span class="normal"><a href="#__codelineno-0-271">271</a></span>
+<span class="normal"><a href="#__codelineno-0-272">272</a></span>
+<span class="normal"><a href="#__codelineno-0-273">273</a></span>
+<span class="normal"><a href="#__codelineno-0-274">274</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-258" name="__codelineno-0-258"></a><span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span>
+<a id="__codelineno-0-259" name="__codelineno-0-259"></a>    <span class="bp">self</span><span class="p">,</span>
+<a id="__codelineno-0-260" name="__codelineno-0-260"></a>    <span class="n">lf</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-261" name="__codelineno-0-261"></a>    <span class="n">stop_shapes</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-262" name="__codelineno-0-262"></a>    <span class="n">gdf</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">gpd</span><span class="o">.</span><span class="n">GeoDataFrame</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-263" name="__codelineno-0-263"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-0-264" name="__codelineno-0-264"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Wraps already-loaded shape frames, or leaves them empty for `load` to fill in.</span>
+<a id="__codelineno-0-265" name="__codelineno-0-265"></a>
+<a id="__codelineno-0-266" name="__codelineno-0-266"></a><span class="sd">    Args:</span>
+<a id="__codelineno-0-267" name="__codelineno-0-267"></a><span class="sd">        lf: Optional pre-loaded shape-points LazyFrame.</span>
+<a id="__codelineno-0-268" name="__codelineno-0-268"></a><span class="sd">        stop_shapes: Optional pre-computed stop-subset LazyFrame (see</span>
+<a id="__codelineno-0-269" name="__codelineno-0-269"></a><span class="sd">            the class docstring).</span>
+<a id="__codelineno-0-270" name="__codelineno-0-270"></a><span class="sd">        gdf: Optional pre-built per-`shape_id` GeoDataFrame.</span>
+<a id="__codelineno-0-271" name="__codelineno-0-271"></a><span class="sd">    &quot;&quot;&quot;</span>
+<a id="__codelineno-0-272" name="__codelineno-0-272"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">lf</span> <span class="o">=</span> <span class="n">lf</span>
+<a id="__codelineno-0-273" name="__codelineno-0-273"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">stop_shapes</span> <span class="o">=</span> <span class="n">stop_shapes</span>
+<a id="__codelineno-0-274" name="__codelineno-0-274"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">gdf</span> <span class="o">=</span> <span class="n">gdf</span>
+</code></pre></div></td></tr></table></div>
+                  </details>
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="pyGTFSHandler.models.shapes.Shapes.load" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">load</span>
+
+
+<a href="#pyGTFSHandler.models.shapes.Shapes.load" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">load</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Path</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Path</span><span class="p">]],</span> <span class="kc">None</span><span class="p">],</span> <span class="n">trip_shape_ids_lf</span><span class="p">:</span> <span class="n">LazyFrame</span><span class="p">,</span> <span class="n">stops_lf</span><span class="p">:</span> <span class="n">LazyFrame</span><span class="p">,</span> <span class="n">check_files</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="n">min_file_id</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Builds <code>self.lf</code>/<code>self.stop_shapes</code>/<code>self.gdf</code>.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>path</code>
+            </td>
+            <td>
+                  <code><span title="typing.Union">Union</span>[<span title="str">str</span>, <span title="pathlib.Path">Path</span>, <span title="typing.List">List</span>[<span title="typing.Union">Union</span>[<span title="str">str</span>, <span title="pathlib.Path">Path</span>]], None]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>GTFS directory/directories to look for <code>shapes.txt</code> in.
+<code>None</code> (or no <code>shapes.txt</code> found) means every group falls
+back to the straight-line-between-stops behavior.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>trip_shape_ids_lf</code>
+            </td>
+            <td>
+                  <code><span title="polars.LazyFrame">LazyFrame</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Output of <code>StopTimes.generate_shape_ids</code>,
+additionally carrying a <code>real_shape_id</code> column (see
+<code>Feed.load_shapes</code>) mapping each synthetic <code>shape_id</code> to the
+real <code>shape_id</code> its trips reference, if any.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>stops_lf</code>
+            </td>
+            <td>
+                  <code><span title="polars.LazyFrame">LazyFrame</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The feed's stops LazyFrame (<code>stop_id</code>, <code>stop_lat</code>, <code>stop_lon</code>).</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>pyGTFSHandler/models/shapes.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-276">276</a></span>
+<span class="normal"><a href="#__codelineno-0-277">277</a></span>
+<span class="normal"><a href="#__codelineno-0-278">278</a></span>
+<span class="normal"><a href="#__codelineno-0-279">279</a></span>
+<span class="normal"><a href="#__codelineno-0-280">280</a></span>
+<span class="normal"><a href="#__codelineno-0-281">281</a></span>
+<span class="normal"><a href="#__codelineno-0-282">282</a></span>
+<span class="normal"><a href="#__codelineno-0-283">283</a></span>
+<span class="normal"><a href="#__codelineno-0-284">284</a></span>
+<span class="normal"><a href="#__codelineno-0-285">285</a></span>
+<span class="normal"><a href="#__codelineno-0-286">286</a></span>
+<span class="normal"><a href="#__codelineno-0-287">287</a></span>
+<span class="normal"><a href="#__codelineno-0-288">288</a></span>
+<span class="normal"><a href="#__codelineno-0-289">289</a></span>
+<span class="normal"><a href="#__codelineno-0-290">290</a></span>
+<span class="normal"><a href="#__codelineno-0-291">291</a></span>
+<span class="normal"><a href="#__codelineno-0-292">292</a></span>
+<span class="normal"><a href="#__codelineno-0-293">293</a></span>
+<span class="normal"><a href="#__codelineno-0-294">294</a></span>
+<span class="normal"><a href="#__codelineno-0-295">295</a></span>
+<span class="normal"><a href="#__codelineno-0-296">296</a></span>
+<span class="normal"><a href="#__codelineno-0-297">297</a></span>
+<span class="normal"><a href="#__codelineno-0-298">298</a></span>
+<span class="normal"><a href="#__codelineno-0-299">299</a></span>
+<span class="normal"><a href="#__codelineno-0-300">300</a></span>
+<span class="normal"><a href="#__codelineno-0-301">301</a></span>
+<span class="normal"><a href="#__codelineno-0-302">302</a></span>
+<span class="normal"><a href="#__codelineno-0-303">303</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-276" name="__codelineno-0-276"></a><span class="k">def</span><span class="w"> </span><span class="nf">load</span><span class="p">(</span>
+<a id="__codelineno-0-277" name="__codelineno-0-277"></a>    <span class="bp">self</span><span class="p">,</span>
+<a id="__codelineno-0-278" name="__codelineno-0-278"></a>    <span class="n">path</span><span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Path</span><span class="p">,</span> <span class="n">List</span><span class="p">[</span><span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Path</span><span class="p">]],</span> <span class="kc">None</span><span class="p">],</span>
+<a id="__codelineno-0-279" name="__codelineno-0-279"></a>    <span class="n">trip_shape_ids_lf</span><span class="p">:</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">,</span>
+<a id="__codelineno-0-280" name="__codelineno-0-280"></a>    <span class="n">stops_lf</span><span class="p">:</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">,</span>
+<a id="__codelineno-0-281" name="__codelineno-0-281"></a>    <span class="n">check_files</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+<a id="__codelineno-0-282" name="__codelineno-0-282"></a>    <span class="n">min_file_id</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+<a id="__codelineno-0-283" name="__codelineno-0-283"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-0-284" name="__codelineno-0-284"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Builds `self.lf`/`self.stop_shapes`/`self.gdf`.</span>
+<a id="__codelineno-0-285" name="__codelineno-0-285"></a>
+<a id="__codelineno-0-286" name="__codelineno-0-286"></a><span class="sd">    Args:</span>
+<a id="__codelineno-0-287" name="__codelineno-0-287"></a><span class="sd">        path: GTFS directory/directories to look for `shapes.txt` in.</span>
+<a id="__codelineno-0-288" name="__codelineno-0-288"></a><span class="sd">            `None` (or no `shapes.txt` found) means every group falls</span>
+<a id="__codelineno-0-289" name="__codelineno-0-289"></a><span class="sd">            back to the straight-line-between-stops behavior.</span>
+<a id="__codelineno-0-290" name="__codelineno-0-290"></a><span class="sd">        trip_shape_ids_lf: Output of `StopTimes.generate_shape_ids`,</span>
+<a id="__codelineno-0-291" name="__codelineno-0-291"></a><span class="sd">            additionally carrying a `real_shape_id` column (see</span>
+<a id="__codelineno-0-292" name="__codelineno-0-292"></a><span class="sd">            `Feed.load_shapes`) mapping each synthetic `shape_id` to the</span>
+<a id="__codelineno-0-293" name="__codelineno-0-293"></a><span class="sd">            real `shape_id` its trips reference, if any.</span>
+<a id="__codelineno-0-294" name="__codelineno-0-294"></a><span class="sd">        stops_lf: The feed&#39;s stops LazyFrame (`stop_id`, `stop_lat`, `stop_lon`).</span>
+<a id="__codelineno-0-295" name="__codelineno-0-295"></a><span class="sd">    &quot;&quot;&quot;</span>
+<a id="__codelineno-0-296" name="__codelineno-0-296"></a>    <span class="n">raw_shapes_lf</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_read_shapes_file</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="n">check_files</span><span class="o">=</span><span class="n">check_files</span><span class="p">,</span> <span class="n">min_file_id</span><span class="o">=</span><span class="n">min_file_id</span><span class="p">)</span>
+<a id="__codelineno-0-297" name="__codelineno-0-297"></a>
+<a id="__codelineno-0-298" name="__codelineno-0-298"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">lf</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_generate_shapes_file</span><span class="p">(</span><span class="n">stops_lf</span><span class="p">,</span> <span class="n">trip_shape_ids_lf</span><span class="p">,</span> <span class="n">raw_shapes_lf</span><span class="p">)</span>
+<a id="__codelineno-0-299" name="__codelineno-0-299"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">lf</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">lf</span><span class="o">.</span><span class="n">collect</span><span class="p">()</span><span class="o">.</span><span class="n">lazy</span><span class="p">()</span>
+<a id="__codelineno-0-300" name="__codelineno-0-300"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">stop_shapes</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">lf</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;stop_id&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">is_not_null</span><span class="p">())</span>
+<a id="__codelineno-0-301" name="__codelineno-0-301"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">stop_shapes</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_generate_shape_direction_column</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">stop_shapes</span><span class="p">)</span>
+<a id="__codelineno-0-302" name="__codelineno-0-302"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">stop_shapes</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">stop_shapes</span><span class="o">.</span><span class="n">collect</span><span class="p">()</span><span class="o">.</span><span class="n">lazy</span><span class="p">()</span>
+<a id="__codelineno-0-303" name="__codelineno-0-303"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">gdf</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_shapes_gdf</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">lf</span><span class="p">)</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="pyGTFSHandler.models.shapes.Shapes.assign_direction_ids" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">assign_direction_ids</span>
+
+
+<a href="#pyGTFSHandler.models.shapes.Shapes.assign_direction_ids" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nf">assign_direction_ids</span><span class="p">(</span><span class="n">trip_shape_ids_lf</span><span class="p">:</span> <span class="n">LazyFrame</span><span class="p">,</span> <span class="n">trips_lf</span><span class="p">:</span> <span class="n">LazyFrame</span><span class="p">,</span> <span class="n">stops_lf</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">LazyFrame</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">method</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;both&#39;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Integrates a globally-reconciled <code>direction_id</code> into <code>self.stop_shapes</code>.</p>
+<p>See the module docstring's "Direction assignment pipeline" section
+for how this fits together with <code>_assign_direction_ids_for_route</code>
+and the module-level bearing helpers. In short: adds a <code>route_id</code>,
+a resolved <code>direction_id</code> (0/1), and a boolean <code>direction_conflict</code>
+flag directly onto <code>self.stop_shapes</code>, on top of the raw
+<code>shape_direction</code>/<code>shape_direction_backwards</code> bearings already
+there.</p>
+<p>Bearings are gathered and split per <code>(route_id, parent_station)</code>,
+not per raw <code>stop_id</code> (falling back to <code>stop_id</code> itself when
+<code>stops_lf</code> isn't given or a stop has no <code>parent_station</code>): a
+station's separate platform <code>stop_id</code>s (e.g. paired platforms on
+either side of a road) are where GTFS actually records distinct
+rows, but splitting each platform's handful of shapes independently
+starves the widest-gap computation of the corroborating shapes its
+sibling platform sees, right where it matters most -- multi-route
+interchanges. Pooling by station gives every shape passing through
+it, on any of its platforms, a say in that station's split.</p>
+<p>Per-station local clustering (<code>_widest_gap_split</code>) only ever
+produces labels that are meaningful <em>at that one station</em>; a route
+whose shapes branch (e.g. one trip pattern continuing straight,
+another turning off) can trivially get inconsistent 0/1 numbering
+between stations if each is labelled independently.
+<code>_assign_direction_ids_for_route</code> reconciles that per <code>route_id</code> --
+see its docstring for the full algorithm.</p>
+<p>A <code>shape_id</code> shared by more than one <code>route_id</code> (uncommon, but
+possible) gets one row per <code>(shape_id, stop_id, route_id)</code> here,
+since direction is inherently a per-route concept -- so
+<code>self.stop_shapes</code> may end up with more rows than before for such
+shapes.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Type</th>
+          <th>Description</th>
+          <th>Default</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                <code>trip_shape_ids_lf</code>
+            </td>
+            <td>
+                  <code><span title="polars.LazyFrame">LazyFrame</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Output of <code>StopTimes.generate_shape_ids</code>,
+mapping each synthetic <code>shape_id</code> to its member <code>trip_ids</code>.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>trips_lf</code>
+            </td>
+            <td>
+                  <code><span title="polars.LazyFrame">LazyFrame</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The feed's trips LazyFrame, at least <code>trip_id</code> and
+<code>route_id</code> columns.</p>
+              </div>
+            </td>
+            <td>
+                <em>required</em>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>stops_lf</code>
+            </td>
+            <td>
+                  <code><span title="typing.Optional">Optional</span>[<span title="polars.LazyFrame">LazyFrame</span>]</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>The feed's stops LazyFrame (<code>stop_id</code>,
+<code>parent_station</code>), used to pool bearings by station rather
+than by raw <code>stop_id</code>. When omitted, every stop is treated
+as its own station.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                <code>method</code>
+            </td>
+            <td>
+                  <code><span title="str">str</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><code>"both"</code>, <code>"forward"</code>, or <code>"backward"</code> -- passed
+through to <code>_reconcile_fwd_bwd</code> for every bearing pair;
+see its docstring for what each does.</p>
+              </div>
+            </td>
+            <td>
+                  <code>&#39;both&#39;</code>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+    <p><span class="doc-section-title">Returns:</span></p>
+    <table>
+      <thead>
+        <tr>
+          <th>Type</th>
+          <th>Description</th>
+        </tr>
+      </thead>
+      <tbody>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="polars.LazyFrame">LazyFrame</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><code>self.stop_shapes</code> with <code>route_id</code>, <code>direction_id</code>, and</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="polars.LazyFrame">LazyFrame</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><code>direction_conflict</code> columns added -- also stored back onto</p>
+              </div>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+                  <code><span title="polars.LazyFrame">LazyFrame</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p><code>self.stop_shapes</code> as a side effect.</p>
+              </div>
+            </td>
+          </tr>
+      </tbody>
+    </table>
+
+
+            <details class="mkdocstrings-source">
+              <summary>Source code in <code>pyGTFSHandler/models/shapes.py</code></summary>
+              <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-831">831</a></span>
+<span class="normal"><a href="#__codelineno-0-832">832</a></span>
+<span class="normal"><a href="#__codelineno-0-833">833</a></span>
+<span class="normal"><a href="#__codelineno-0-834">834</a></span>
+<span class="normal"><a href="#__codelineno-0-835">835</a></span>
+<span class="normal"><a href="#__codelineno-0-836">836</a></span>
+<span class="normal"><a href="#__codelineno-0-837">837</a></span>
+<span class="normal"><a href="#__codelineno-0-838">838</a></span>
+<span class="normal"><a href="#__codelineno-0-839">839</a></span>
+<span class="normal"><a href="#__codelineno-0-840">840</a></span>
+<span class="normal"><a href="#__codelineno-0-841">841</a></span>
+<span class="normal"><a href="#__codelineno-0-842">842</a></span>
+<span class="normal"><a href="#__codelineno-0-843">843</a></span>
+<span class="normal"><a href="#__codelineno-0-844">844</a></span>
+<span class="normal"><a href="#__codelineno-0-845">845</a></span>
+<span class="normal"><a href="#__codelineno-0-846">846</a></span>
+<span class="normal"><a href="#__codelineno-0-847">847</a></span>
+<span class="normal"><a href="#__codelineno-0-848">848</a></span>
+<span class="normal"><a href="#__codelineno-0-849">849</a></span>
+<span class="normal"><a href="#__codelineno-0-850">850</a></span>
+<span class="normal"><a href="#__codelineno-0-851">851</a></span>
+<span class="normal"><a href="#__codelineno-0-852">852</a></span>
+<span class="normal"><a href="#__codelineno-0-853">853</a></span>
+<span class="normal"><a href="#__codelineno-0-854">854</a></span>
+<span class="normal"><a href="#__codelineno-0-855">855</a></span>
+<span class="normal"><a href="#__codelineno-0-856">856</a></span>
+<span class="normal"><a href="#__codelineno-0-857">857</a></span>
+<span class="normal"><a href="#__codelineno-0-858">858</a></span>
+<span class="normal"><a href="#__codelineno-0-859">859</a></span>
+<span class="normal"><a href="#__codelineno-0-860">860</a></span>
+<span class="normal"><a href="#__codelineno-0-861">861</a></span>
+<span class="normal"><a href="#__codelineno-0-862">862</a></span>
+<span class="normal"><a href="#__codelineno-0-863">863</a></span>
+<span class="normal"><a href="#__codelineno-0-864">864</a></span>
+<span class="normal"><a href="#__codelineno-0-865">865</a></span>
+<span class="normal"><a href="#__codelineno-0-866">866</a></span>
+<span class="normal"><a href="#__codelineno-0-867">867</a></span>
+<span class="normal"><a href="#__codelineno-0-868">868</a></span>
+<span class="normal"><a href="#__codelineno-0-869">869</a></span>
+<span class="normal"><a href="#__codelineno-0-870">870</a></span>
+<span class="normal"><a href="#__codelineno-0-871">871</a></span>
+<span class="normal"><a href="#__codelineno-0-872">872</a></span>
+<span class="normal"><a href="#__codelineno-0-873">873</a></span>
+<span class="normal"><a href="#__codelineno-0-874">874</a></span>
+<span class="normal"><a href="#__codelineno-0-875">875</a></span>
+<span class="normal"><a href="#__codelineno-0-876">876</a></span>
+<span class="normal"><a href="#__codelineno-0-877">877</a></span>
+<span class="normal"><a href="#__codelineno-0-878">878</a></span>
+<span class="normal"><a href="#__codelineno-0-879">879</a></span>
+<span class="normal"><a href="#__codelineno-0-880">880</a></span>
+<span class="normal"><a href="#__codelineno-0-881">881</a></span>
+<span class="normal"><a href="#__codelineno-0-882">882</a></span>
+<span class="normal"><a href="#__codelineno-0-883">883</a></span>
+<span class="normal"><a href="#__codelineno-0-884">884</a></span>
+<span class="normal"><a href="#__codelineno-0-885">885</a></span>
+<span class="normal"><a href="#__codelineno-0-886">886</a></span>
+<span class="normal"><a href="#__codelineno-0-887">887</a></span>
+<span class="normal"><a href="#__codelineno-0-888">888</a></span>
+<span class="normal"><a href="#__codelineno-0-889">889</a></span>
+<span class="normal"><a href="#__codelineno-0-890">890</a></span>
+<span class="normal"><a href="#__codelineno-0-891">891</a></span>
+<span class="normal"><a href="#__codelineno-0-892">892</a></span>
+<span class="normal"><a href="#__codelineno-0-893">893</a></span>
+<span class="normal"><a href="#__codelineno-0-894">894</a></span>
+<span class="normal"><a href="#__codelineno-0-895">895</a></span>
+<span class="normal"><a href="#__codelineno-0-896">896</a></span>
+<span class="normal"><a href="#__codelineno-0-897">897</a></span>
+<span class="normal"><a href="#__codelineno-0-898">898</a></span>
+<span class="normal"><a href="#__codelineno-0-899">899</a></span>
+<span class="normal"><a href="#__codelineno-0-900">900</a></span>
+<span class="normal"><a href="#__codelineno-0-901">901</a></span>
+<span class="normal"><a href="#__codelineno-0-902">902</a></span>
+<span class="normal"><a href="#__codelineno-0-903">903</a></span>
+<span class="normal"><a href="#__codelineno-0-904">904</a></span>
+<span class="normal"><a href="#__codelineno-0-905">905</a></span>
+<span class="normal"><a href="#__codelineno-0-906">906</a></span>
+<span class="normal"><a href="#__codelineno-0-907">907</a></span>
+<span class="normal"><a href="#__codelineno-0-908">908</a></span>
+<span class="normal"><a href="#__codelineno-0-909">909</a></span>
+<span class="normal"><a href="#__codelineno-0-910">910</a></span>
+<span class="normal"><a href="#__codelineno-0-911">911</a></span>
+<span class="normal"><a href="#__codelineno-0-912">912</a></span>
+<span class="normal"><a href="#__codelineno-0-913">913</a></span>
+<span class="normal"><a href="#__codelineno-0-914">914</a></span>
+<span class="normal"><a href="#__codelineno-0-915">915</a></span>
+<span class="normal"><a href="#__codelineno-0-916">916</a></span>
+<span class="normal"><a href="#__codelineno-0-917">917</a></span>
+<span class="normal"><a href="#__codelineno-0-918">918</a></span>
+<span class="normal"><a href="#__codelineno-0-919">919</a></span>
+<span class="normal"><a href="#__codelineno-0-920">920</a></span>
+<span class="normal"><a href="#__codelineno-0-921">921</a></span>
+<span class="normal"><a href="#__codelineno-0-922">922</a></span>
+<span class="normal"><a href="#__codelineno-0-923">923</a></span>
+<span class="normal"><a href="#__codelineno-0-924">924</a></span>
+<span class="normal"><a href="#__codelineno-0-925">925</a></span>
+<span class="normal"><a href="#__codelineno-0-926">926</a></span>
+<span class="normal"><a href="#__codelineno-0-927">927</a></span>
+<span class="normal"><a href="#__codelineno-0-928">928</a></span>
+<span class="normal"><a href="#__codelineno-0-929">929</a></span>
+<span class="normal"><a href="#__codelineno-0-930">930</a></span>
+<span class="normal"><a href="#__codelineno-0-931">931</a></span>
+<span class="normal"><a href="#__codelineno-0-932">932</a></span>
+<span class="normal"><a href="#__codelineno-0-933">933</a></span>
+<span class="normal"><a href="#__codelineno-0-934">934</a></span>
+<span class="normal"><a href="#__codelineno-0-935">935</a></span>
+<span class="normal"><a href="#__codelineno-0-936">936</a></span>
+<span class="normal"><a href="#__codelineno-0-937">937</a></span>
+<span class="normal"><a href="#__codelineno-0-938">938</a></span>
+<span class="normal"><a href="#__codelineno-0-939">939</a></span>
+<span class="normal"><a href="#__codelineno-0-940">940</a></span>
+<span class="normal"><a href="#__codelineno-0-941">941</a></span>
+<span class="normal"><a href="#__codelineno-0-942">942</a></span>
+<span class="normal"><a href="#__codelineno-0-943">943</a></span>
+<span class="normal"><a href="#__codelineno-0-944">944</a></span>
+<span class="normal"><a href="#__codelineno-0-945">945</a></span>
+<span class="normal"><a href="#__codelineno-0-946">946</a></span>
+<span class="normal"><a href="#__codelineno-0-947">947</a></span>
+<span class="normal"><a href="#__codelineno-0-948">948</a></span>
+<span class="normal"><a href="#__codelineno-0-949">949</a></span>
+<span class="normal"><a href="#__codelineno-0-950">950</a></span>
+<span class="normal"><a href="#__codelineno-0-951">951</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-831" name="__codelineno-0-831"></a><span class="k">def</span><span class="w"> </span><span class="nf">assign_direction_ids</span><span class="p">(</span>
+<a id="__codelineno-0-832" name="__codelineno-0-832"></a>    <span class="bp">self</span><span class="p">,</span> <span class="n">trip_shape_ids_lf</span><span class="p">:</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">,</span> <span class="n">trips_lf</span><span class="p">:</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">,</span> <span class="n">stops_lf</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<a id="__codelineno-0-833" name="__codelineno-0-833"></a>    <span class="n">method</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;both&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-834" name="__codelineno-0-834"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pl</span><span class="o">.</span><span class="n">LazyFrame</span><span class="p">:</span>
+<a id="__codelineno-0-835" name="__codelineno-0-835"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Integrates a globally-reconciled `direction_id` into `self.stop_shapes`.</span>
+<a id="__codelineno-0-836" name="__codelineno-0-836"></a>
+<a id="__codelineno-0-837" name="__codelineno-0-837"></a><span class="sd">    See the module docstring&#39;s &quot;Direction assignment pipeline&quot; section</span>
+<a id="__codelineno-0-838" name="__codelineno-0-838"></a><span class="sd">    for how this fits together with `_assign_direction_ids_for_route`</span>
+<a id="__codelineno-0-839" name="__codelineno-0-839"></a><span class="sd">    and the module-level bearing helpers. In short: adds a `route_id`,</span>
+<a id="__codelineno-0-840" name="__codelineno-0-840"></a><span class="sd">    a resolved `direction_id` (0/1), and a boolean `direction_conflict`</span>
+<a id="__codelineno-0-841" name="__codelineno-0-841"></a><span class="sd">    flag directly onto `self.stop_shapes`, on top of the raw</span>
+<a id="__codelineno-0-842" name="__codelineno-0-842"></a><span class="sd">    `shape_direction`/`shape_direction_backwards` bearings already</span>
+<a id="__codelineno-0-843" name="__codelineno-0-843"></a><span class="sd">    there.</span>
+<a id="__codelineno-0-844" name="__codelineno-0-844"></a>
+<a id="__codelineno-0-845" name="__codelineno-0-845"></a><span class="sd">    Bearings are gathered and split per `(route_id, parent_station)`,</span>
+<a id="__codelineno-0-846" name="__codelineno-0-846"></a><span class="sd">    not per raw `stop_id` (falling back to `stop_id` itself when</span>
+<a id="__codelineno-0-847" name="__codelineno-0-847"></a><span class="sd">    `stops_lf` isn&#39;t given or a stop has no `parent_station`): a</span>
+<a id="__codelineno-0-848" name="__codelineno-0-848"></a><span class="sd">    station&#39;s separate platform `stop_id`s (e.g. paired platforms on</span>
+<a id="__codelineno-0-849" name="__codelineno-0-849"></a><span class="sd">    either side of a road) are where GTFS actually records distinct</span>
+<a id="__codelineno-0-850" name="__codelineno-0-850"></a><span class="sd">    rows, but splitting each platform&#39;s handful of shapes independently</span>
+<a id="__codelineno-0-851" name="__codelineno-0-851"></a><span class="sd">    starves the widest-gap computation of the corroborating shapes its</span>
+<a id="__codelineno-0-852" name="__codelineno-0-852"></a><span class="sd">    sibling platform sees, right where it matters most -- multi-route</span>
+<a id="__codelineno-0-853" name="__codelineno-0-853"></a><span class="sd">    interchanges. Pooling by station gives every shape passing through</span>
+<a id="__codelineno-0-854" name="__codelineno-0-854"></a><span class="sd">    it, on any of its platforms, a say in that station&#39;s split.</span>
+<a id="__codelineno-0-855" name="__codelineno-0-855"></a>
+<a id="__codelineno-0-856" name="__codelineno-0-856"></a><span class="sd">    Per-station local clustering (`_widest_gap_split`) only ever</span>
+<a id="__codelineno-0-857" name="__codelineno-0-857"></a><span class="sd">    produces labels that are meaningful *at that one station*; a route</span>
+<a id="__codelineno-0-858" name="__codelineno-0-858"></a><span class="sd">    whose shapes branch (e.g. one trip pattern continuing straight,</span>
+<a id="__codelineno-0-859" name="__codelineno-0-859"></a><span class="sd">    another turning off) can trivially get inconsistent 0/1 numbering</span>
+<a id="__codelineno-0-860" name="__codelineno-0-860"></a><span class="sd">    between stations if each is labelled independently.</span>
+<a id="__codelineno-0-861" name="__codelineno-0-861"></a><span class="sd">    `_assign_direction_ids_for_route` reconciles that per `route_id` --</span>
+<a id="__codelineno-0-862" name="__codelineno-0-862"></a><span class="sd">    see its docstring for the full algorithm.</span>
+<a id="__codelineno-0-863" name="__codelineno-0-863"></a>
+<a id="__codelineno-0-864" name="__codelineno-0-864"></a><span class="sd">    A `shape_id` shared by more than one `route_id` (uncommon, but</span>
+<a id="__codelineno-0-865" name="__codelineno-0-865"></a><span class="sd">    possible) gets one row per `(shape_id, stop_id, route_id)` here,</span>
+<a id="__codelineno-0-866" name="__codelineno-0-866"></a><span class="sd">    since direction is inherently a per-route concept -- so</span>
+<a id="__codelineno-0-867" name="__codelineno-0-867"></a><span class="sd">    `self.stop_shapes` may end up with more rows than before for such</span>
+<a id="__codelineno-0-868" name="__codelineno-0-868"></a><span class="sd">    shapes.</span>
+<a id="__codelineno-0-869" name="__codelineno-0-869"></a>
+<a id="__codelineno-0-870" name="__codelineno-0-870"></a><span class="sd">    Args:</span>
+<a id="__codelineno-0-871" name="__codelineno-0-871"></a><span class="sd">        trip_shape_ids_lf: Output of `StopTimes.generate_shape_ids`,</span>
+<a id="__codelineno-0-872" name="__codelineno-0-872"></a><span class="sd">            mapping each synthetic `shape_id` to its member `trip_ids`.</span>
+<a id="__codelineno-0-873" name="__codelineno-0-873"></a><span class="sd">        trips_lf: The feed&#39;s trips LazyFrame, at least `trip_id` and</span>
+<a id="__codelineno-0-874" name="__codelineno-0-874"></a><span class="sd">            `route_id` columns.</span>
+<a id="__codelineno-0-875" name="__codelineno-0-875"></a><span class="sd">        stops_lf: The feed&#39;s stops LazyFrame (`stop_id`,</span>
+<a id="__codelineno-0-876" name="__codelineno-0-876"></a><span class="sd">            `parent_station`), used to pool bearings by station rather</span>
+<a id="__codelineno-0-877" name="__codelineno-0-877"></a><span class="sd">            than by raw `stop_id`. When omitted, every stop is treated</span>
+<a id="__codelineno-0-878" name="__codelineno-0-878"></a><span class="sd">            as its own station.</span>
+<a id="__codelineno-0-879" name="__codelineno-0-879"></a><span class="sd">        method: `&quot;both&quot;`, `&quot;forward&quot;`, or `&quot;backward&quot;` -- passed</span>
+<a id="__codelineno-0-880" name="__codelineno-0-880"></a><span class="sd">            through to `_reconcile_fwd_bwd` for every bearing pair;</span>
+<a id="__codelineno-0-881" name="__codelineno-0-881"></a><span class="sd">            see its docstring for what each does.</span>
+<a id="__codelineno-0-882" name="__codelineno-0-882"></a>
+<a id="__codelineno-0-883" name="__codelineno-0-883"></a><span class="sd">    Returns:</span>
+<a id="__codelineno-0-884" name="__codelineno-0-884"></a><span class="sd">        `self.stop_shapes` with `route_id`, `direction_id`, and</span>
+<a id="__codelineno-0-885" name="__codelineno-0-885"></a><span class="sd">        `direction_conflict` columns added -- also stored back onto</span>
+<a id="__codelineno-0-886" name="__codelineno-0-886"></a><span class="sd">        `self.stop_shapes` as a side effect.</span>
+<a id="__codelineno-0-887" name="__codelineno-0-887"></a><span class="sd">    &quot;&quot;&quot;</span>
+<a id="__codelineno-0-888" name="__codelineno-0-888"></a>    <span class="n">shape_route_map</span> <span class="o">=</span> <span class="p">(</span>
+<a id="__codelineno-0-889" name="__codelineno-0-889"></a>        <span class="n">trip_shape_ids_lf</span><span class="o">.</span><span class="n">select</span><span class="p">([</span><span class="s2">&quot;shape_id&quot;</span><span class="p">,</span> <span class="s2">&quot;trip_ids&quot;</span><span class="p">])</span>
+<a id="__codelineno-0-890" name="__codelineno-0-890"></a>        <span class="o">.</span><span class="n">explode</span><span class="p">(</span><span class="s2">&quot;trip_ids&quot;</span><span class="p">)</span>
+<a id="__codelineno-0-891" name="__codelineno-0-891"></a>        <span class="o">.</span><span class="n">rename</span><span class="p">({</span><span class="s2">&quot;trip_ids&quot;</span><span class="p">:</span> <span class="s2">&quot;trip_id&quot;</span><span class="p">})</span>
+<a id="__codelineno-0-892" name="__codelineno-0-892"></a>        <span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">trips_lf</span><span class="o">.</span><span class="n">select</span><span class="p">([</span><span class="s2">&quot;trip_id&quot;</span><span class="p">,</span> <span class="s2">&quot;route_id&quot;</span><span class="p">]),</span> <span class="n">on</span><span class="o">=</span><span class="s2">&quot;trip_id&quot;</span><span class="p">,</span> <span class="n">how</span><span class="o">=</span><span class="s2">&quot;left&quot;</span><span class="p">)</span>
+<a id="__codelineno-0-893" name="__codelineno-0-893"></a>        <span class="o">.</span><span class="n">select</span><span class="p">([</span><span class="s2">&quot;shape_id&quot;</span><span class="p">,</span> <span class="s2">&quot;route_id&quot;</span><span class="p">])</span>
+<a id="__codelineno-0-894" name="__codelineno-0-894"></a>        <span class="o">.</span><span class="n">unique</span><span class="p">()</span>
+<a id="__codelineno-0-895" name="__codelineno-0-895"></a>        <span class="o">.</span><span class="n">drop_nulls</span><span class="p">()</span>
+<a id="__codelineno-0-896" name="__codelineno-0-896"></a>        <span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+<a id="__codelineno-0-897" name="__codelineno-0-897"></a>    <span class="p">)</span>
+<a id="__codelineno-0-898" name="__codelineno-0-898"></a>
+<a id="__codelineno-0-899" name="__codelineno-0-899"></a>    <span class="n">stop_shapes_df</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">stop_shapes</span><span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+<a id="__codelineno-0-900" name="__codelineno-0-900"></a>
+<a id="__codelineno-0-901" name="__codelineno-0-901"></a>    <span class="n">base</span> <span class="o">=</span> <span class="n">stop_shapes_df</span><span class="o">.</span><span class="n">select</span><span class="p">(</span>
+<a id="__codelineno-0-902" name="__codelineno-0-902"></a>        <span class="p">[</span><span class="s2">&quot;shape_id&quot;</span><span class="p">,</span> <span class="s2">&quot;stop_id&quot;</span><span class="p">,</span> <span class="s2">&quot;stop_sequence&quot;</span><span class="p">,</span> <span class="s2">&quot;shape_direction&quot;</span><span class="p">,</span> <span class="s2">&quot;shape_direction_backwards&quot;</span><span class="p">]</span>
+<a id="__codelineno-0-903" name="__codelineno-0-903"></a>    <span class="p">)</span>
+<a id="__codelineno-0-904" name="__codelineno-0-904"></a>
+<a id="__codelineno-0-905" name="__codelineno-0-905"></a>    <span class="k">if</span> <span class="n">stops_lf</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">stop_shapes_df</span><span class="o">.</span><span class="n">height</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+<a id="__codelineno-0-906" name="__codelineno-0-906"></a>        <span class="n">parent_by_stop</span> <span class="o">=</span> <span class="n">stops_lf</span><span class="o">.</span><span class="n">select</span><span class="p">([</span><span class="s2">&quot;stop_id&quot;</span><span class="p">,</span> <span class="s2">&quot;parent_station&quot;</span><span class="p">])</span><span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+<a id="__codelineno-0-907" name="__codelineno-0-907"></a>        <span class="n">base</span> <span class="o">=</span> <span class="n">base</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">parent_by_stop</span><span class="p">,</span> <span class="n">on</span><span class="o">=</span><span class="s2">&quot;stop_id&quot;</span><span class="p">,</span> <span class="n">how</span><span class="o">=</span><span class="s2">&quot;left&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">with_columns</span><span class="p">(</span>
+<a id="__codelineno-0-908" name="__codelineno-0-908"></a>            <span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;parent_station&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">fill_null</span><span class="p">(</span><span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;stop_id&quot;</span><span class="p">))</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;station&quot;</span><span class="p">)</span>
+<a id="__codelineno-0-909" name="__codelineno-0-909"></a>        <span class="p">)</span><span class="o">.</span><span class="n">drop</span><span class="p">(</span><span class="s2">&quot;parent_station&quot;</span><span class="p">)</span>
+<a id="__codelineno-0-910" name="__codelineno-0-910"></a>    <span class="k">else</span><span class="p">:</span>
+<a id="__codelineno-0-911" name="__codelineno-0-911"></a>        <span class="n">base</span> <span class="o">=</span> <span class="n">base</span><span class="o">.</span><span class="n">with_columns</span><span class="p">(</span><span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;stop_id&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;station&quot;</span><span class="p">))</span>
+<a id="__codelineno-0-912" name="__codelineno-0-912"></a>
+<a id="__codelineno-0-913" name="__codelineno-0-913"></a>    <span class="k">if</span> <span class="n">stop_shapes_df</span><span class="o">.</span><span class="n">height</span> <span class="o">==</span> <span class="mi">0</span> <span class="ow">or</span> <span class="n">shape_route_map</span><span class="o">.</span><span class="n">height</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+<a id="__codelineno-0-914" name="__codelineno-0-914"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">stop_shapes</span> <span class="o">=</span> <span class="n">stop_shapes_df</span><span class="o">.</span><span class="n">with_columns</span><span class="p">(</span>
+<a id="__codelineno-0-915" name="__codelineno-0-915"></a>            <span class="n">pl</span><span class="o">.</span><span class="n">lit</span><span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">pl</span><span class="o">.</span><span class="n">Utf8</span><span class="p">)</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;route_id&quot;</span><span class="p">),</span>
+<a id="__codelineno-0-916" name="__codelineno-0-916"></a>            <span class="n">pl</span><span class="o">.</span><span class="n">lit</span><span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">pl</span><span class="o">.</span><span class="n">Int32</span><span class="p">)</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;direction_id&quot;</span><span class="p">),</span>
+<a id="__codelineno-0-917" name="__codelineno-0-917"></a>            <span class="n">pl</span><span class="o">.</span><span class="n">lit</span><span class="p">(</span><span class="kc">False</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">pl</span><span class="o">.</span><span class="n">Boolean</span><span class="p">)</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;direction_conflict&quot;</span><span class="p">),</span>
+<a id="__codelineno-0-918" name="__codelineno-0-918"></a>        <span class="p">)</span><span class="o">.</span><span class="n">lazy</span><span class="p">()</span>
+<a id="__codelineno-0-919" name="__codelineno-0-919"></a>        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">stop_shapes</span>
+<a id="__codelineno-0-920" name="__codelineno-0-920"></a>
+<a id="__codelineno-0-921" name="__codelineno-0-921"></a>    <span class="n">base</span> <span class="o">=</span> <span class="n">base</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">shape_route_map</span><span class="p">,</span> <span class="n">on</span><span class="o">=</span><span class="s2">&quot;shape_id&quot;</span><span class="p">,</span> <span class="n">how</span><span class="o">=</span><span class="s2">&quot;inner&quot;</span><span class="p">)</span>
+<a id="__codelineno-0-922" name="__codelineno-0-922"></a>    <span class="k">if</span> <span class="n">base</span><span class="o">.</span><span class="n">height</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+<a id="__codelineno-0-923" name="__codelineno-0-923"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">stop_shapes</span> <span class="o">=</span> <span class="n">stop_shapes_df</span><span class="o">.</span><span class="n">with_columns</span><span class="p">(</span>
+<a id="__codelineno-0-924" name="__codelineno-0-924"></a>            <span class="n">pl</span><span class="o">.</span><span class="n">lit</span><span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">pl</span><span class="o">.</span><span class="n">Utf8</span><span class="p">)</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;route_id&quot;</span><span class="p">),</span>
+<a id="__codelineno-0-925" name="__codelineno-0-925"></a>            <span class="n">pl</span><span class="o">.</span><span class="n">lit</span><span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">pl</span><span class="o">.</span><span class="n">Int32</span><span class="p">)</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;direction_id&quot;</span><span class="p">),</span>
+<a id="__codelineno-0-926" name="__codelineno-0-926"></a>            <span class="n">pl</span><span class="o">.</span><span class="n">lit</span><span class="p">(</span><span class="kc">False</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">pl</span><span class="o">.</span><span class="n">Boolean</span><span class="p">)</span><span class="o">.</span><span class="n">alias</span><span class="p">(</span><span class="s2">&quot;direction_conflict&quot;</span><span class="p">),</span>
+<a id="__codelineno-0-927" name="__codelineno-0-927"></a>        <span class="p">)</span><span class="o">.</span><span class="n">lazy</span><span class="p">()</span>
+<a id="__codelineno-0-928" name="__codelineno-0-928"></a>        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">stop_shapes</span>
+<a id="__codelineno-0-929" name="__codelineno-0-929"></a>
+<a id="__codelineno-0-930" name="__codelineno-0-930"></a>    <span class="n">result_frames</span> <span class="o">=</span> <span class="p">[</span>
+<a id="__codelineno-0-931" name="__codelineno-0-931"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">_assign_direction_ids_for_route</span><span class="p">(</span><span class="n">route_df</span><span class="p">,</span> <span class="n">method</span><span class="o">=</span><span class="n">method</span><span class="p">)</span>
+<a id="__codelineno-0-932" name="__codelineno-0-932"></a>        <span class="k">for</span> <span class="n">_</span><span class="p">,</span> <span class="n">route_df</span> <span class="ow">in</span> <span class="n">base</span><span class="o">.</span><span class="n">group_by</span><span class="p">(</span><span class="s2">&quot;route_id&quot;</span><span class="p">,</span> <span class="n">maintain_order</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<a id="__codelineno-0-933" name="__codelineno-0-933"></a>    <span class="p">]</span>
+<a id="__codelineno-0-934" name="__codelineno-0-934"></a>    <span class="n">directions</span> <span class="o">=</span> <span class="n">pl</span><span class="o">.</span><span class="n">concat</span><span class="p">(</span><span class="n">result_frames</span><span class="p">,</span> <span class="n">how</span><span class="o">=</span><span class="s2">&quot;vertical_relaxed&quot;</span><span class="p">)</span>
+<a id="__codelineno-0-935" name="__codelineno-0-935"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">_warn_about_direction_conflict</span><span class="p">(</span><span class="n">directions</span><span class="p">)</span>
+<a id="__codelineno-0-936" name="__codelineno-0-936"></a>
+<a id="__codelineno-0-937" name="__codelineno-0-937"></a>    <span class="c1"># Left join: shapes that matched no route (shouldn&#39;t normally</span>
+<a id="__codelineno-0-938" name="__codelineno-0-938"></a>    <span class="c1"># happen, but e.g. a trip with no route_id) keep their original</span>
+<a id="__codelineno-0-939" name="__codelineno-0-939"></a>    <span class="c1"># single row, with nulls/False for the new columns.</span>
+<a id="__codelineno-0-940" name="__codelineno-0-940"></a>    <span class="bp">self</span><span class="o">.</span><span class="n">stop_shapes</span> <span class="o">=</span> <span class="p">(</span>
+<a id="__codelineno-0-941" name="__codelineno-0-941"></a>        <span class="n">stop_shapes_df</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
+<a id="__codelineno-0-942" name="__codelineno-0-942"></a>            <span class="n">directions</span><span class="o">.</span><span class="n">select</span><span class="p">(</span>
+<a id="__codelineno-0-943" name="__codelineno-0-943"></a>                <span class="p">[</span><span class="s2">&quot;shape_id&quot;</span><span class="p">,</span> <span class="s2">&quot;stop_id&quot;</span><span class="p">,</span> <span class="s2">&quot;stop_sequence&quot;</span><span class="p">,</span> <span class="s2">&quot;route_id&quot;</span><span class="p">,</span> <span class="s2">&quot;direction_id&quot;</span><span class="p">,</span> <span class="s2">&quot;direction_conflict&quot;</span><span class="p">]</span>
+<a id="__codelineno-0-944" name="__codelineno-0-944"></a>            <span class="p">),</span>
+<a id="__codelineno-0-945" name="__codelineno-0-945"></a>            <span class="n">on</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;shape_id&quot;</span><span class="p">,</span> <span class="s2">&quot;stop_id&quot;</span><span class="p">,</span> <span class="s2">&quot;stop_sequence&quot;</span><span class="p">],</span>
+<a id="__codelineno-0-946" name="__codelineno-0-946"></a>            <span class="n">how</span><span class="o">=</span><span class="s2">&quot;left&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-947" name="__codelineno-0-947"></a>        <span class="p">)</span>
+<a id="__codelineno-0-948" name="__codelineno-0-948"></a>        <span class="o">.</span><span class="n">with_columns</span><span class="p">(</span><span class="n">pl</span><span class="o">.</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;direction_conflict&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">fill_null</span><span class="p">(</span><span class="kc">False</span><span class="p">))</span>
+<a id="__codelineno-0-949" name="__codelineno-0-949"></a>        <span class="o">.</span><span class="n">lazy</span><span class="p">()</span>
+<a id="__codelineno-0-950" name="__codelineno-0-950"></a>    <span class="p">)</span>
+<a id="__codelineno-0-951" name="__codelineno-0-951"></a>    <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">stop_shapes</span>
+</code></pre></div></td></tr></table></div>
+            </details>
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div><p>See also <a href="../../../methodology/direction-headway/">Direction &amp; headway methodology</a> for the bearing-based direction assignment implemented here.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.tabs", "navigation.sections", "navigation.top", "content.code.copy", "search.suggest"], "search": "../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+        <script src="../../../javascripts/mathjax.js?v=2"></script>
+      
+        <script src="../../../javascripts/vendor/tex-svg.js?v=2"></script>
+      
+    
+  </body>
+</html>
