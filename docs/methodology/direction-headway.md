@@ -1,11 +1,8 @@
 # Direction & Headway Methodology
 
-Ported from `examples/direction_and_headway_methodology.ipynb` and
-`examples/direction_conflicts.ipynb`, and grounded in
-`pyGTFSHandler/models/shapes.py`, `pyGTFSHandler/analysis/stops.py`, and
-`pyGTFSHandler/analysis/edges.py`. Run the notebooks (see
-[Examples](../examples/direction_and_headway_methodology.ipynb)) for the full
-worked figures.
+For the full worked figures, run the companion notebooks: see
+[Examples](../examples/direction_and_headway_methodology.ipynb) and
+`examples/direction_conflicts.ipynb`.
 
 ## Why not just use `route_id`/`direction_id`?
 

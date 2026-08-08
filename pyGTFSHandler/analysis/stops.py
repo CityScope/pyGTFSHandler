@@ -230,24 +230,13 @@ class FeedAnalysisMixin:
             # HOW-aggregation for route-based method (grouped at bottom)
             # ----------------------------------------------------------
             if how == "best":
-                gtfs_lf = gtfs_lf.group_by(at).agg(
+                gtfs_lf = gtfs_lf.sort("headway", nulls_last=True)
+                gtfs_lf = gtfs_lf.group_by(at, maintain_order=True).agg(
                     [
-                        pl.col("route_ids").sort_by(
-                            "headway",  
-                            nulls_last=True,
-                            maintain_order=True
-                        ).first().alias("route_ids"),
-                        pl.col("shape_direction").sort_by(
-                            "headway",  
-                            nulls_last=True,
-                            maintain_order=True
-                        ).first().alias("shape_direction"),
-                        pl.col("direction_id").sort_by(
-                            "headway",  
-                            nulls_last=True,
-                            maintain_order=True
-                        ).first().cast(int).alias("direction_id"),
-                        pl.col("headway").min().alias("headway"),
+                        pl.col("route_ids").first(),
+                        pl.col("shape_direction").first(),
+                        pl.col("direction_id").first().cast(int),
+                        pl.col("headway").first(),
                     ]
                 )
             elif how == "add":
@@ -260,24 +249,13 @@ class FeedAnalysisMixin:
                             pl.col("shape_direction").flatten().unique().alias("shape_directions"),
                         ]
                     )
-                    gtfs_lf = gtfs_lf.group_by(at).agg(
+                    gtfs_lf = gtfs_lf.sort("headway", nulls_last=True)
+                    gtfs_lf = gtfs_lf.group_by(at, maintain_order=True).agg(
                         [
-                            pl.col("route_ids").sort_by(
-                                "headway",  
-                                nulls_last=True,
-                                maintain_order=True
-                            ).first().alias("route_ids"),
-                            pl.col("shape_directions").sort_by(
-                                "headway",  
-                                nulls_last=True,
-                                maintain_order=True
-                            ).first().alias("shape_directions"),
-                            pl.col("direction_id").sort_by(
-                                "headway",  
-                                nulls_last=True,
-                                maintain_order=True
-                            ).first().alias("direction_id"),
-                            pl.col("headway").min().alias("headway"),
+                            pl.col("route_ids").first(),
+                            pl.col("shape_directions").first(),
+                            pl.col("direction_id").first(),
+                            pl.col("headway").first(),
                         ]
                     )
                 else:
@@ -489,48 +467,26 @@ class FeedAnalysisMixin:
         # HOW-aggregation for shape-direction method (grouped at bottom)
         # --------------------------------------------------------------
         if how == "best":
-            gtfs_lf = gtfs_lf.group_by(at).agg(
+            gtfs_lf = gtfs_lf.sort("headway", nulls_last=True)
+            gtfs_lf = gtfs_lf.group_by(at, maintain_order=True).agg(
                 [
-                    pl.col("shape_direction").sort_by(
-                        "headway",  
-                        nulls_last=True,
-                        maintain_order=True
-                    ).first().alias("shape_direction"),
-                    pl.col("shape_ids").sort_by(
-                        "headway",  
-                        nulls_last=True,
-                        maintain_order=True
-                    ).first().alias("shape_ids"),
-                    pl.col("route_ids").sort_by(
-                        "headway",  
-                        nulls_last=True,
-                        maintain_order=True
-                    ).first().alias("route_ids"),
-                    pl.col("headway").min().alias("headway"),
+                    pl.col("shape_direction").first(),
+                    pl.col("shape_ids").first(),
+                    pl.col("route_ids").first(),
+                    pl.col("headway").first(),
                 ]
             )
 
         elif how == "add":
             if mix_directions == False:
                 # Pick best headway within each directional group
-                gtfs_lf = gtfs_lf.group_by([at, "shape_direction_group_id"]).agg(
+                gtfs_lf = gtfs_lf.sort("headway", nulls_last=True)
+                gtfs_lf = gtfs_lf.group_by([at, "shape_direction_group_id"], maintain_order=True).agg(
                     [
-                        pl.col("shape_direction").sort_by(
-                            "headway",  
-                            nulls_last=True,
-                            maintain_order=True
-                        ).first().alias("shape_direction"),
-                        pl.col("shape_ids").sort_by(
-                            "headway",  
-                            nulls_last=True,
-                            maintain_order=True
-                        ).first().alias("shape_ids"),
-                        pl.col("route_ids").sort_by(
-                            "headway",  
-                            nulls_last=True,
-                            maintain_order=True
-                        ).first().alias("route_ids"),
-                        pl.col("headway").min().alias("headway"),
+                        pl.col("shape_direction").first(),
+                        pl.col("shape_ids").first(),
+                        pl.col("route_ids").first(),
+                        pl.col("headway").first(),
                     ]
                 )
 
@@ -913,37 +869,14 @@ class FeedAnalysisMixin:
             gtfs_lf = gtfs_lf.with_columns(
                 pl.col("speed").fill_null(float('-inf'))
             )
-            gtfs_lf = gtfs_lf.group_by(list(np.unique([by,at]))).agg(
-                pl.col("route_id").sort_by(
-                    "speed",  
-                    nulls_last=False,
-                    maintain_order=True
-                ).last().alias("route_ids"),
-                pl.col("speed").sort_by(
-                    "speed",  
-                    nulls_last=False,
-                    maintain_order=True
-                ).last(),
-                pl.col("distance_weight").sort_by(
-                    "speed",  
-                    nulls_last=False,
-                    maintain_order=True
-                ).last(),
-                pl.col("time_weight").sort_by(
-                    "speed",  
-                    nulls_last=False,
-                    maintain_order=True
-                ).last(),
-                pl.col("n_trips").sort_by(
-                    "speed",  
-                    nulls_last=False,
-                    maintain_order=True
-                ).last(),
-                pl.col("isin_aoi").sort_by(
-                    "speed",  
-                    nulls_last=False,
-                    maintain_order=True
-                ).last().alias("isin_aoi")
+            gtfs_lf = gtfs_lf.sort("speed", nulls_last=False)
+            gtfs_lf = gtfs_lf.group_by(list(np.unique([by,at])), maintain_order=True).agg(
+                pl.col("route_id").last().alias("route_ids"),
+                pl.col("speed").last(),
+                pl.col("distance_weight").last(),
+                pl.col("time_weight").last(),
+                pl.col("n_trips").last(),
+                pl.col("isin_aoi").last(),
             )
             gtfs_lf = gtfs_lf.with_columns(
                 pl.when(pl.col("speed") == pl.lit(float('-inf')))
@@ -955,38 +888,15 @@ class FeedAnalysisMixin:
             gtfs_lf = gtfs_lf.with_columns(
                 pl.col("speed").fill_null(float('inf'))
             )
-            gtfs_lf = gtfs_lf.group_by(list(np.unique([by,at]))).agg(
-                pl.col("route_id").sort_by(
-                    "speed",  
-                    nulls_last=True,
-                    maintain_order=True
-                ).first().alias("route_ids"),
-                pl.col("speed").sort_by(
-                    "speed",  
-                    nulls_last=True,
-                    maintain_order=True
-                ).first(),
-                pl.col("distance_weight").sort_by(
-                    "speed",  
-                    nulls_last=True,
-                    maintain_order=True
-                ).first(),
-                pl.col("time_weight").sort_by(
-                    "speed",  
-                    nulls_last=True,
-                    maintain_order=True
-                ).first(),
-                pl.col("n_trips").sort_by(
-                    "speed",  
-                    nulls_last=True,
-                    maintain_order=True
-                ).first(),
-                pl.col("isin_aoi").sort_by(
-                    "speed",  
-                    nulls_last=True,
-                    maintain_order=True
-                ).first().alias("isin_aoi")
-            ) 
+            gtfs_lf = gtfs_lf.sort("speed", nulls_last=True)
+            gtfs_lf = gtfs_lf.group_by(list(np.unique([by,at])), maintain_order=True).agg(
+                pl.col("route_id").first().alias("route_ids"),
+                pl.col("speed").first(),
+                pl.col("distance_weight").first(),
+                pl.col("time_weight").first(),
+                pl.col("n_trips").first(),
+                pl.col("isin_aoi").first(),
+            )
             gtfs_lf = gtfs_lf.with_columns(
                 pl.when(pl.col("speed") == pl.lit(float('inf')))
                 .then(pl.lit(None))

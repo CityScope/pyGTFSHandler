@@ -100,6 +100,11 @@ def time_displacement(gtfs_lf,secs_disp):
             pl.col("target_time")
         ).alias("target_time"),
     )
+    # `target_time` is `shape_time_traveled + secs_disp`, a per-trip
+    # monotonic shift of the column we sort by, so it is already sorted
+    # within each `trip_id` group -- `check_sortedness` can't verify this
+    # itself once a `by` group is involved (hence disabled here) but the
+    # invariant holds regardless.
     gtfs_lf = gtfs_lf.sort(["trip_id", "shape_time_traveled"])
     gtfs_lf = gtfs_lf.join_asof(
         gtfs_lf.select([
@@ -111,6 +116,7 @@ def time_displacement(gtfs_lf,secs_disp):
         right_on="t_lb",
         by="trip_id",
         strategy="backward",
+        check_sortedness=False,
     ).sort(["trip_id", "shape_time_traveled"])
 
     gtfs_lf = gtfs_lf.join_asof(
@@ -123,6 +129,7 @@ def time_displacement(gtfs_lf,secs_disp):
         right_on="t_ub",
         by="trip_id",
         strategy="forward",
+        check_sortedness=False,
     )
 
     gtfs_lf = gtfs_lf.with_columns(

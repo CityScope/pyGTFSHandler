@@ -1,9 +1,5 @@
 # Calendar Handling
 
-Source: `pyGTFSHandler/models/calendar.py`.
-
-## Design principle: no row duplication
-
 GTFS defines two, potentially overlapping, sources of truth for "is service
 `X` running on date `D`":
 
@@ -13,14 +9,12 @@ GTFS defines two, potentially overlapping, sources of truth for "is service
   (`exception_type=1`) or removing (`exception_type=2`) a `service_id` on one
   specific date.
 
-An earlier version of this module duplicated every calendar row into a second,
-`"_night"`-suffixed copy shifted `+1` day, as an approximation for services
-that run past midnight. `pyGTFSHandler` no longer does this: both files are
-parsed and kept **exactly as authored** — dates converted to integer
-days-since-epoch, but no row duplication and no date shifting.
+`pyGTFSHandler` keeps both files exactly as authored — dates are converted to
+integer days-since-epoch, but rows are never duplicated or date-shifted to
+approximate overnight service.
 
-Correct handling of overnight/multi-day trips instead lives entirely in
-`stop_times.txt`'s `day_offset` column (see `models/stop_times.py`): a
+Overnight/multi-day trips are instead handled entirely through
+`stop_times.txt`'s `day_offset` column (`models/stop_times.py`): a
 stop_time's *real* calendar date is
 
 $$

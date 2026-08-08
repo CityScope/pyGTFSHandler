@@ -1,7 +1,7 @@
-# Technical Explanations / Methodology
+# Methodology
 
-The non-obvious parts of `pyGTFSHandler`, grounded directly in the source code
-(and, for direction/headway, in the two dedicated methodology notebooks):
+Reference pages covering the parts of `pyGTFSHandler` that involve a
+non-obvious algorithm or design decision:
 
 - [Calendar handling](calendar.md) — how `calendar.txt`/`calendar_dates.txt`
   are resolved into "active service_ids on date X", and how multi-day/

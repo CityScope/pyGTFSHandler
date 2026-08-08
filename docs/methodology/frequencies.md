@@ -1,8 +1,5 @@
 # Frequency-Based Trip Expansion
 
-Source: `pyGTFSHandler/models/frequencies.py` (`FrequenciesMixin`, mixed into
-`StopTimes`) and `pyGTFSHandler/feed.py`'s `Feed._frequencies_to_stop_times`.
-
 `frequencies.txt` declares that a "template" trip (one that already has a full
 row-per-stop pattern in `stop_times.txt`) actually repeats every `headway_secs`
 seconds between `start_time` and `end_time`, rather than running just once.
