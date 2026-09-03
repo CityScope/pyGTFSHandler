@@ -140,7 +140,8 @@ class StopTimes(FrequenciesMixin):
         stop_ids: Optional[List[str] | pl.DataFrame | pl.LazyFrame] = None,
         trip_ids: Optional[List[str]] = None,
         check_files:bool=False,
-        min_file_id=0
+        min_file_id=0,
+        collision_registry=None,
     ):
         """
         Initializes the StopTimes instance and runs the processing pipeline.
@@ -168,7 +169,7 @@ class StopTimes(FrequenciesMixin):
             paths: List[Path] = [Path(p) for p in path]
 
         # --- Main Processing Pipeline ---
-        self.lf: pl.LazyFrame = self._read_stop_times(paths, trip_ids, check_files=check_files, min_file_id=min_file_id)
+        self.lf: pl.LazyFrame = self._read_stop_times(paths, trip_ids, check_files=check_files, min_file_id=min_file_id, collision_registry=collision_registry)
 
         # Referential integrity: drop stop_times.txt rows whose trip_id has
         # no matching row in trips.txt (a dangling reference) *before* any
@@ -199,7 +200,7 @@ class StopTimes(FrequenciesMixin):
             warnings.warn("Some departure times are null and have been interpolated")
 
         self.frequencies: Optional[pl.LazyFrame] = self._read_frequencies(
-            paths, trip_ids, check_files=check_files, min_file_id=min_file_id
+            paths, trip_ids, check_files=check_files, min_file_id=min_file_id, collision_registry=collision_registry
         )
 
         if self.frequencies is not None:
@@ -301,7 +302,7 @@ class StopTimes(FrequenciesMixin):
         self.trips_lf = trips
 
     def _read_stop_times(
-        self, paths, trip_ids: Optional[List[str]] = None, check_files=False, min_file_id=0
+        self, paths, trip_ids: Optional[List[str]] = None, check_files=False, min_file_id=0, collision_registry=None
     ) -> pl.LazyFrame:
         """
         Reads and preprocesses `stop_times.txt` files into a Polars LazyFrame.
@@ -336,7 +337,7 @@ class StopTimes(FrequenciesMixin):
 
         schema_dict, _ = gtfs_checker.get_df_schema_dict("stop_times.txt")
         stop_times: pl.LazyFrame = io.read_csv_list(
-            stop_times_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id
+            stop_times_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id, collision_registry=collision_registry
         )
         if (stop_times is None) or (stop_times.select(pl.len()).collect().item() == 0):
             raise Exception(f"No stop_times.txt file found for any {paths}")

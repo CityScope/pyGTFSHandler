@@ -190,67 +190,65 @@ def time_displacement(gtfs_lf,secs_disp):
         ).alias("d_lb"),
     )
     
+    # **Bug fixed 2026-08-12** (found chasing a real downstream symptom:
+    # `analysis/stops.py`'s `get_speed_at_stops` returning `null` speed for
+    # ~30-90% of stops on real-world GTFS data, e.g. every MBTA Green Line
+    # branch at Boylston station). This used to unconditionally backfill any
+    # null `t_lb`/`t_ub`/`d_lb`/`d_ub` (from a join_asof side that found no
+    # match) with the row's OWN `shape_time_traveled`/`shape_dist_traveled`
+    # *before* computing time_weight/distance_weight below -- which created
+    # two distinct failure modes once every input was guaranteed non-null:
+    #   1. Whenever `target_time` landed exactly on another stop's own
+    #      `shape_time_traveled` (common with real, minute-rounded transit
+    #      schedules), the backward and forward join_asof both find that
+    #      *same* exact point, so t_lb == t_ub. The old formula's
+    #      `(d_ub - d_lb) / (t_ub - t_lb)` then divided by zero, producing
+    #      NaN -> silently null distance_weight, even though the answer
+    #      (d_lb, no interpolation needed) was sitting right there.
+    #   2. Whenever only ONE side had no real join_asof match (target_time
+    #      beyond the trip's first/last known point), backfilling the
+    #      missing side with the row's own point could put `t_ub < t_lb`
+    #      (inverted), silently extrapolating backwards through zero/negative
+    #      denominators instead of clamping to the one side that IS known.
+    # The old null-checks a few lines below (`pl.when(t_lb.is_null())...`)
+    # were meant to catch exactly these cases and return a clean null
+    # instead -- but they were dead code, since by the time they ran,
+    # nothing was null anymore (this same unconditional backfill had already
+    # replaced every null). Handling all three cases explicitly, on the raw
+    # (still-possibly-null) t_lb/t_ub, fixes both failure modes and makes
+    # the null-check intent actually reachable.
     gtfs_lf = gtfs_lf.with_columns(
-        pl.when(pl.col("d_lb").is_null())
-            .then(
-                pl.col("shape_dist_traveled")
-            ).otherwise(
-                pl.col("d_lb")
-            ).alias("d_lb"),
-        pl.when(pl.col("t_lb").is_null())
-            .then(
-                pl.col("shape_time_traveled")
-            ).otherwise(
-                pl.col("t_lb")
-            ).alias("t_lb"),
-        pl.when(pl.col("d_ub").is_null())
-            .then(
-                pl.col("shape_dist_traveled")
-            ).otherwise(
-                pl.col("d_ub")
-            ).alias("d_ub"),
-        pl.when(pl.col("t_ub").is_null())
-            .then(
-                pl.col("shape_time_traveled")
-            ).otherwise(
-                pl.col("t_ub")
-            ).alias("t_ub"),
+        pl.when(pl.col("t_lb").is_null() & pl.col("t_ub").is_null())
+        .then(pl.lit(None))
+        .when(pl.col("t_lb").is_null())
+        .then(pl.col("d_ub"))
+        .when(pl.col("t_ub").is_null())
+        .then(pl.col("d_lb"))
+        .when(pl.col("t_lb") == pl.col("t_ub"))
+        .then(pl.col("d_lb"))
+        .otherwise(
+            pl.col("d_lb")
+            + (
+                (pl.col("d_ub") - pl.col("d_lb"))
+                / (pl.col("t_ub") - pl.col("t_lb"))
+            )
+            * (pl.col("target_time") - pl.col("t_lb"))
+        )
+        .alias("_interpolated_dist")
     )
 
     gtfs_lf = gtfs_lf.with_columns(
-        # Calculate "time"
-        (
-            pl.when(pl.col("t_lb").is_null())
-            .then(pl.lit(None))
-            .otherwise(
-                pl.when(pl.col("t_ub").is_null())
-                    .then(pl.lit(None))
-                    .otherwise(pl.col("target_time") - pl.col("shape_time_traveled"))
-            )
-        ).abs().alias("time_weight"),
-        
-        # Calculate "distance"
-        (
-            pl.when(pl.col("d_lb").is_null())
-            .then(pl.lit(None))
-            .otherwise(
-                pl.when(pl.col("d_ub").is_null())
-                    .then(pl.lit(None))
-                    .otherwise(
-                        (
-                            pl.col("d_lb") + 
-                            (
-                                (pl.col("d_ub") - pl.col("d_lb")) / 
-                                (pl.col("t_ub") - pl.col("t_lb"))
-                            ) * 
-                            (
-                                pl.col("target_time") - pl.col("t_lb")
-                            )
-                        ) - pl.col("shape_dist_traveled")
-                    )
-            )
-        ).abs().alias("distance_weight")
-    )#.drop(["d_lb","d_ub","t_lb","t_ub", "target_time"])
+        # Calculate "time" -- always known (target_time is derived from this
+        # row's own shape_time_traveled +/- secs_disp), so this never needed
+        # the null-gating the old code (unreachably) attempted.
+        (pl.col("target_time") - pl.col("shape_time_traveled")).abs().alias("time_weight"),
+
+        # Calculate "distance" -- null only when *neither* side of the
+        # window found a match at all (should not happen in practice, since
+        # a trip's own row is always a candidate match for itself; handled
+        # defensively regardless).
+        (pl.col("_interpolated_dist") - pl.col("shape_dist_traveled")).abs().alias("distance_weight"),
+    ).drop("_interpolated_dist")#.drop(["d_lb","d_ub","t_lb","t_ub", "target_time"])
 
     gtfs_lf = gtfs_lf.with_columns(
         pl.when(

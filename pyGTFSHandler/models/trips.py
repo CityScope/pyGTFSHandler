@@ -50,7 +50,8 @@ class Trips:
         trip_ids: Optional[List[str]] = None,
         route_ids: Optional[List[str] | pl.LazyFrame | pl.DataFrame] = None,
         check_files:bool=False,
-        min_file_id=0
+        min_file_id=0,
+        collision_registry=None,
     ):
         """
         Initializes the Trips class by reading and filtering the trips data.
@@ -66,7 +67,7 @@ class Trips:
         else:
             paths = [Path(p) for p in path]
 
-        self.lf = self._read_trips(paths,service_ids, trip_ids, route_ids, check_files=check_files, min_file_id=min_file_id)
+        self.lf = self._read_trips(paths,service_ids, trip_ids, route_ids, check_files=check_files, min_file_id=min_file_id, collision_registry=collision_registry)
         if (service_ids is not None) or (route_ids is not None):
             self.trip_ids = (
                 self.lf.select("trip_id").unique().collect()["trip_id"].to_list()
@@ -84,7 +85,8 @@ class Trips:
         trip_ids: Optional[List[str]],
         route_ids: Optional[List[str]],
         check_files=False,
-        min_file_id=0
+        min_file_id=0,
+        collision_registry=None,
     ) -> pl.LazyFrame:
         """
         Reads the trips data from one or more `trips.txt` files and applies optional filters.
@@ -109,7 +111,7 @@ class Trips:
 
 
         schema_dict, _ = gtfs_checker.get_df_schema_dict("trips.txt")
-        trips = io.read_csv_list(trip_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id)
+        trips = io.read_csv_list(trip_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id, collision_registry=collision_registry)
         if (trips is None) or (trips.select(pl.len()).collect().item() == 0):
             raise Exception(f"No trips.txt file found for any {paths}")
         

@@ -9,8 +9,10 @@ Why this module exists and how it's organized:
   always has one, and rejects a `stop_id` duplicated *within a single
   source file* (a genuine data error) while leaving the same id reused
   *across* different loaded feeds untouched (that's a multi-feed id-
-  collision concern, namespaced by `io.read_csv_lazy`'s `_file_<n>`
-  suffixing, not a `stops.txt`-internal one).
+  collision concern, namespaced by `io.read_csv_list`'s `_file_<n>`
+  suffixing -- applied only when more than one GTFS directory is actually
+  loaded, so a single feed's ids come back unsuffixed -- not a
+  `stops.txt`-internal one).
 - **AOI filtering** (`filter_by_aoi`): a cheap polars bounding-box
   pre-filter, followed by a precise `geopandas`/`shapely` intersection --
   the one place in this file geopandas does real geometric work, since
@@ -100,6 +102,7 @@ class Stops:
         stop_ids: Union[List[str], pl.DataFrame | pl.LazyFrame] = None,
         check_files:bool=False,
         min_file_id:int=0,
+        collision_registry=None,
     ):
         """
         Initialize Stops instance and load GTFS stops from one or more files.
@@ -114,7 +117,7 @@ class Stops:
         else:
             paths = [Path(p) for p in path]
 
-        self.lf = self._read_stops(paths, stop_ids, check_files=check_files, min_file_id=min_file_id)
+        self.lf = self._read_stops(paths, stop_ids, check_files=check_files, min_file_id=min_file_id, collision_registry=collision_registry)
         
         if aoi is None:
             df = self.lf.select(
@@ -157,7 +160,7 @@ class Stops:
         self.mean_lat = mean_coords["mean_lat"][0]
 
     def _read_stops(
-        self, paths, stop_ids: Union[List[str], None] = None, check_files=False, min_file_id=0
+        self, paths, stop_ids: Union[List[str], None] = None, check_files=False, min_file_id=0, collision_registry=None
     ) -> pl.LazyFrame:
         """
         Read GTFS stops.txt files and filter by stop IDs if provided.
@@ -181,7 +184,7 @@ class Stops:
                 stop_paths.append(new_p)
 
         schema_dict, _ = gtfs_checker.get_df_schema_dict("stops.txt")
-        lf = io.read_csv_list(stop_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id)
+        lf = io.read_csv_list(stop_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id, collision_registry=collision_registry)
         if (lf is None) or (lf.select(pl.len()).collect().item() == 0):
             raise Exception(f"No stops.txt file found for any {paths}")
         
@@ -496,6 +499,7 @@ class Stops:
         self,
         path: Union[str, Path, List[Union[str, Path]]],
         stop_ids: Optional[pl.LazyFrame] = None,
+        collision_registry=None,
     ) -> None:
         """Re-reads `stops.txt` from `path` and replaces `self.lf`.
 
@@ -529,7 +533,7 @@ class Stops:
                 stop_paths.append(new_p)
 
         schema_dict, _ = gtfs_checker.get_df_schema_dict("stops.txt")
-        stops = io.read_csv_list(stop_paths, schema_overrides=schema_dict, check_files=True)
+        stops = io.read_csv_list(stop_paths, schema_overrides=schema_dict, check_files=True, collision_registry=collision_registry)
         stops = stops.filter(
             pl.col("stop_lat").is_not_null() & pl.col("stop_lon").is_not_null()
             & pl.col("stop_lat").is_finite() & pl.col("stop_lon").is_finite()

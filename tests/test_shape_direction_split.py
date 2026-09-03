@@ -189,11 +189,11 @@ def test_outbound_trips_share_direction_id_on_common_stops(shape_test_feed):
     -- checked per stop, since the label itself is only meaningful locally
     (see module docstring)."""
     mapping = _trip_shape_direction_ids(shape_test_feed)
-    t1_by_stop = _direction_id_by_stop(mapping, "T1_file_0")
-    t3_by_stop = _direction_id_by_stop(mapping, "T3_file_0")
+    t1_by_stop = _direction_id_by_stop(mapping, "T1")
+    t3_by_stop = _direction_id_by_stop(mapping, "T3")
 
     common_stops = set(t1_by_stop) & set(t3_by_stop)
-    assert common_stops == {"S1_file_0", "S2_file_0", "S3_file_0"}
+    assert common_stops == {"S1", "S2", "S3"}
 
     for stop_id in common_stops:
         assert t1_by_stop[stop_id] == t3_by_stop[stop_id], (
@@ -209,11 +209,11 @@ def test_inbound_trips_share_direction_id_on_common_stops(shape_test_feed):
     compute a forward bearing towards, so it gets no shape_direction_id
     there at all."""
     mapping = _trip_shape_direction_ids(shape_test_feed)
-    t2_by_stop = _direction_id_by_stop(mapping, "T2_file_0")
-    t4_by_stop = _direction_id_by_stop(mapping, "T4_file_0")
+    t2_by_stop = _direction_id_by_stop(mapping, "T2")
+    t4_by_stop = _direction_id_by_stop(mapping, "T4")
 
     common_stops = set(t2_by_stop) & set(t4_by_stop)
-    assert common_stops == {"S2_file_0", "S3_file_0"}
+    assert common_stops == {"S2", "S3"}
 
     for stop_id in common_stops:
         assert t2_by_stop[stop_id] == t4_by_stop[stop_id], (
@@ -232,8 +232,8 @@ def test_opposing_trip_pairs_get_different_direction_ids_at_shared_stops(shape_t
         for row in mapping.iter_rows(named=True)
     }
 
-    outbound_trips = {"T1_file_0", "T3_file_0"}
-    inbound_trips = {"T2_file_0", "T4_file_0"}
+    outbound_trips = {"T1", "T3"}
+    inbound_trips = {"T2", "T4"}
     checked_any = False
     for stop_id in mapping["stop_id"].unique():
         outbound_dirs = {by_stop_trip[(stop_id, t)] for t in outbound_trips if (stop_id, t) in by_stop_trip}

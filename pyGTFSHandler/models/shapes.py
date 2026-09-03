@@ -280,6 +280,8 @@ class Shapes:
         stops_lf: pl.LazyFrame,
         check_files: bool = False,
         min_file_id: int = 0,
+        collision_registry=None,
+        aoi: Optional[Union[gpd.GeoDataFrame, "gpd.GeoSeries"]] = None,
     ) -> None:
         """Builds `self.lf`/`self.stop_shapes`/`self.gdf`.
 
@@ -292,8 +294,26 @@ class Shapes:
                 `Feed.load_shapes`) mapping each synthetic `shape_id` to the
                 real `shape_id` its trips reference, if any.
             stops_lf: The feed's stops LazyFrame (`stop_id`, `stop_lat`, `stop_lon`).
+            aoi: Optional Area of Interest (GeoDataFrame/GeoSeries), same
+                object callers already pass into `Feed.load` for stop
+                filtering. When given, raw `shapes.txt` polylines are
+                pre-filtered by `aoi`'s bounding box (see `_read_shapes_file`)
+                before any of the rest of this pipeline runs -- large
+                national/regional feeds (e.g. a whole-country feed used for
+                one city's study) commonly carry shapes that never come
+                anywhere near the study area at all, and there's no reason
+                to spend memory/time reading, joining, or interpolating
+                their points. Whole shapes are kept or dropped based on
+                whether *any* of their points fall in the bbox -- never
+                cropped to individual in-bbox points -- so a shape's
+                `shape_dist_traveled` stays a continuous, correct cumulative
+                distance over its whole real length even where it dips
+                outside the AOI and back in. `None` (default) skips this
+                entirely, loading every shape unfiltered exactly as before.
         """
-        raw_shapes_lf = self._read_shapes_file(path, check_files=check_files, min_file_id=min_file_id)
+        raw_shapes_lf = self._read_shapes_file(
+            path, check_files=check_files, min_file_id=min_file_id, collision_registry=collision_registry, aoi=aoi
+        )
 
         self.lf = self._generate_shapes_file(stops_lf, trip_shape_ids_lf, raw_shapes_lf)
         self.lf = self.lf.collect().lazy()
@@ -303,11 +323,26 @@ class Shapes:
         self.gdf = self._get_shapes_gdf(self.lf)
 
     def _read_shapes_file(
-        self, path, check_files: bool = False, min_file_id=0
+        self, path, check_files: bool = False, min_file_id=0, collision_registry=None,
+        aoi: Optional[Union[gpd.GeoDataFrame, "gpd.GeoSeries"]] = None,
     ) -> Optional[pl.LazyFrame]:
         """Reads `shapes.txt` (if present) into a lazy `shape_id,
         shape_pt_sequence, shape_pt_lat, shape_pt_lon,
         shape_dist_traveled_orig` frame, or None if unavailable/empty.
+
+        When `aoi` is given, drops entire `shape_id`s that have *no* point
+        inside `aoi`'s bounding box -- a cheap, purely-polars pre-filter
+        (`shape_pt_lat`/`shape_pt_lon` vs. `aoi.total_bounds`, the same
+        bbox convention `Stops.filter_by_aoi` uses) for large national/
+        regional feeds whose shapes commonly extend far outside the actual
+        study area. Kept shapes are returned with *every* one of their
+        points intact -- never cropped to only the in-bbox points -- since
+        a shape that exits and re-enters the bbox (e.g. a long regional
+        route passing through the study area) still needs its full,
+        continuous polyline for `shape_dist_traveled` to stay a correct
+        cumulative distance over the whole real route, which downstream
+        distance-based interpolation (see `_generate_shape_dist_traveled_
+        column`, and `StopTimes._fix_null_times`) relies on.
         """
         if path is None:
             return None
@@ -324,7 +359,7 @@ class Shapes:
 
         schema_dict, _ = gtfs_checker.get_df_schema_dict("shapes.txt")
         shapes = io.read_csv_list(
-            shape_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id
+            shape_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id, collision_registry=collision_registry
         )
         if shapes is None:
             return None
@@ -339,6 +374,20 @@ class Shapes:
 
         if shapes.select(pl.len()).collect().item() == 0:
             return None
+
+        if aoi is not None:
+            minx, miny, maxx, maxy = aoi.to_crs("EPSG:4326").total_bounds
+            in_bbox_shape_ids = (
+                shapes.filter(
+                    pl.col("shape_pt_lon").is_between(minx, maxx)
+                    & pl.col("shape_pt_lat").is_between(miny, maxy)
+                )
+                .select(pl.col("shape_id").unique())
+            )
+            shapes = shapes.join(in_bbox_shape_ids, on="shape_id", how="semi")
+
+            if shapes.select(pl.len()).collect().item() == 0:
+                return None
 
         columns = shapes.collect_schema().names()
         if "shape_dist_traveled" in columns:

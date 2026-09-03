@@ -11,6 +11,7 @@ requires-python = ">=3.11"
 dependencies = [
     "geopandas>=1.1.1",
     "geopy>=2.4.1",
+    "numpy>=1.26.0",
     "pandas>=2.3.0",
     "polars>=1.31.0,!=1.32.1",
     "pyarrow>=20.0.0",
@@ -58,6 +59,7 @@ docs = [
 testpaths = ["tests"]
 markers = [
     "slow: exercises the full real-world Sevilla feeds; skip with -m 'not slow' for a fast run",
+    "network: hits a real external API; skip with -m 'not network' for a fully offline run",
 ]
 
 [build-system]

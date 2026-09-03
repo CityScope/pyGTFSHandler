@@ -58,7 +58,8 @@ class Routes:
         route_ids: Optional[List[str] | pl.LazyFrame | pl.DataFrame] = None,
         route_types: Optional[List[int]] = None,
         check_files:bool=False,
-        min_file_id=0
+        min_file_id=0,
+        collision_registry=None,
     ):
         """
         Initializes the Routes class by reading and filtering the routes data.
@@ -72,7 +73,7 @@ class Routes:
         else:
             paths = [Path(p) for p in path]
 
-        self.lf = self._read_routes(paths, route_ids, route_types, check_files=check_files, min_file_id=min_file_id)
+        self.lf = self._read_routes(paths, route_ids, route_types, check_files=check_files, min_file_id=min_file_id, collision_registry=collision_registry)
         if self.lf is not None:
             if (route_ids is not None) or (route_types is not None):
                 self.route_ids = (
@@ -86,7 +87,7 @@ class Routes:
             self.route_ids = None
             
     def _read_routes(
-        self, paths, route_ids: Optional[List[str]], route_types: Optional[List[int]], check_files=False, min_file_id=0
+        self, paths, route_ids: Optional[List[str]], route_types: Optional[List[int]], check_files=False, min_file_id=0, collision_registry=None
     ) -> pl.LazyFrame:
         """
         Reads the routes data from one or more `routes.txt` files and applies optional filters.
@@ -109,7 +110,7 @@ class Routes:
 
 
         schema_dict, _ = gtfs_checker.get_df_schema_dict("routes.txt")
-        routes = io.read_csv_list(route_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id)
+        routes = io.read_csv_list(route_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id, collision_registry=collision_registry)
         if (routes is None) or (routes.select(pl.len()).collect().item() == 0):
             return None
 
@@ -159,8 +160,14 @@ class Routes:
         # Any row whose route_type was present but resolves to neither a
         # standard (0-7) nor a known GTFS-extended code is a genuine data
         # error, not a merely-missing value -- flag it loudly rather than
-        # silently filing it under "-1 unknown".
-        unmappable = (
+        # silently filing it under "-1 unknown". Note some *recognized*
+        # extended categories (e.g. Air/Taxi/Misc Service, 1100-1199 /
+        # 1500-1599 / 1700-1799) legitimately have no standard-GTFS 0-7
+        # analog and also resolve to a null route_type here -- those are
+        # not data errors, so they're excluded from this check via
+        # `is_recognized_extended_route_type` and just kept as unmapped
+        # (filled to -1 below) instead of raising.
+        unmapped = (
             routes.filter(
                 pl.col("route_type").is_null()
                 & pl.col("extended_route_type").is_not_null()
@@ -170,6 +177,10 @@ class Routes:
             .collect()["extended_route_type"]
             .to_list()
         )
+        unmappable = [
+            v for v in unmapped
+            if not gtfs_checker.is_recognized_extended_route_type(v)
+        ]
         if unmappable:
             raise Exception(
                 f"routes.txt has route_type value(s) that are neither a standard GTFS "

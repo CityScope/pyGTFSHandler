@@ -15,9 +15,10 @@ venv/
 docs/build/
 
 # Python egg files
-*.egg-info
+*.egg-info/
 dist/
 build/
+.pytest_cache/
 
 # Ignore everything in examples/
 examples/**
@@ -29,12 +30,16 @@ examples/*/
 # Exclude files that start with "local" (both .py and .ipynb or any extension)
 examples/local*
 
-# Downloader API keys -- never commit real keys, see api_keys.example.json
+# Downloader API keys -- never commit real keys
 api_keys.json
 .pygtfshandler/
-# MkDocs
+
+# MkDocs build output and build cache
 site/
 .cache/
 docs/HOSTING.md
 
 report/
+
+# Claude Code agent worktrees
+.claude/worktrees/

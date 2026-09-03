@@ -398,13 +398,71 @@ def normalize_route_type(route_type: Union[int, str]) -> Optional[int]:
 
     return route_type
 
+# The documented Google/Transmodel "GTFS extended route types" hierarchy
+# (https://developers.google.com/transit/gtfs/reference/extended-route-types,
+# mirrored by the Transmodel/NeTEx VehicleModeEnumeration extended taxonomy
+# used by several GTFS validators). Each entry is a hundreds-level category:
+# (low, high, base GTFS 0-7 category the category maps down to, or None if
+# the category has no closer standard-GTFS analog).
+#
+# NOTE: this is deliberately RANGE-based rather than an exhaustive list of
+# every individual sub-code (e.g. 1101, 1102, 1103, ... for Air Service),
+# because feeds routinely use undocumented/rare sub-codes within an
+# otherwise well-known category (e.g. `1102` was seen in Taipei's feed,
+# which is not individually listed in Google's reference table but falls
+# squarely inside the documented 1100-1199 "Air Service" category). Any
+# code within one of these ranges is a *recognized* extended route_type
+# even when the specific sub-code isn't individually hardcoded below.
+_EXTENDED_ROUTE_TYPE_RANGES = [
+    (100, 199, 2),   # Railway Service -> Rail
+    (200, 299, 3),   # Coach Service -> Bus
+    (300, 399, 2),   # Suburban Railway Service -> Rail
+    (400, 499, 2),   # Urban Railway Service -> Rail (see urban_rail_map below for finer-grained sub-codes)
+    (500, 599, 1),   # Metro Service -> Subway
+    (600, 699, 1),   # Underground Service -> Subway
+    (700, 799, 3),   # Bus Service -> Bus
+    (800, 899, 3),   # Trolleybus Service -> Bus
+    (900, 999, 0),   # Tram Service -> Tram
+    (1000, 1099, 4), # Water Transport Service -> Ferry
+    (1100, 1199, None), # Air Service -> no standard GTFS analog
+    (1200, 1299, 4), # Ferry Service -> Ferry
+    (1300, 1399, 6), # Aerial Lift Service -> Gondola (see lift_map below for finer-grained sub-codes)
+    (1400, 1499, 7), # Funicular Service -> Funicular
+    (1500, 1599, None), # Taxi Service -> no standard GTFS analog
+    (1700, 1799, None), # Miscellaneous Service -> no standard GTFS analog
+]
+
+
+def is_recognized_extended_route_type(route_type: int) -> bool:
+    """Whether `route_type` falls within a documented GTFS-extended
+    route_type category (standard 0-7, the informal codes handled by
+    `extended_to_standard_route_type`, or one of `_EXTENDED_ROUTE_TYPE_RANGES`).
+
+    This intentionally accepts codes even when they map to `None` (no
+    closer standard-GTFS analog, e.g. Air/Taxi/Misc services) -- those are
+    legitimate, documented GTFS data, not data errors. Used by
+    `models/routes.py` to distinguish "recognized extended code with no
+    GTFS analog" (fine, just excluded from mode-based analysis) from
+    "genuinely unrecognized value" (a real data error worth raising on).
+    """
+    if not isinstance(route_type, int):
+        return False
+    if route_type in {-1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 11, 12}:
+        return True
+    return any(low <= route_type <= high for low, high, _ in _EXTENDED_ROUTE_TYPE_RANGES)
+
+
 def extended_to_standard_route_type(route_type: int) -> int | None:
     """
     Convert any GTFS route_type or Extended GTFS (Transmodel) route_type
     into a standard GTFS route_type (0–7).
 
     Returns:
-        int in {0..7} or None if not mappable.
+        int in {0..7} or None if not mappable (either because the code is
+        not a recognized GTFS/extended route_type at all, or because it's a
+        recognized extended category -- e.g. Air/Taxi/Misc -- with no
+        closer standard-GTFS analog; use `is_recognized_extended_route_type`
+        to tell these two cases apart).
     """
 
     # --- If already a standard GTFS type, return unchanged ---
@@ -412,6 +470,11 @@ def extended_to_standard_route_type(route_type: int) -> int | None:
         return route_type
 
     # --- Extra custom values you asked to convert ---
+    if route_type == 8:    # Shared taxi / "sherut" (informal code used by
+        return 3           # Israel's MOT national GTFS feed; not part of the
+                            # base 0-7 or standard 3-digit extended taxonomy,
+                            # but a real, documented-in-practice mode with no
+                            # closer GTFS analog -> fall back to Bus.
     if route_type == 11:   # Trolleybus
         return 3           # Bus
     if route_type == 12:   # Monorail
@@ -476,6 +539,14 @@ def extended_to_standard_route_type(route_type: int) -> int | None:
     # --- Taxi (1500–1507) or Misc (1700, 1702): no GTFS mapping ---
     if 1500 <= route_type <= 1507 or route_type in {1700, 1702}:
         return None
+
+    # --- Any other code within a documented extended-route-type category
+    # (e.g. an Air/Water/Aerial-Lift/... sub-code not individually
+    # hardcoded above, such as `1102`) falls back to that category's
+    # general mapping rather than being treated as unrecognized. ---
+    for low, high, base in _EXTENDED_ROUTE_TYPE_RANGES:
+        if low <= route_type <= high:
+            return base
 
     # --- Unknown ---
     return None

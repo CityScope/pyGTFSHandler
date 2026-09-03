@@ -159,15 +159,13 @@ def connected_components_from_edges(n_nodes: int, edge_index_pairs: list[tuple[i
 def filter_by_id_column(lf: Optional[pl.LazyFrame], column: str, ids: list | None = []) -> Optional[pl.LazyFrame]:
     """Semi-joins `lf` down to rows whose `column` value is in `ids`.
 
-    IDs read from any single GTFS file are always suffixed with
-    `"_<original_value>_file_<n>"` (see `io.read_csv_lazy`) to keep IDs that
-    collide across multiple loaded feeds distinct. A caller filtering by a
-    plain, un-suffixed id (e.g. `Feed(dir, trip_ids=["T1"])`, exactly as
-    documented) would otherwise never match anything, since the column only
-    ever contains `"T1_file_0"`-style values -- even for a single feed. To
-    support both a plain id and an already-suffixed one (e.g. re-using an id
-    obtained from a previous query's output), this matches on the id with
-    any trailing `_file_<n>` suffix stripped from both sides.
+    IDs are suffixed with `"_<original_value>_file_<n>"` only when more than
+    one GTFS directory was loaded together (see `io.read_csv_list`), to keep
+    ids that collide across the loaded feeds distinct; a single-feed load
+    keeps plain ids. To support both a plain id and an already-suffixed one
+    (e.g. re-using an id obtained from a previous multi-feed query's
+    output), this matches on the id with any trailing `_file_<n>` suffix
+    stripped from both sides.
 
     Args:
         lf: LazyFrame to filter, or None (returned unchanged).

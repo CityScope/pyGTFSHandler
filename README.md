@@ -10,7 +10,7 @@
 - Expansion of `frequencies.txt`-defined trips into concrete departures.
 - Geometry-derived `direction_id` assignment and stop/edge-level speed and headway analysis.
 - Interactive Leaflet route maps and conflict maps.
-- Downloaders for the [Mobility Database](https://mobilitydatabase.org/), [TransitLand](https://www.transit.land/), and Spain's NAP open-data portal (with room to add more countries).
+- Downloaders for the [Mobility Database](https://mobilitydatabase.org/), [TransitLand](https://www.transit.land/), [BusMaps](https://www.busmaps.com/), and Spain's NAP open-data portal (with room to add more sources).
 
 Full docs (API reference, methodology notes, runnable example notebooks): **https://CityScope.github.io/pyGTFSHandler/**
 
@@ -68,7 +68,15 @@ feeds = downloader.search_feeds(country_code="ES")
 downloader.download_feeds(feeds, download_folder="path/to/download")
 ```
 
-`TransitLandDownloader` and Spain's `downloaders.spain.NAPDownloader` follow the same interface. See the [downloaders API reference](https://CityScope.github.io/pyGTFSHandler/api/downloaders/base/) for details.
+`TransitLandDownloader`, `BusMapsDownloader`, and Spain's `downloaders.spain.NAPDownloader` follow the same interface. API keys/secrets are resolved from an explicit `api_key` argument, an environment variable, or an `api_keys.json` file (never committed) — see `pyGTFSHandler/downloaders/utils/config.py`. See the [downloaders API reference](https://CityScope.github.io/pyGTFSHandler/api/downloaders/base/) for details, and [`IMPLEMENTING_A_DOWNLOADER.md`](IMPLEMENTING_A_DOWNLOADER.md) if you want to add support for a new GTFS source.
+
+## Tests
+
+```bash
+uv sync --extra dev
+uv run pytest                       # fast, offline test suite
+uv run pytest -m "not slow and not network"  # skip real-feed and live-API tests explicitly
+```
 
 ## Documentation
 

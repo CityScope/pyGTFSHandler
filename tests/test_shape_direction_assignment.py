@@ -281,10 +281,10 @@ def test_direction_ids_integrated_into_stop_shapes_without_warning(tmp_path):
     for shape_id, values in by_shape.items():
         assert len(values) == 1, f"{shape_id} got inconsistent direction_ids: {values}"
 
-    outbound = by_shape["T1_file_0"]
-    assert outbound == by_shape["T3_file_0"]
-    inbound = by_shape["T2_file_0"]
-    assert inbound == by_shape["T4_file_0"]
+    outbound = by_shape["T1"]
+    assert outbound == by_shape["T3"]
+    inbound = by_shape["T2"]
+    assert inbound == by_shape["T4"]
     assert outbound != inbound
 
 
@@ -297,7 +297,7 @@ def test_stop_shapes_bearings_untouched_by_direction_assignment(shape_test_feed)
     assert stop_shapes["shape_direction"].dtype == pl.Float64
     assert stop_shapes["shape_direction_backwards"].dtype == pl.Float64
 
-    t2_at_s1 = stop_shapes.filter(pl.col("shape_id") == "T2_file_0", pl.col("stop_id") == "S1_file_0")
+    t2_at_s1 = stop_shapes.filter(pl.col("shape_id") == "T2", pl.col("stop_id") == "S1")
     assert t2_at_s1.height == 1
     forward = t2_at_s1["shape_direction"][0]
     assert forward is None or forward != forward  # None or NaN

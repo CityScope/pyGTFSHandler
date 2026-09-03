@@ -19,6 +19,9 @@ Available downloaders:
   Database catalog (https://mobilitydatabase.org).
 - `transitland.TransitLandDownloader`: the global Transitland catalog
   (https://www.transit.land).
+- `busmaps.BusMapsDownloader`: BusMaps' global GTFS feed catalog
+  (https://busmaps.com), covering 90+ countries via
+  `GET /getGtfsFeedsDownloads`.
 - `spain.NAPDownloader`: Spain's National Access Point
   (https://nap.transportes.gob.es), for country-specific sources that
   aren't covered by the global catalogs above. Other countries would get
@@ -32,11 +35,13 @@ under that country's own package (e.g. `downloaders.spain.utils`).
 
 from . import spain
 from .base import BaseGTFSDownloader
+from .busmaps import BusMapsDownloader
 from .mobility_database import MobilityDatabaseDownloader
 from .transitland import TransitLandDownloader
 
 __all__ = [
     "BaseGTFSDownloader",
+    "BusMapsDownloader",
     "MobilityDatabaseDownloader",
     "TransitLandDownloader",
     "spain",

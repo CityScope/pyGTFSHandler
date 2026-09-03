@@ -111,7 +111,7 @@ def fig_bearing_correction_and_split(feeds: dict) -> None:
     the widest-gap rule."""
     feed = Feed(str(feeds["diff_routes"]))
     bearings = (
-        feed.shapes.stop_shapes.filter(pl.col("stop_id") == "S3_file_0")
+        feed.shapes.stop_shapes.filter(pl.col("stop_id") == "S3")
         .select(["shape_id", "shape_direction", "shape_direction_backwards"])
         .collect()
     )

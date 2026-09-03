@@ -59,8 +59,11 @@ def test_aoi_filter_excludes_outside_stop(tmp_path):
     directory = _feed_dir(tmp_path)
     aoi = gpd.GeoDataFrame(geometry=[box(-3.72, 39.99, -3.69, 40.01)], crs="EPSG:4326")
     feed = Feed(directory, aoi=aoi)
-    stop_ids = feed.stops.lf.collect()["stop_id"].to_list()
-    assert "OUT1" not in stop_ids
+    # `feed.stops.lf` is deliberately reloaded after filtering to also include
+    # any "bordering" stop visited by a trip that has a stop inside the AOI
+    # (see `Feed.load`'s "Reload stops_lf..." comment), so it can legitimately
+    # still contain OUT1. `stop_ids_in_aoi` is the actual AOI-filtered set.
+    assert "OUT1" not in feed.stop_ids_in_aoi
 
 
 def test_aoi_filter_excluding_all_stops_raises(tmp_path):
@@ -89,5 +92,6 @@ def test_date_filter_returns_all_active_services(tmp_path):
 def test_stop_ids_filter(tmp_path):
     directory = _feed_dir(tmp_path)
     feed = Feed(directory, stop_ids=["IN1", "IN2"])
-    stop_ids = feed.stops.lf.collect()["stop_id"].to_list()
-    assert "OUT1" not in stop_ids
+    # See test_aoi_filter_excludes_outside_stop: `feed.stops.lf` can still
+    # contain a "bordering" stop pulled in by `reload_stops_lf`.
+    assert "OUT1" not in feed.stop_ids_in_aoi

@@ -37,9 +37,11 @@ import zipfile
 import unicodedata
 import copy
 import warnings
+from pathlib import Path
 from typing import Any, Dict, List, Tuple, Optional
 
 import polars as pl
+from tqdm import tqdm
 
 from . import gtfs_checker
 
@@ -675,6 +677,40 @@ def preprocess_gtfs(path,output_folder, mandatory_files = MANDATORY_FILES, file_
 # LAZY CSV READING
 # ------------------------------
 
+def _has_balanced_quotes(path: str, quote_char: str = '"', chunk_size: int = 1 << 20) -> bool:
+    """Cheaply checks whether `path` contains an even number of `quote_char`
+    bytes, without loading the whole file into memory at once.
+
+    In valid RFC4180-ish CSV, every quote character appears as part of a
+    matched open/close pair around a quoted field (doubled internal quotes
+    used to escape a literal quote inside a quoted field also come in
+    pairs), so a well-formed file's quote count is always even. Real-world
+    government GTFS feeds sometimes embed a single, unescaped literal quote
+    character inside an *unquoted* field (e.g. Hebrew text using `"` as a
+    gershayim/abbreviation mark, as seen in a Beersheba `trips.txt`
+    `trip_headsign` like `שכונה י"א`) -- polars' CSV parser treats any `"`
+    as starting a quoted region regardless of position, so that single
+    stray quote makes it swallow subsequent newlines as part of a
+    (nonexistent) multi-line quoted field, corrupting row boundaries for
+    the rest of the file (`CSV malformed: expected N rows, actual M rows`).
+
+    An odd count is a certain sign the file isn't validly quoted (so quote
+    handling should be disabled for it); an even count doesn't guarantee
+    validity, but keeps normal RFC4180-quoted files fully readable with the
+    default reader. Only reads raw bytes in fixed-size chunks, so cost is a
+    single linear pass, not proportional to loading the parsed CSV.
+    """
+    needle = quote_char.encode("utf-8")
+    count = 0
+    try:
+        with open(path, "rb") as f:
+            while chunk := f.read(chunk_size):
+                count += chunk.count(needle)
+    except OSError:
+        return True
+    return count % 2 == 0
+
+
 def read_csv_lazy(
     path: str,
     schema_overrides: Optional[Dict[str, pl.DataType]] = None,
@@ -687,15 +723,57 @@ def read_csv_lazy(
     if not path or not os.path.isfile(path):
         return None
 
+    # A file with an odd number of `"` bytes can't be validly quoted CSV
+    # (see `_has_balanced_quotes`) -- disable quote handling for it up
+    # front rather than letting polars misinterpret a stray quote as the
+    # start of a multi-line quoted field, which corrupts row boundaries for
+    # the rest of the file and only surfaces later, far away, as a `CSV
+    # malformed: expected N rows, actual M rows` ComputeError once the lazy
+    # frame is finally collected.
+    quote_char = '"' if _has_balanced_quotes(path) else None
+    if quote_char is None:
+        warnings.warn(
+            f"File {path} has an odd number of '\"' characters (not validly "
+            "quoted CSV, e.g. a literal quote embedded in an unquoted "
+            "field). Reading it with quoting disabled so embedded quotes "
+            "are treated as literal text instead of corrupting row "
+            "boundaries."
+        )
+
     try:
-        lf = pl.scan_csv(path, infer_schema=False, raise_if_empty=False, truncate_ragged_lines=check_files)
+        lf = pl.scan_csv(path, infer_schema=False, raise_if_empty=False, truncate_ragged_lines=check_files, quote_char=quote_char)
     except Exception as e:
         warnings.warn(f"scan_csv failed ({e}). Falling back to read_csv.")
         try:
-            lf = pl.read_csv(path, infer_schema=False, ignore_errors=check_files, truncate_ragged_lines=check_files).lazy()
+            lf = pl.read_csv(path, infer_schema=False, ignore_errors=check_files, truncate_ragged_lines=check_files, quote_char=quote_char).lazy()
         except Exception as e:
             warnings.warn(f"Failed to load CSV {path}: {e}")
             return None
+
+    # GTFS optional fields left blank are routinely written as a quoted
+    # empty string (`""`) rather than a bare/omitted field -- polars reads
+    # that as the empty string `""`, NOT null, so any downstream
+    # `.is_null()`/`.fill_null()` logic (e.g. `Feed`'s `parent_station`
+    # null -> stop_id fallback, or `transitlos.stops`'s equivalent) silently
+    # fails to catch it. That collapses EVERY stop lacking a real
+    # `parent_station` across the WHOLE feed into one shared `""` group
+    # (instead of falling back to each stop's own `stop_id`), which then
+    # pools every route in the entire system into that fake shared
+    # station's headway/speed/route-list aggregation -- root cause of a
+    # live bug report (Concepcion, Chile: the "Concepcion" stop's popup
+    # showed a nonsensical bus-level headway and "mode: bus" pooled from
+    # the whole feed, not just routes actually serving that stop). Per the
+    # GTFS spec an empty field means "no value provided" regardless of
+    # whether it happened to be quoted, so normalizing every blank Utf8
+    # value to a real null immediately after read is correct for every GTFS
+    # table, not just `stops.parent_station`.
+    lf = lf.with_columns(
+        [
+            pl.when(pl.col(c) == "").then(None).otherwise(pl.col(c)).alias(c)
+            for c, dt in lf.collect_schema().items()
+            if dt == pl.Utf8
+        ]
+    )
 
     if check_files:
         lf = gtfs_checker.normalize_df(lf)
@@ -733,19 +811,152 @@ def read_csv_lazy(
     gtfs_name = os.path.basename(os.path.dirname(path))
     lf = lf.with_columns(pl.lit(gtfs_name).alias("gtfs_name"), pl.lit(file_id).alias("file_id"))
 
+    # Note: the `_file_<n>` disambiguation suffix used to be applied here,
+    # unconditionally, to every id column of every file -- even when only a
+    # single GTFS directory was being loaded (so no collision could ever
+    # happen) and even for ids that don't collide across files. That made
+    # every id returned by the library carry a suffix in the common case.
+    # The suffix is now applied by `read_csv_list`, once all files have been
+    # concatenated, and only to the specific id values that actually
+    # collide across `file_id`s -- see `read_csv_list` for details.
     columns = lf.collect_schema().names()
     for col in id_cols:
         if col in columns:
             lf = lf.with_columns(
-                pl.when(pl.col(col).is_null() | (pl.col(col) == ""))
-                .then(pl.lit(None))
-                .otherwise(pl.concat_str([pl.col(col), pl.lit("_file_"), pl.col("file_id")]))
-                .alias(col)
+                pl.when(pl.col(col) == "").then(pl.lit(None)).otherwise(pl.col(col)).alias(col)
             )
             if col in mandatory_cols:
                 lf = lf.filter(pl.col(col).is_not_null())
 
     return lf
+
+
+# Maps each id namespace to the GTFS file(s) that authoritatively *define*
+# it (as opposed to merely referencing it). Used by
+# `compute_collision_registry` to build a cheap, id-column-only first pass
+# over just those defining tables. `parent_station` deliberately has no
+# entry of its own here -- it shares `stop_id`'s registry (see
+# `compute_collision_registry`), since a `parent_station` value is itself
+# just another `stop_id`.
+DEFINING_FILES = {
+    "stop_id": ["stops.txt"],
+    "route_id": ["routes.txt"],
+    "trip_id": ["trips.txt"],
+    "service_id": ["calendar.txt", "calendar_dates.txt"],
+    "shape_id": ["shapes.txt"],
+    # agency.txt is not read anywhere else in this library today (no
+    # `Agency` component/model), so routes.txt -- the only place
+    # `agency_id` actually appears -- doubles as its defining table.
+    "agency_id": ["routes.txt"],
+}
+
+
+def compute_collision_registry(
+    gtfs_dir: List,
+    min_file_id: int = 0,
+    check_files: bool = True,
+) -> Dict[str, pl.DataFrame]:
+    """Cheap first pass to find which literal id values actually collide
+    across `gtfs_dir` directories, per id namespace.
+
+    For each namespace in `DEFINING_FILES`, reads *only* the id column (+
+    `file_id`) from that namespace's defining table(s) in every directory,
+    and returns the (normally small) set of id values that appear under
+    more than one distinct `file_id`. This registry is meant to be threaded
+    into every table's `read_csv_list` call (via its `collision_registry`
+    argument) so that a table which only *references* an id (e.g. stop_id
+    in stop_times.txt) makes the exact same suffix-or-not decision as the
+    table that defines it (stops.txt), instead of each table judging
+    collisions independently -- see `read_csv_list`'s docstring/comment for
+    why that consistency matters.
+
+    **Must mirror `read_csv_lazy`'s normalization exactly** (bug found
+    2026-08-12, real MBTA+regional data): `read_csv_lazy` runs
+    `gtfs_checker.normalize_df` when `check_files=True` (the default),
+    which trims whitespace and normalizes internal spaces/diacritics in
+    every string column -- including id columns. Real-world feeds have
+    ids like `"  30235"` (leading whitespace) that normalize down to the
+    exact same string as another feed's clean `"30235"`. If this function
+    compared *raw*, un-normalized strings, it would treat those as two
+    distinct values -- missing a genuine collision entirely, silently
+    leaving both stops with the same final `stop_id` after normalization.
+    That's not just wrong output: two same-id physical stops silently
+    merged then fan out combinatorially in every downstream join keyed on
+    that id (observed: an 18k-row stops table blowing up into a multi-GB,
+    eventually OOM-killing join once `_generate_shapes_file` joined
+    against it). Always run the same normalization here as the real
+    tables will, so this registry's collision verdicts are computed on the
+    exact same final strings `read_csv_list` will actually suffix (or
+    not).
+
+    Returns `{}` (no suffixing anywhere) for the common single-directory
+    case, and also when `min_file_id > 0` (the caller is reserving file-id
+    space for feeds it can't see yet -- see `read_csv_list`).
+    """
+    if len(gtfs_dir) <= 1 or min_file_id > 0:
+        return {}
+
+    registry: Dict[str, pl.DataFrame] = {}
+    pbar = tqdm(
+        total=len(DEFINING_FILES) * len(gtfs_dir),
+        desc="[gtfs] scanning feeds for id collisions",
+        unit="dir",
+        mininterval=1.0,
+    )
+    for id_col, files in DEFINING_FILES.items():
+        parts = []
+        for i, d in enumerate(gtfs_dir):
+            file_id = i + min_file_id
+            pbar.set_description(
+                f"[gtfs] scanning feed {i + 1}/{len(gtfs_dir)}: {Path(d).name} ({id_col})"
+            )
+            pbar.update(1)
+            for fname in files:
+                p = search_file(str(d), fname)
+                if p is None:
+                    continue
+                try:
+                    quote_char = '"' if _has_balanced_quotes(p) else None
+                    lf = pl.scan_csv(p, infer_schema=False, raise_if_empty=False, truncate_ragged_lines=True, quote_char=quote_char)
+                    if check_files:
+                        # Same normalization `read_csv_lazy` applies (column
+                        # name + string value normalization, including the
+                        # whitespace-trim that matters for id columns) --
+                        # see the docstring above for why this must match
+                        # exactly, not just approximately (e.g. a bare
+                        # `.str.strip_chars()` here would miss the internal
+                        # `\s+` -> `_` and diacritic-folding rules that
+                        # `read_csv_lazy` also applies to these same ids).
+                        lf = gtfs_checker.normalize_df(lf)
+                    cols = lf.collect_schema().names()
+                except Exception:
+                    continue
+                if id_col not in cols:
+                    continue
+                part = (
+                    lf.select(pl.col(id_col).cast(pl.Utf8))
+                    .filter(pl.col(id_col).is_not_null() & (pl.col(id_col) != ""))
+                    .unique()
+                    .with_columns(pl.lit(file_id).alias("file_id"))
+                )
+                parts.append(part)
+
+        if not parts:
+            continue
+
+        combined = pl.concat(parts).unique()
+        collisions = (
+            combined.group_by(id_col)
+            .agg(pl.col("file_id").n_unique().alias("n_files"))
+            .filter(pl.col("n_files") > 1)
+            .select(id_col)
+            .collect()
+        )
+        if collisions.height > 0:
+            registry[id_col] = collisions
+
+    pbar.close()
+    return registry
 
 
 def read_csv_list(
@@ -755,20 +966,252 @@ def read_csv_list(
     min_file_id: int = 0,
     check_files: bool = True,
     mandatory_cols: List[str] = MANDATORY_COLS,
-    id_cols: List[str] = ID_COLS
+    id_cols: List[str] = ID_COLS,
+    collision_registry: Optional[Dict[str, pl.DataFrame]] = None,
 ) -> Optional[pl.LazyFrame]:
-    """Lazily read a list of CSV files into a single concatenated LazyFrame."""
+    """Lazily read a list of CSV files into a single concatenated LazyFrame.
+
+    Args:
+        collision_registry: Optional, as produced by
+            `compute_collision_registry`. When given, id columns are
+            suffixed with `_file_<n>` only for the specific values known to
+            collide across directories (looked up per-column, with
+            `parent_station` sharing `stop_id`'s entry); columns/values with
+            no registry entry are left exactly as authored. When omitted
+            (`None`), falls back to the old conservative behavior below
+            (suffix every id whenever more than one file was read, or
+            `min_file_id > 0`) -- callers that can't/don't compute a
+            registry (e.g. `Stops.reload_stops_lf`, called after the
+            registry-driven initial load already fixed each id's fate) keep
+            getting a safe, if coarser, answer.
+    """
     if search_files:
         path_list = [search_file(os.path.dirname(p), os.path.basename(p)) or p for p in path_list]
 
+    _first_named = next((p for p in path_list if p), None)
+    iter_paths = (
+        tqdm(
+            list(enumerate(path_list)),
+            desc=f"[gtfs] reading {os.path.basename(_first_named)}" if _first_named else "[gtfs] reading",
+            unit="file",
+            mininterval=1.0,
+            leave=False,
+        )
+        if len(path_list) > 1
+        else enumerate(path_list)
+    )
     file_lfs = [
-        lf for i, p in enumerate(path_list)
+        lf for i, p in iter_paths
         if (lf := read_csv_lazy(p, schema_overrides=schema_overrides, file_id=i+min_file_id, check_files=check_files, mandatory_cols=mandatory_cols, id_cols=id_cols)) is not None
     ]
 
     if not file_lfs:
         return None
 
-    return pl.concat(file_lfs, how="diagonal_relaxed")
+    lf = pl.concat(file_lfs, how="diagonal_relaxed")
+
+    # Disambiguation trade-off: id columns are only suffixed with
+    # `_file_<n>` when more than one source file was actually read here.
+    # With a single GTFS directory (by far the most common case) nothing
+    # is suffixed, so ids come back exactly as in the source file.
+    #
+    # When `collision_registry` is supplied, suffixing is further narrowed
+    # to just the id *values* that genuinely collide across directories
+    # (computed once, up front, by `compute_collision_registry` from each
+    # namespace's defining table, and shared by every table that reads that
+    # namespace -- see that function's docstring for why every table must
+    # agree on the same registry rather than each independently judging
+    # collisions). Without a registry, the old, coarser "suffix every id
+    # unconditionally" behavior applies -- see the comment further down.
+    # `min_file_id > 0` means the caller is deliberately reserving file-id
+    # space for other feeds it plans to merge in later (see `Feed`'s
+    # `min_file_id` docstring / `concat_feeds`) -- even with a single
+    # directory here, its ids must stay suffixed so they can't collide with
+    # whatever else gets merged in under a different `file_id`.
+    if len(file_lfs) > 1 or min_file_id > 0:
+        columns = lf.collect_schema().names()
+        for col in id_cols:
+            if col not in columns:
+                continue
+
+            registry_col = "stop_id" if col == "parent_station" else col
+            if collision_registry is not None and min_file_id == 0:
+                colliding = collision_registry.get(registry_col)
+                if colliding is None or colliding.height == 0:
+                    # No value in this namespace collides anywhere -- leave
+                    # this column untouched.
+                    continue
+
+                colliding = colliding.rename({registry_col: col}) if registry_col != col else colliding
+                lf = lf.join(
+                    colliding.lazy().with_columns(pl.lit(True).alias("_collides")),
+                    on=col,
+                    how="left",
+                )
+                lf = lf.with_columns(
+                    pl.when(pl.col(col).is_null())
+                    .then(pl.lit(None))
+                    .when(pl.col("_collides").is_not_null())
+                    .then(pl.concat_str([pl.col(col), pl.lit("_file_"), pl.col("file_id")]))
+                    .otherwise(pl.col(col))
+                    .alias(col)
+                ).drop("_collides")
+            else:
+                lf = lf.with_columns(
+                    pl.when(pl.col(col).is_null())
+                    .then(pl.lit(None))
+                    .otherwise(pl.concat_str([pl.col(col), pl.lit("_file_"), pl.col("file_id")]))
+                    .alias(col)
+                )
+
+    return lf
+
+
+def trip_ids_touching_stops(
+    gtfs_dir: List,
+    stop_ids: List[str],
+    check_files: bool = True,
+    min_file_id: int = 0,
+    collision_registry: Optional[Dict[str, pl.DataFrame]] = None,
+) -> List[str]:
+    """Cheap first pass over `stop_times.txt` to find which `trip_id`s visit any of `stop_ids`.
+
+    Purpose: when an AOI has already narrowed `stops.txt` down to a small
+    in-scope stop set (see `Stops.load`'s `aoi` handling), the *rest* of a
+    feed's loading pipeline (`Trips.load` -> `StopTimes.load`) has
+    historically had no cheap way to know which trips are actually
+    relevant before reading, normalizing, and sequence-correcting the
+    **entire** `stop_times.txt` across every loaded directory -- on a
+    multi-feed, wide-area GTFS set (e.g. a state-wide search that also
+    picks up nationwide operators like Amtrak/Flixbus, whose stop_times
+    are >99% outside any one city's AOI) that means fully materializing
+    and processing millions of irrelevant rows before ever discarding
+    them, which is expensive and, on a large enough combined feed, can
+    exhaust available memory.
+
+    This function only reads `trip_id` + `stop_id` (a narrow lazy
+    projection pushed down into `scan_csv`, not the full row), filters to
+    `stop_ids`, and returns the distinct `trip_id`s -- meant to be passed
+    into `Trips.load(trip_ids=...)` so that both `Trips` and (via
+    `trips.trip_ids`) the subsequent `StopTimes.load` only ever read the
+    trips that actually touch the AOI, while still loading each such
+    trip's **complete** stop sequence (not row-filtered) so downstream
+    sequence-correction/time-interpolation keeps its full context.
+
+    Args:
+        gtfs_dir: List of GTFS directory paths (already resolved).
+        stop_ids: In-scope stop ids (already AOI-filtered, e.g.
+            `stops.stop_ids`), used verbatim as the filter set -- these are
+            expected to already carry any `_file_<n>` suffix consistent
+            with `collision_registry`, same as every other id passed
+            between these loaders.
+        check_files/min_file_id/collision_registry: Forwarded to
+            `read_csv_list`, exactly as `_read_stop_times` uses them, so
+            id suffixing is decided identically here and in the real read.
+
+    Returns:
+        List of distinct `trip_id` values (plain Python list, since
+        callers pass this straight into `filter_by_id_column`); empty list
+        if `stop_times.txt` has no rows for any of `stop_ids` (or
+        `stop_ids` itself is empty).
+    """
+    if not stop_ids:
+        return []
+
+    paths = [search_file(str(d), "stop_times.txt") for d in gtfs_dir]
+    schema_dict, _ = gtfs_checker.get_df_schema_dict("stop_times.txt")
+    lf = read_csv_list(
+        paths, schema_overrides=schema_dict, check_files=check_files,
+        min_file_id=min_file_id, collision_registry=collision_registry,
+    )
+    if lf is None:
+        return []
+
+    cols = lf.collect_schema().names()
+    if "trip_id" not in cols or "stop_id" not in cols:
+        return []
+
+    trip_ids = (
+        lf.select("trip_id", "stop_id")
+        .filter(pl.col("stop_id").is_in(stop_ids))
+        .select(pl.col("trip_id").unique())
+        .collect()["trip_id"]
+        .to_list()
+    )
+    return trip_ids
+
+
+def service_and_route_ids_for_trips(
+    gtfs_dir: List,
+    trip_ids: List[str],
+    check_files: bool = True,
+    min_file_id: int = 0,
+    collision_registry: Optional[Dict[str, pl.DataFrame]] = None,
+) -> tuple[List[str], List[str]]:
+    """Cheap first pass over `trips.txt` to find which `service_id`s/`route_id`s an AOI-restricted trip set uses.
+
+    Purpose: mirrors `trip_ids_touching_stops` one hop further down the
+    cascade. Once an AOI has narrowed `stops.txt` -> `stop_times.txt` down
+    to `trip_ids_touching_stops(...)`'s trip set, `Calendar.load` and
+    `Routes.load` still had no way to know which `service_id`s/`route_id`s
+    are actually relevant -- both were read (and, for `Calendar`, joined
+    against every calendar/calendar_dates row) in full before `Trips.load`
+    ever ran, on a multi-feed wide-area GTFS set that means fully reading
+    every operator's calendar and every operator's routes.txt (including
+    e.g. a nationwide Amtrak/Flixbus feed's routes) even though only a
+    handful of them ever serve the AOI.
+
+    This function only reads `trip_id` + `service_id` + `route_id` (a
+    narrow lazy projection pushed down into `scan_csv`, not the full row),
+    filters to `trip_ids`, and returns the distinct `service_id`s and
+    `route_id`s -- meant to be intersected into the `service_ids`/
+    `route_ids` filters passed to `Calendar.load`/`Routes.load` so both
+    only ever read the calendar/route rows the AOI-restricted trip set
+    actually references.
+
+    Args:
+        gtfs_dir: List of GTFS directory paths (already resolved).
+        trip_ids: In-scope trip ids (already AOI-filtered, e.g. the output
+            of `trip_ids_touching_stops`), used verbatim as the filter set.
+        check_files/min_file_id/collision_registry: Forwarded to
+            `read_csv_list`, exactly as `_read_trips` uses them, so id
+            suffixing is decided identically here and in the real read.
+
+    Returns:
+        `(service_ids, route_ids)` -- plain Python lists of distinct
+        values; both empty if `trips.txt` has no rows for any of
+        `trip_ids` (or `trip_ids` itself is empty).
+    """
+    if not trip_ids:
+        return [], []
+
+    paths = [search_file(str(d), "trips.txt") for d in gtfs_dir]
+    schema_dict, _ = gtfs_checker.get_df_schema_dict("trips.txt")
+    lf = read_csv_list(
+        paths, schema_overrides=schema_dict, check_files=check_files,
+        min_file_id=min_file_id, collision_registry=collision_registry,
+    )
+    if lf is None:
+        return [], []
+
+    cols = lf.collect_schema().names()
+    if "trip_id" not in cols:
+        return [], []
+
+    select_cols = ["trip_id"]
+    if "service_id" in cols:
+        select_cols.append("service_id")
+    if "route_id" in cols:
+        select_cols.append("route_id")
+
+    filtered = lf.select(select_cols).filter(pl.col("trip_id").is_in(trip_ids)).collect()
+
+    service_ids = (
+        filtered["service_id"].unique().drop_nulls().to_list() if "service_id" in select_cols else []
+    )
+    route_ids = (
+        filtered["route_id"].unique().drop_nulls().to_list() if "route_id" in select_cols else []
+    )
+    return service_ids, route_ids
 
 

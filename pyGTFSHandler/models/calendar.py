@@ -99,7 +99,8 @@ class Calendar:
         lat: float | None = None,
         service_ids: Optional[List[str]] | None = None,
         check_files:bool=False,
-        min_file_id=0
+        min_file_id=0,
+        collision_registry=None,
     ):
         """
         A class to manage GTFS calendar data, allowing filtering of active services
@@ -127,8 +128,8 @@ class Calendar:
         if isinstance(end_date, datetime):
             end_date = end_date.date()
 
-        self.lf = self._read_calendar(paths, service_ids, check_files=check_files, min_file_id=min_file_id)
-        self.exceptions_lf = self._read_calendar_dates(paths, service_ids, check_files=check_files, min_file_id=min_file_id)
+        self.lf = self._read_calendar(paths, service_ids, check_files=check_files, min_file_id=min_file_id, collision_registry=collision_registry)
+        self.exceptions_lf = self._read_calendar_dates(paths, service_ids, check_files=check_files, min_file_id=min_file_id, collision_registry=collision_registry)
         if (self.lf is None) and (self.exceptions_lf is None):
             raise Exception(f"No calendar.txt or calendar_dates.txt files found in paths {paths}")
         
@@ -188,7 +189,7 @@ class Calendar:
             self.service_ids = service_ids
 
     def _read_calendar(
-        self, paths, service_ids: Optional[List[str]], check_files=False, min_file_id=0
+        self, paths, service_ids: Optional[List[str]], check_files=False, min_file_id=0, collision_registry=None
     ) -> Optional[pl.LazyFrame]:
         """
         Reads the calendar.txt files from all paths using io.read_csv_list.
@@ -210,7 +211,7 @@ class Calendar:
 
 
         schema_dict, _ = gtfs_checker.get_df_schema_dict("calendar.txt")  # assume same schema
-        calendar = io.read_csv_list(calendar_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id)
+        calendar = io.read_csv_list(calendar_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id, collision_registry=collision_registry)
         if (calendar is None) or (calendar.select(pl.len()).collect().item() == 0):
             return None 
 
@@ -256,7 +257,7 @@ class Calendar:
         return calendar
 
     def _read_calendar_dates(
-        self, paths, service_ids: Optional[List[str]], check_files=False, min_file_id=0
+        self, paths, service_ids: Optional[List[str]], check_files=False, min_file_id=0, collision_registry=None
     ) -> Optional[pl.LazyFrame]:
         """
         Reads the calendar_dates.txt files from all paths using io.read_csv_list.
@@ -278,7 +279,7 @@ class Calendar:
 
         schema_dict, _ = gtfs_checker.get_df_schema_dict("calendar_dates.txt")
         calendar_dates = io.read_csv_list(
-            calendar_dates_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id
+            calendar_dates_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id, collision_registry=collision_registry
         )
         if (calendar_dates is None) or (calendar_dates.select(pl.len()).collect().item() == 0):
             return None 
@@ -695,6 +696,7 @@ class Calendar:
             needs_holiday_lookup
             or ("weekend" in date_type)
             or ("non_weekday" in date_type)
+            or ("weekday" in date_type)
         )
         if needs_weekend:
             result = self.add_holidays_and_weekends(

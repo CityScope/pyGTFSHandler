@@ -63,6 +63,7 @@ TODO: revise headway func to work with all possible by, at and hows especially '
 from .models import StopTimes, Stops, Trips, Calendar, Routes, Shapes
 from .utils import gtfs_checker
 from .utils import io
+from .representative_date import select_representative_date
 
 from pathlib import Path
 from datetime import datetime, time, date, timedelta
@@ -281,17 +282,94 @@ class Feed(FeedFilteringMixin, FeedAnalysisMixin, FeedEdgeAnalysisMixin):
         )
 
         self.shapes, self.trip_shape_ids_lf = self.load_shapes(
-            self.stops, self.stop_times, self.trips, self.gtfs_dir, use_real_shapes=load_shapes
+            self.stops, self.stop_times, self.trips, self.gtfs_dir, use_real_shapes=load_shapes,
+            collision_registry=self.collision_registry, aoi=aoi,
         )
 
         self.lf = self.build_lf(
-            self.calendar, 
-            self.routes, 
-            self.shapes, 
-            self.stop_times, 
-            self.stops, 
+            self.calendar,
+            self.routes,
+            self.shapes,
+            self.stop_times,
+            self.stops,
             self.trips,
             self.trip_shape_ids_lf
+        )
+
+    def get_representative_date(
+        self,
+        start_date: Optional[datetime | date] = None,
+        end_date: Optional[datetime | date] = None,
+        date_type: Optional[str] = "weekday",
+        route_types: Optional[list[int] | list[str] | int | str] = None,
+        max_candidates: int = 60,
+    ) -> Optional[date]:
+        """Picks a single real, "typical" date to run a "typical day"
+        analysis on, when the caller has no specific date in mind.
+
+        Thin wrapper around `representative_date.select_representative_date`
+        -- see that function's docstring for the full algorithm. In short:
+        scores each candidate date by the MEDIAN, across `parent_station`s,
+        of the count of DISTINCT departure times serving that station that
+        day; groups dates into ISO weeks; scores each week by the MEDIAN of
+        its `date_type`-valid days' scores; picks the best-scoring week;
+        returns the day within it closest to that week's median score.
+
+        This replaced an older, weaker proxy that just counted active
+        `service_id`s per candidate date (`Calendar.get_services_in_date`),
+        which had no notion of whether a date's service was actually
+        full/typical and could be dominated by many small/seasonal
+        calendars while a metro area's dominant, highest-stop-density
+        agency had zero calendar coverage that day at all -- the root
+        cause of a real bug where most of Boston's and San Francisco's
+        transit stops silently vanished from `stops.parquet` (see
+        `transitlos.stops.download_and_prepare_stops`'s module docstring).
+
+        Args:
+            start_date: Lower bound for candidate dates; defaults to
+                `self.calendar.min_date`.
+            end_date: Upper bound for candidate dates; defaults to
+                `self.calendar.max_date`.
+            date_type: `"weekday"` (default) restricts which days of each
+                week count toward that week's score to Monday-Friday;
+                pass `None` to allow every day of the week, or any other
+                `Calendar.VALID_DATE_TYPES` value (e.g. a single weekday
+                name, `"weekend"`, `"holiday"`).
+            route_types: Optional route type filter -- if given, only
+                trips of these route types are counted toward each
+                station's distinct-departure-time score.
+            max_candidates: Caps how many candidate ISO WEEKS are actually
+                evaluated (repurposed from the old per-day meaning, since
+                scoring is now vectorized over the whole window at once
+                rather than one `.collect()` per candidate date) -- weeks
+                are evenly subsampled across the window, so a multi-year
+                calendar range doesn't turn this into an unbounded scan.
+
+        Returns:
+            The representative `datetime.date`, or `None` if the feed has
+            no calendar date range at all (e.g. no `calendar.txt`/
+            `calendar_dates.txt` rows survived loading). If the window has
+            some calendar coverage but zero real service, a best-effort
+            date is still returned rather than raising.
+        """
+        lo = start_date.date() if isinstance(start_date, datetime) else start_date
+        hi = end_date.date() if isinstance(end_date, datetime) else end_date
+        lo = lo or self.calendar.min_date
+        hi = hi or self.calendar.max_date
+        if lo is None or hi is None or lo > hi:
+            return None
+
+        return select_representative_date(
+            calendar=self.calendar,
+            trips_lf=self.trips.lf,
+            stop_times_lf=self.stop_times.lf,
+            stops_lf=self.stops.lf,
+            start_date=lo,
+            end_date=hi,
+            date_type=date_type,
+            routes_lf=self.routes.lf if self.routes is not None else None,
+            route_types=route_types,
+            max_candidate_weeks=max_candidates,
         )
 
     def load(
@@ -372,6 +450,16 @@ class Feed(FeedFilteringMixin, FeedAnalysisMixin, FeedEdgeAnalysisMixin):
         # The loading is done in a logical order to allow for cascading filters.
         # e.g., Calendar is loaded first, and its service_ids are used to filter Trips.
 
+        # Cheap first pass over just the id column(s) of each namespace's
+        # defining table, across every directory -- computed once, up
+        # front, so every component below (Stops, Calendar, Routes, Trips,
+        # StopTimes, Shapes) makes the exact same suffix-or-not decision for
+        # the same literal id value instead of each independently deciding
+        # (which used to force suffixing *everything* whenever more than one
+        # directory was loaded -- see `io.read_csv_list`'s docstring).
+        collision_registry = io.compute_collision_registry(gtfs_dir, min_file_id=min_file_id, check_files=check_files)
+        self.collision_registry = collision_registry
+
         route_types_print = f"route types {route_types}" if route_types is not None else ""
         time_range_print = (
             f"time range {start_date} - {end_date}"
@@ -388,11 +476,74 @@ class Feed(FeedFilteringMixin, FeedAnalysisMixin, FeedEdgeAnalysisMixin):
             stop_group_distance=stop_group_distance,
             stop_ids=stop_ids,
             check_files=check_files,
-            min_file_id=min_file_id
+            min_file_id=min_file_id,
+            collision_registry=collision_registry,
         )
 
         if (stops.stop_ids is not None) and (len(stops.stop_ids) == 0):
             raise Exception(f"No stops found inside your aoi")
+
+        # When an AOI narrowed the stop set, cheaply pre-scan stop_times.txt
+        # (just trip_id + stop_id, not the full row) to find which trips
+        # actually touch an AOI stop, and intersect that into `trip_ids`
+        # *before* `Trips.load`/`StopTimes.load` run -- both already accept
+        # a `trip_ids` filter applied at read time (see
+        # `io.trip_ids_touching_stops`'s docstring for why this matters: on
+        # a multi-feed, wide-area GTFS set that also includes nationwide
+        # operators whose stop_times are >99% outside this AOI, skipping
+        # this pre-filter means fully loading/normalizing/sequence-
+        # correcting every irrelevant trip before ever discarding it).
+        # Every trip kept still has its COMPLETE stop sequence loaded (this
+        # only prunes whole trips, not individual rows within a kept trip),
+        # so downstream time-interpolation/sequence-correction keeps full
+        # context -- identical to the row-level `stop_ids` filter
+        # `StopTimes.load` already applies later, just earlier and at
+        # trip granularity so the expensive per-row work never runs on
+        # trips that don't matter here at all.
+        if (aoi is not None) and (stops.stop_ids is not None) and (len(stops.stop_ids) > 0):
+            aoi_trip_ids = io.trip_ids_touching_stops(
+                gtfs_dir, stops.stop_ids, check_files=check_files,
+                min_file_id=min_file_id, collision_registry=collision_registry,
+            )
+            if trip_ids:
+                aoi_trip_ids = [t for t in aoi_trip_ids if t in set(trip_ids)]
+            trip_ids = aoi_trip_ids
+            if len(trip_ids) == 0:
+                raise Exception(f"No trips found inside your aoi")
+
+            # One more hop down the same cascade: now that `trip_ids` is
+            # AOI-restricted, cheaply pre-scan trips.txt (just trip_id +
+            # service_id + route_id, not the full row) to find which
+            # service_ids/route_ids those trips actually reference, and
+            # intersect that into `service_ids`/`route_ids` *before*
+            # `Calendar.load`/`Routes.load` run below -- both already
+            # accept an id filter applied at read time. Without this, a
+            # multi-feed wide-area GTFS set (e.g. one that also includes a
+            # nationwide Amtrak/Flixbus feed) fully reads and joins every
+            # operator's calendar.txt/calendar_dates.txt and routes.txt
+            # rows before ever discarding the ones that don't matter to
+            # this AOI at all (see `io.service_and_route_ids_for_trips`'s
+            # docstring).
+            aoi_service_ids, aoi_route_ids = io.service_and_route_ids_for_trips(
+                gtfs_dir, trip_ids, check_files=check_files,
+                min_file_id=min_file_id, collision_registry=collision_registry,
+            )
+            # Empty here (rather than a genuine "AOI trips use zero
+            # services/routes", which can't happen -- `trip_ids` is
+            # non-empty and every one of its trips.txt rows should carry
+            # both fields) means the column wasn't found at all (e.g. a
+            # malformed feed missing `service_id`/`route_id` from
+            # trips.txt) -- leave the corresponding filter untouched
+            # rather than turning it into a spurious "nothing matches"
+            # empty allow-list.
+            if aoi_service_ids:
+                if service_ids:
+                    aoi_service_ids = [s for s in aoi_service_ids if s in set(service_ids)]
+                service_ids = aoi_service_ids
+            if aoi_route_ids:
+                if route_ids:
+                    aoi_route_ids = [r for r in aoi_route_ids if r in set(route_ids)]
+                route_ids = aoi_route_ids
 
         calendar = Calendar()
         calendar.load(
@@ -404,7 +555,8 @@ class Feed(FeedFilteringMixin, FeedAnalysisMixin, FeedEdgeAnalysisMixin):
             lon=stops.mean_lon,
             lat=stops.mean_lat,
             check_files=check_files,
-            min_file_id=min_file_id
+            min_file_id=min_file_id,
+            collision_registry=collision_registry,
         )
 
         if (route_types == 'all') or (route_types is None) or ('all' in route_types) or (None in route_types):
@@ -418,7 +570,8 @@ class Feed(FeedFilteringMixin, FeedAnalysisMixin, FeedEdgeAnalysisMixin):
 
         routes = Routes()
         routes.load(
-            gtfs_dir, route_ids=route_ids, route_types=route_types, check_files=check_files, min_file_id=min_file_id
+            gtfs_dir, route_ids=route_ids, route_types=route_types, check_files=check_files, min_file_id=min_file_id,
+            collision_registry=collision_registry,
         )
 
         if (routes.route_ids is not None) and (len(routes.route_ids) == 0):
@@ -434,7 +587,8 @@ class Feed(FeedFilteringMixin, FeedAnalysisMixin, FeedEdgeAnalysisMixin):
             trip_ids=trip_ids,
             route_ids=routes.route_ids,
             check_files=check_files,
-            min_file_id=min_file_id
+            min_file_id=min_file_id,
+            collision_registry=collision_registry,
         )
 
         if (trips.trip_ids is not None) and (len(trips.trip_ids) == 0):
@@ -450,7 +604,8 @@ class Feed(FeedFilteringMixin, FeedAnalysisMixin, FeedEdgeAnalysisMixin):
             stop_ids=stops.stop_ids,
             trip_ids=trips.trip_ids,
             check_files=check_files,
-            min_file_id=min_file_id
+            min_file_id=min_file_id,
+            collision_registry=collision_registry,
         )
 
         if stop_times.lf.select(pl.count()).collect().item() == 0:
@@ -466,7 +621,7 @@ class Feed(FeedFilteringMixin, FeedAnalysisMixin, FeedEdgeAnalysisMixin):
             .to_series()
             .to_list()
         )
-        stops.reload_stops_lf(gtfs_dir, stop_times.lf.select("stop_id"))
+        stops.reload_stops_lf(gtfs_dir, stop_times.lf.select("stop_id"), collision_registry=collision_registry)
 
         # --- 3. Integrate Generated Trips from Frequencies ---
         # If StopTimes generated new trips from frequencies.txt, we need to add them
@@ -474,7 +629,10 @@ class Feed(FeedFilteringMixin, FeedAnalysisMixin, FeedEdgeAnalysisMixin):
 
         return calendar, routes, gtfs_dir, stop_times, stops, trips
 
-    def load_shapes(self, stops, stop_times, trips, gtfs_dir, use_real_shapes: bool = True):
+    def load_shapes(
+        self, stops, stop_times, trips, gtfs_dir, use_real_shapes: bool = True, collision_registry=None,
+        aoi: Optional[Union[gpd.GeoDataFrame, gpd.GeoSeries]] = None,
+    ):
         """Builds `self.shapes`/`self.trip_shape_ids_lf`.
 
         Args:
@@ -488,6 +646,11 @@ class Feed(FeedFilteringMixin, FeedAnalysisMixin, FeedEdgeAnalysisMixin):
                 loading a feed with a large `shapes.txt` (e.g. detailed
                 rail/metro polylines), for callers who don't need real
                 geometry and want faster loads.
+            aoi: Optional Area of Interest, the same one passed into
+                `self.load(...)` -- forwarded to `Shapes.load` so raw
+                `shapes.txt` polylines entirely outside it are dropped
+                before the rest of the pipeline runs (see
+                `Shapes._read_shapes_file`). `None` skips this pre-filter.
         """
         # --- 4. Load Shapes and Perform Advanced Time Interpolation ---
         trip_shape_ids_lf: pl.LazyFrame = (
@@ -528,7 +691,10 @@ class Feed(FeedFilteringMixin, FeedAnalysisMixin, FeedEdgeAnalysisMixin):
 
         shapes = Shapes()
         shapes_path = gtfs_dir if use_real_shapes else None
-        shapes.load(shapes_path, trip_shape_ids_lf, stops.lf, check_files=False, min_file_id=0)
+        shapes.load(
+            shapes_path, trip_shape_ids_lf, stops.lf, check_files=False, min_file_id=0,
+            collision_registry=collision_registry, aoi=aoi,
+        )
         # `stops`/`stop_times`/`trips` here are already the post-filter (date,
         # time window, AOI, route_types, service/trip/stop/route id) versions
         # produced by `self.load(...)` above, so this direction_id assignment
@@ -816,6 +982,27 @@ class Feed(FeedFilteringMixin, FeedAnalysisMixin, FeedEdgeAnalysisMixin):
             ]
         )
 
+        # `dist_fwd`/`dist_bwd` are the nearest known-time stops'
+        # `shape_dist_traveled` on either side of a gap. When they're equal
+        # (e.g. duplicate/stalled `shape_dist_traveled` values in the source
+        # data, or a shape with no distance info at all so both sides
+        # forward/backward-fill to the same value), dividing by
+        # `dist_bwd - dist_fwd` below would divide by zero, producing
+        # `inf`/`nan` instead of a real interpolated fraction -- which later
+        # crashes the `.round().cast(Int64)` step downstream. Fall back to
+        # the midpoint fraction (0.5) in that case: there's no distance
+        # information to interpolate on, so splitting the gap evenly between
+        # the two known times is the best available estimate.
+        stop_times = stop_times.with_columns(
+            pl.when(pl.col("dist_bwd") == pl.col("dist_fwd"))
+            .then(pl.lit(0.5))
+            .otherwise(
+                (pl.col("shape_dist_traveled") - pl.col("dist_fwd"))
+                / (pl.col("dist_bwd") - pl.col("dist_fwd"))
+            )
+            .alias("_interp_fraction")
+        )
+
         # Apply linear interpolation for rows where departure_time is null.
         stop_times = stop_times.with_columns(
             [
@@ -828,10 +1015,7 @@ class Feed(FeedFilteringMixin, FeedAnalysisMixin, FeedEdgeAnalysisMixin):
                     pl.when(pl.col("dep_time_bwd") < pl.col("dep_time_fwd"))
                     .then(
                         pl.col("dep_time_fwd")
-                        + (
-                            (pl.col("shape_dist_traveled") - pl.col("dist_fwd"))
-                            / (pl.col("dist_bwd") - pl.col("dist_fwd"))
-                        )
+                        + pl.col("_interp_fraction")
                         * (
                             (pl.col("dep_time_bwd") + SECS_PER_DAY)
                             - pl.col("dep_time_fwd")
@@ -839,10 +1023,7 @@ class Feed(FeedFilteringMixin, FeedAnalysisMixin, FeedEdgeAnalysisMixin):
                     )
                     .otherwise(
                         pl.col("dep_time_fwd")
-                        + (
-                            (pl.col("shape_dist_traveled") - pl.col("dist_fwd"))
-                            / (pl.col("dist_bwd") - pl.col("dist_fwd"))
-                        )
+                        + pl.col("_interp_fraction")
                         * (pl.col("dep_time_bwd") - pl.col("dep_time_fwd"))
                     )
                 )
@@ -851,6 +1032,25 @@ class Feed(FeedFilteringMixin, FeedAnalysisMixin, FeedEdgeAnalysisMixin):
                     "departure_time"
                 )  # Overwrite departure_time with interpolated value
             ]
+        )
+
+        stop_times = stop_times.drop("_interp_fraction")
+
+        # Defensive fallback: the `dist_bwd == dist_fwd` guard above removes
+        # the known division-by-zero source of `inf`, but treat any
+        # remaining `inf`/`-inf` (e.g. from other, unanticipated edge cases
+        # in messy source feeds) the same way a plain null time is already
+        # handled elsewhere in this pipeline, rather than letting it crash
+        # the cast to Int64 below.
+        stop_times = stop_times.with_columns(
+            pl.when(pl.col("departure_time").is_infinite())
+            .then(None)
+            .otherwise(pl.col("departure_time"))
+            .alias("departure_time"),
+            pl.when(pl.col("arrival_time").is_infinite())
+            .then(None)
+            .otherwise(pl.col("arrival_time"))
+            .alias("arrival_time"),
         )
 
         stop_times = stop_times.with_columns(

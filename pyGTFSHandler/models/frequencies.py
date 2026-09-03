@@ -26,7 +26,7 @@ class FrequenciesMixin:
     frequency-to-stop_times expansion logic."""
 
     def _read_frequencies(
-        self, paths, trip_ids: Optional[List[str]] = None, check_files=False, min_file_id=0
+        self, paths, trip_ids: Optional[List[str]] = None, check_files=False, min_file_id=0, collision_registry=None
     ) -> Optional[pl.LazyFrame]:
         """
         Reads and processes GTFS `frequencies.txt` files from all available paths.
@@ -56,7 +56,7 @@ class FrequenciesMixin:
 
         schema_dict, _ = gtfs_checker.get_df_schema_dict("frequencies.txt")
         frequencies: pl.LazyFrame = io.read_csv_list(
-            frequencies_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id
+            frequencies_paths, schema_overrides=schema_dict, check_files=check_files, min_file_id=min_file_id, collision_registry=collision_registry
         )
 
         if (frequencies is None) or (frequencies.select(pl.len()).collect().item() == 0):
