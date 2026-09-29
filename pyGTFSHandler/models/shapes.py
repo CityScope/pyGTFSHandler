@@ -321,6 +321,15 @@ class Shapes:
         self.stop_shapes = self._generate_shape_direction_column(self.stop_shapes)
         self.stop_shapes = self.stop_shapes.collect().lazy()
         self.gdf = self._get_shapes_gdf(self.lf)
+        # `has_real_geometry`: whether this shape_id's points came from a
+        # real shapes.txt polyline (possibly with stops inserted), vs a pure
+        # straight-line-between-stops fallback (see `_generate_shapes_file`'s
+        # docstring/`_real_geometry_shape_ids`). Callers that only want to
+        # display genuine route geometry -- and, say, fall back to showing
+        # just the stops rather than a straight line that never actually ran
+        # -- can filter on this without re-deriving it.
+        if self.gdf is not None and not self.gdf.empty:
+            self.gdf["has_real_geometry"] = self.gdf["shape_id"].isin(self._real_geometry_shape_ids)
 
     def _read_shapes_file(
         self, path, check_files: bool = False, min_file_id=0, collision_registry=None,
@@ -602,6 +611,9 @@ class Shapes:
             groups_with_real_shape = pl.DataFrame(schema={"shape_id": pl.Utf8, "real_shape_id": pl.Utf8})
 
         real_geometry_shape_ids = set(groups_with_real_shape["shape_id"].to_list())
+        # Stashed for `load()` to stamp onto `self.gdf` as `has_real_geometry`
+        # -- see that assignment's own comment for why callers need this.
+        self._real_geometry_shape_ids = real_geometry_shape_ids
 
         fallback_stops = trip_shape_ids_lf.filter(~pl.col("shape_id").is_in(list(real_geometry_shape_ids)))
         fallback_points = self._stops_as_straight_line_shape(fallback_stops)
