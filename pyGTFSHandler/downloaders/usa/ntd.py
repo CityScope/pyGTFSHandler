@@ -300,13 +300,16 @@ class NTDDownloader(BaseGTFSDownloader):
         broken: List[GTFSFeedMetadata] = []
         for feed in feeds:
             try:
-                with requests.get(
-                    feed.download_url, stream=True, timeout=timeout, allow_redirects=True
-                ) as response:
-                    response.raise_for_status()
+                from ..utils.download import robust_get
+
+                with robust_get(feed.download_url, timeout=timeout) as response:
                     next(response.iter_content(chunk_size=1024), None)
                 working.append(feed)
             except (requests.exceptions.RequestException, StopIteration) as e:
                 logger.warning(f"NTD weblink broken for feed '{feed.id}': {e}")
+                try:
+                    feed.raw["broken_reason"] = str(e)[:300]
+                except Exception:
+                    pass
                 broken.append(feed)
         return working, broken

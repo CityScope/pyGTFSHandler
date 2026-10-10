@@ -483,6 +483,25 @@ class Feed(FeedFilteringMixin, FeedAnalysisMixin, FeedEdgeAnalysisMixin):
         if (stops.stop_ids is not None) and (len(stops.stop_ids) == 0):
             raise Exception(f"No stops found inside your aoi")
 
+        # Trips touching a stop_id that was ambiguous (same id, different
+        # parent stations) are excluded entirely.
+        conflicting_stop_ids = getattr(stops, "conflicting_stop_ids", None) or []
+        if conflicting_stop_ids:
+            bad_trips = set(io.trip_ids_touching_stops(
+                gtfs_dir, conflicting_stop_ids, check_files=check_files,
+                min_file_id=min_file_id, collision_registry=collision_registry,
+            ))
+            if bad_trips:
+                if trip_ids:
+                    trip_ids = [t for t in trip_ids if t not in bad_trips]
+                else:
+                    all_trips = io.trip_ids_touching_stops(
+                        gtfs_dir, stops.lf.select("stop_id").collect()["stop_id"].to_list(),
+                        check_files=check_files, min_file_id=min_file_id,
+                        collision_registry=collision_registry,
+                    )
+                    trip_ids = [t for t in all_trips if t not in bad_trips]
+
         # When an AOI narrowed the stop set, cheaply pre-scan stop_times.txt
         # (just trip_id + stop_id, not the full row) to find which trips
         # actually touch an AOI stop, and intersect that into `trip_ids`

@@ -225,18 +225,37 @@ class Stops:
         # by the same id). Duplicates *across* different loaded feeds are a
         # separate, intentional case (`Feed(gtfs_dirs=[...])` stacking/
         # multi-feed loading) and are handled there, not flagged here.
-        duplicate_ids = (
+        # Resolution (instead of failing the whole feed):
+        #  - duplicates sharing the same parent_station: keep the first row;
+        #  - duplicates under different parent stations: genuinely ambiguous,
+        #    so drop every row with that id and record it in
+        #    `self.conflicting_stop_ids` so the caller can also drop every
+        #    trip that stops there.
+        lf = lf.with_row_index("_row_order")
+        dup_info = (
             lf.group_by(["file_id", "stop_id"])
-            .agg(pl.len().alias("n"))
+            .agg(pl.len().alias("n"), pl.col("parent_station").n_unique().alias("n_parents"))
             .filter(pl.col("n") > 1)
-            .select("stop_id")
-            .collect()["stop_id"]
-            .to_list()
+            .collect()
         )
-        if duplicate_ids:
-            raise Exception(
-                f"stops.txt has duplicate stop_id value(s) within the same file: {duplicate_ids}"
-            )
+        self.conflicting_stop_ids = []
+        if dup_info.height > 0:
+            conflicts = dup_info.filter(pl.col("n_parents") > 1)
+            same_parent = dup_info.filter(pl.col("n_parents") <= 1)
+            self.conflicting_stop_ids = conflicts["stop_id"].unique().to_list()
+            if conflicts.height:
+                warnings.warn(
+                    f"stops.txt: {len(self.conflicting_stop_ids)} stop_id(s) duplicated under different "
+                    f"parent stations; dropping those stops and their trips: {self.conflicting_stop_ids[:20]}",
+                    UserWarning,
+                )
+                lf = lf.join(
+                    conflicts.select(["file_id", "stop_id"]).lazy(),
+                    on=["file_id", "stop_id"], how="anti",
+                )
+            if same_parent.height:
+                lf = lf.sort("_row_order").unique(subset=["file_id", "stop_id"], keep="first", maintain_order=True)
+        lf = lf.drop("_row_order")
 
         return lf
 
@@ -292,6 +311,72 @@ class Stops:
         final_lf = filtered_lf.join(stop_ids_df.lazy(), on=["stop_id"], how="semi")
 
         return final_lf, gdf
+
+    @staticmethod
+    def _complete_linkage_labels(lat, lon, component_labels, distance: float, parent=None, max_cluster_input: int = 6000):
+        """Split transitive components so that NO two stops in a group are farther apart than `distance` meters.
+
+        Inside each connected component (a chain of stops each within `distance` of the next) stops are clustered with
+        complete linkage (the cluster diameter is the linkage criterion, so every pair in a group is within
+        `distance`). Components with more than `max_cluster_input` stops are first cut spatially at the median of their
+        longer side (pairwise distances are quadratic), so a group never crosses a cut. Opt-in through the environment
+        variable `GTFS_STOP_GROUPING=complete`; the default keeps the transitive grouping.
+
+        `parent` (optional array of declared `parent_station` strings, "" = none): stops sharing a declared parent
+        (multi-entrance stations) are at distance 0 from each other, so they always end up in the same group however far
+        apart their entrances are; every other pair must be within `distance`.
+        """
+        import numpy as np
+        from scipy.cluster.hierarchy import fcluster, linkage
+        from scipy.spatial.distance import pdist
+
+        from scipy.spatial.distance import squareform
+
+        lat = np.asarray(lat, dtype=float)
+        lon = np.asarray(lon, dtype=float)
+        comp = np.asarray(component_labels)
+        par = np.asarray(parent, dtype=object) if parent is not None else None
+        out = np.empty(len(lat), dtype=np.int64)
+        counter = [0]
+
+        def xy(idx):
+            lat0 = float(np.mean(lat[idx]))
+            return np.column_stack(
+                [(lon[idx] - lon[idx].mean()) * 111_320.0 * np.cos(np.radians(lat0)), (lat[idx] - lat[idx].mean()) * 110_574.0]
+            )
+
+        def cluster(idx):
+            if len(idx) == 1:
+                out[idx] = counter[0]
+                counter[0] += 1
+                return
+            pts = xy(idx)
+            if len(idx) > max_cluster_input:
+                axis = int(np.argmax(np.ptp(pts, axis=0)))
+                cut = np.median(pts[:, axis])
+                left = pts[:, axis] <= cut
+                if left.all() or (~left).all():  # degenerate (identical coordinates): fall through
+                    left = np.arange(len(idx)) < len(idx) // 2
+                cluster(idx[left])
+                cluster(idx[~left])
+                return
+            dist = pdist(pts)
+            if par is not None:
+                p = par[idx]
+                declared = np.array([v is not None and v != "" for v in p])
+                if declared.sum() > 1:
+                    same = (p[:, None] == p[None, :]) & declared[:, None] & declared[None, :]
+                    square = squareform(dist)
+                    square[same] = 0.0
+                    dist = squareform(square, checks=False)
+            lab = fcluster(linkage(dist, method="complete"), t=distance, criterion="distance")
+            for v in np.unique(lab):
+                out[idx[lab == v]] = counter[0]
+                counter[0] += 1
+
+        for c in np.unique(comp):
+            cluster(np.where(comp == c)[0])
+        return out.tolist()
 
     def _cluster_by_distance(self, stop_coords: pl.DataFrame, distance: float) -> pl.DataFrame:
         """Assigns a `cluster` id (int) to each `stop_id` in `stop_coords`,
@@ -362,7 +447,22 @@ class Stops:
         ).filter(pl.col("dist_m") <= distance)
 
         edges = list(zip(candidate_pairs["idx"].to_list(), candidate_pairs["idx_b"].to_list()))
+        complete = os.environ.get("GTFS_STOP_GROUPING", "transitive").lower() == "complete"
+        parents = None
+        if complete and "parent_station" in indexed.columns:
+            parents = indexed["parent_station"].fill_null("").to_list()
+            first_of: dict = {}
+            for i, par in enumerate(parents):  # stops of one declared station are always connected
+                if par:
+                    if par in first_of:
+                        edges.append((first_of[par], i))
+                    else:
+                        first_of[par] = i
         labels = geo_polars.connected_components_from_edges(n, edges)
+        if complete:
+            labels = self._complete_linkage_labels(
+                indexed["stop_lat"].to_numpy(), indexed["stop_lon"].to_numpy(), labels, distance, parent=parents
+            )
 
         return indexed.select("idx", "stop_id").with_columns(
             pl.Series("cluster", [labels[i] for i in indexed["idx"].to_list()])
@@ -398,6 +498,14 @@ class Stops:
             .collect()
         )
 
+        if os.environ.get("GTFS_STOP_GROUPING", "transitive").lower() == "complete":
+            declared = (
+                self.lf.select(["stop_id", "parent_station"]).unique("stop_id").collect()
+                if "parent_station" in self.lf.collect_schema().names()
+                else None
+            )
+            if declared is not None:
+                stop_coords = stop_coords.join(declared, on="stop_id", how="left")
         cluster_labels = self._cluster_by_distance(stop_coords, distance)
 
         # This assumes parent_station info comes from self.lf (not self.gdf)
