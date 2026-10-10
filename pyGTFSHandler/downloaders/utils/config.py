@@ -14,7 +14,7 @@ one found:
 3. A local, gitignored JSON file mapping source names to keys, so a key
    doesn't have to be re-typed or re-exported every session. The file's
    location is `PYGTFSHANDLER_API_KEYS_FILE` if that environment variable
-   is set, otherwise `api_keys.json` in the current working directory or
+   is set, otherwise `api_keys.json` in the pyGTFSHandler repository folder, in the current working directory or
    any of its parent directories (so it's found whether a notebook/script
    runs from the repo root or a subdirectory like `examples/`), otherwise
    `~/.pygtfshandler/api_keys.json`. `api_keys.example.json` at the
@@ -52,6 +52,8 @@ def _candidate_config_paths() -> list:
     env_path = os.getenv(CONFIG_FILE_ENV_VAR)
     if env_path:
         paths.append(Path(env_path))
+    # the pyGTFSHandler repository folder itself (git-ignored), so the keys are found whatever the working directory
+    paths.append(Path(__file__).resolve().parents[3] / "api_keys.json")
     paths.extend(d / "api_keys.json" for d in (Path.cwd(), *Path.cwd().parents))
     paths.append(DEFAULT_CONFIG_PATH)
     return paths
