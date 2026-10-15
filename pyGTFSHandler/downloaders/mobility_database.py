@@ -577,3 +577,49 @@ class MobilityDatabaseDownloader(BaseGTFSDownloader):
         shutil.rmtree(main_path)
 
         return zip_path
+
+
+def download_gtfs_for_place(
+    place: str,
+    folder: str,
+    refresh_token: str = "",
+    is_official: bool = True,
+    overwrite: bool = False,
+) -> list:
+    """Download the GTFS feeds of a place from the Mobility Database.
+
+    The place name is geocoded (country, region, municipality) and the matching feeds are
+    downloaded to ``folder``. A free refresh token is needed
+    (https://mobilitydatabase.org/): pass it, or set ``MOBILITY_DATABASE_REFRESH_TOKEN``, or put it in
+    ``api_keys.json``; otherwise it is asked for (an input box in a notebook).
+
+    Args:
+        place: Place name, e.g. ``"Cambridge, Massachusetts, USA"``.
+        folder: Download folder.
+        refresh_token: Mobility Database refresh token ("" = look for it in the environment / api_keys.json).
+        is_official: Only official feeds.
+        overwrite: Download again feeds already in ``folder``.
+
+    Returns:
+        Sorted list of the downloaded feed paths, ready to use as a ``feed_source``.
+    """
+    import getpass
+    import glob
+    import os
+
+    from ..utils.geocoding import get_geographic_suggestions_from_string
+
+    try:
+        downloader = MobilityDatabaseDownloader(refresh_token)  # "" also checks the environment / api_keys.json
+    except ValueError:
+        downloader = MobilityDatabaseDownloader(getpass.getpass("Mobility Database refresh token: "))
+
+    geo = get_geographic_suggestions_from_string(place)
+    feeds = downloader.search_feeds(
+        country_code=geo["country_codes"],
+        subdivision_name=geo["subdivision_names"],
+        municipality=geo["municipalities"],
+        is_official=is_official,
+    )
+    downloader.download_feeds(feeds=feeds, download_folder=folder, overwrite=overwrite)
+    return sorted(glob.glob(os.path.join(folder, "*")))
