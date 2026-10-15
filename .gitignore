@@ -125,3 +125,4 @@ IMPLEMENTING_A_DOWNLOADER.md
 population_data/
 output/
 **/map_tiles/
+**/cache/
