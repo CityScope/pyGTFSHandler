@@ -15,6 +15,8 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import matplotlib.patches as mpatches
 import folium
+
+from .basemap import add_basemap
 import geopandas as gpd
 from typing import Optional, List, Union
 from matplotlib import colors, colormaps as mpl_colormaps
@@ -211,8 +213,9 @@ def general_map(
         m = folium.Map(
             location=[centroid.y, centroid.x],
             zoom_start=12,
-            tiles="CartoDB positron",
+            tiles=None,
         )
+        add_basemap(m)
 
     # ------------------------------------------------------------------
     # Helpers

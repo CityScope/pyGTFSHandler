@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Optional, TYPE_CHECKING
 
 import folium
+
+from ..utils.basemap import add_basemap
 import polars as pl
 
 from .style import (
@@ -130,8 +132,8 @@ def route_map(feed: "Feed", date: date_type, m: Optional[folium.Map] = None, zoo
             calendar_dates -- including day_offset for post-midnight trips --
             rather than re-implementing that logic here).
         m: An existing `folium.Map` to add the layer to. If omitted, a new
-            one is created, centered on the feed's stops, using CartoDB
-            positron tiles.
+            one is created, centered on the feed's stops, with a MapLibre
+            vector-tile background (OpenFreeMap positron).
         zoom_start: Initial zoom level, only used when `m` is created here.
 
     Returns:
@@ -398,7 +400,8 @@ def route_map(feed: "Feed", date: date_type, m: Optional[folium.Map] = None, zoo
     if m is None:
         mean_lat = stops_df["stop_lat"].mean()
         mean_lon = stops_df["stop_lon"].mean()
-        m = folium.Map(location=[mean_lat, mean_lon], zoom_start=zoom_start, tiles="CartoDB positron")
+        m = folium.Map(location=[mean_lat, mean_lon], zoom_start=zoom_start, tiles=None)
+        add_basemap(m)
 
     data_json = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")
     js_code = _read_static("route_map.js").replace("__MAP_VAR__", m.get_name()).replace("__DATA_JSON__", data_json)

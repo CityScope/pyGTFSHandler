@@ -359,7 +359,14 @@ class Feed(FeedFilteringMixin, FeedAnalysisMixin, FeedEdgeAnalysisMixin):
         if lo is None or hi is None or lo > hi:
             return None
 
+        try:  # centroid of all stops, used to look up public holidays
+            lon, lat = self.stops.lf.select(pl.col("stop_lon").mean(), pl.col("stop_lat").mean()).collect().row(0)
+        except Exception:
+            lon = lat = None
+
         return select_representative_date(
+            lon=lon,
+            lat=lat,
             calendar=self.calendar,
             trips_lf=self.trips.lf,
             stop_times_lf=self.stop_times.lf,

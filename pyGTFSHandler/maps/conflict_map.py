@@ -56,6 +56,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import folium
+
+from ..utils.basemap import add_basemap
 import polars as pl
 
 from ..models.shapes import _reconcile_fwd_bwd, _split_angle
@@ -259,7 +261,8 @@ def conflict_map(feed: "Feed", zoom_start: int = 12) -> folium.Map:
 
     mean_lat = stations_meta["lat"].mean()
     mean_lon = stations_meta["lon"].mean()
-    m = folium.Map(location=[mean_lat, mean_lon], zoom_start=zoom_start, tiles="CartoDB positron")
+    m = folium.Map(location=[mean_lat, mean_lon], zoom_start=zoom_start, tiles=None)
+    add_basemap(m)
 
     panels_html = '<div id="conflict-panel-routes"></div><div id="conflict-panel-shapes"></div>'
     data_json = json.dumps(data, separators=(",", ":")).replace("</", "<\\/")

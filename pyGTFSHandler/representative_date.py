@@ -33,6 +33,8 @@ def select_representative_date(
     routes_lf: Optional[pl.LazyFrame] = None,
     route_types: Optional[list] = None,
     max_candidate_weeks: int = 60,
+    lon: Optional[float] = None,
+    lat: Optional[float] = None,
 ) -> Optional[date]:
     """Picks the single most "typical" real service date in `[start_date,
     end_date]`.
@@ -88,6 +90,8 @@ def select_representative_date(
             now that trip-level data is loaded anyway.
         route_types: Optional route type filter, only applied if
             `routes_lf` is also given.
+        lon, lat: Location used to look up public holidays (Feed passes the centroid of all
+            stops). With no holiday/weekend `date_type`, holidays are excluded.
         max_candidate_weeks: If the window spans more ISO weeks than this,
             weeks are evenly subsampled (not the first N) before scoring,
             matching the old function's `max_candidates` intent of not
@@ -173,9 +177,24 @@ def select_representative_date(
     # a single named weekday/etc). Only valid days feed into a week's
     # median (step 5); every day still gets a raw score (step 3).
     if date_type is not None:
-        valid_dates = set(
-            calendar.filter_by_date_type(per_date, date_type, None, None)["date"].to_list()
+        # Unless the caller asked for holidays/weekends explicitly, also drop public
+        # holidays (looked up at lon/lat = centroid of all stops). Best-effort: if the
+        # lookup fails, fall back to the plain date_type.
+        types = [date_type] if isinstance(date_type, str) else list(date_type)
+        wants_off_days = any(
+            t in ("holiday", "weekend", "saturday", "sunday") or t.startswith("non_") for t in types
         )
+        valid_dates = None
+        if not wants_off_days and lon is not None and lat is not None:
+            try:
+                valid_dates = set(
+                    calendar.filter_by_date_type(per_date, types + ["workday"], lon, lat)["date"].to_list()
+                )
+            except Exception as exc:
+                import warnings
+                warnings.warn(f"representative date: holiday lookup failed ({exc}); holidays not excluded")
+        if valid_dates is None:
+            valid_dates = set(calendar.filter_by_date_type(per_date, date_type, None, None)["date"].to_list())
     else:
         valid_dates = set(per_date["date"].to_list())
 
