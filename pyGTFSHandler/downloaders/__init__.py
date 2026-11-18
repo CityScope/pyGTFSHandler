@@ -17,6 +17,8 @@ Available downloaders:
 
 - `mobility_database.MobilityDatabaseDownloader`: the global Mobility
   Database catalog (https://mobilitydatabase.org).
+- `mobility_database_catalog.MobilityDatabaseCatalog`: the same catalog read from its public
+  catalog file -- no account or API key.
 - `transitland.TransitLandDownloader`: the global Transitland catalog
   (https://www.transit.land).
 - `spain.NAPDownloader`: Spain's National Access Point
@@ -33,11 +35,13 @@ under that country's own package (e.g. `downloaders.spain.utils`).
 from . import spain
 from .base import BaseGTFSDownloader
 from .mobility_database import MobilityDatabaseDownloader
+from .mobility_database_catalog import MobilityDatabaseCatalog
 from .transitland import TransitLandDownloader
 
 __all__ = [
     "BaseGTFSDownloader",
     "MobilityDatabaseDownloader",
+    "MobilityDatabaseCatalog",
     "TransitLandDownloader",
     "spain",
 ]

@@ -73,3 +73,18 @@ def test_home_and_cwd_files_are_merged_cwd_wins(tmp_path):
 
     assert config.get_api_key("dummy", api_key=None, env_var="") == "from-cwd"
     assert config._load_api_keys_file()["other"] == "home-only"
+
+
+def test_standard_keys_file_is_read(tmp_path, monkeypatch):
+    """The one standard place for keys (~/.config/ptlos/api_keys.json) is read, and API_KEYS_FILE overrides it."""
+    import json
+    from pyGTFSHandler.downloaders.utils import config
+
+    standard = tmp_path / "standard.json"
+    standard.write_text(json.dumps({"nap_es": "from-standard"}))
+    monkeypatch.setattr(config, "STANDARD_PATH", standard)
+    assert config.get_api_key("nap_es") == "from-standard"
+    other = tmp_path / "other.json"
+    other.write_text(json.dumps({"nap_es": "from-env-file"}))
+    monkeypatch.setenv(config.SHARED_FILE_ENV_VAR, str(other))
+    assert config.get_api_key("nap_es") == "from-env-file"

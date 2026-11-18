@@ -11,110 +11,62 @@ one found:
    without touching any file in this package.
 2. The source-specific environment variable named by the downloader's
    `API_KEY_ENV_VAR` (e.g. `NAP_API_KEY`).
-3. A local, gitignored JSON file mapping source names to keys, so a key
-   doesn't have to be re-typed or re-exported every session. The file's
-   location is `PYGTFSHANDLER_API_KEYS_FILE` if that environment variable
-   is set, otherwise `api_keys.json` in the pyGTFSHandler repository folder, in the current working directory or
-   any of its parent directories (so it's found whether a notebook/script
-   runs from the repo root or a subdirectory like `examples/`), otherwise
-   `~/.pygtfshandler/api_keys.json`. `api_keys.example.json` at the
-   repository root documents the expected shape; the real `api_keys.json`
-   is listed in `.gitignore` so keys never get committed.
+3. The keys file: one standard place for every key of every package of the project,
+   `~/.config/ptlos/api_keys.json` (a JSON object `{"<source name>": "<key>"}`, outside every repository so it can never be
+   committed), or the file named by `API_KEYS_FILE` (or `PYGTFSHANDLER_API_KEYS_FILE`). Older locations (`api_keys.json` in
+   the pyGTFSHandler folder, the working directory or its parents, `~/.pygtfshandler/api_keys.json`) are still read.
+   `api_keys.example.json` lists the key names.
 
 None of these are required -- a downloader with no key available simply
 gets `None` back, and raises its own `ValueError` if the source requires
 one.
 """
 
-import json
 import logging
-import os
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+from geohierarchy import api_keys as _keys
+from geohierarchy.api_keys import SHARED_FILE_ENV_VAR, STANDARD_PATH  # noqa: F401  (the lookup itself lives in geohierarchy)
 
 logger = logging.getLogger(__name__)
 
 CONFIG_FILE_ENV_VAR = "PYGTFSHANDLER_API_KEYS_FILE"
 DEFAULT_CONFIG_PATH = Path.home() / ".pygtfshandler" / "api_keys.json"
+PACKAGE_KEYS_PATH = Path(__file__).resolve().parents[3] / "api_keys.json"   # older location: the pyGTFSHandler folder
 
 
 def _candidate_config_paths() -> list:
-    """Build the ordered list of paths to look for an API keys file in.
-
-    Returns:
-        Candidate paths, in priority order (highest first): the path from
-        `PYGTFSHANDLER_API_KEYS_FILE` (if set), `api_keys.json` in the
-        current working directory or any of its parents (so it's found
-        whether the caller runs from the repo root or a subdirectory like
-        `examples/`), and the user's home config file.
-    """
-    paths = []
-    env_path = os.getenv(CONFIG_FILE_ENV_VAR)
-    if env_path:
-        paths.append(Path(env_path))
-    # the pyGTFSHandler repository folder itself (git-ignored), so the keys are found whatever the working directory
-    paths.append(Path(__file__).resolve().parents[3] / "api_keys.json")
-    paths.extend(d / "api_keys.json" for d in (Path.cwd(), *Path.cwd().parents))
-    paths.append(DEFAULT_CONFIG_PATH)
-    return paths
+    """Keys files, highest priority first: geohierarchy's standard order (`API_KEYS_FILE`, `PYGTFSHANDLER_API_KEYS_FILE`,
+    `~/.config/ptlos/api_keys.json`), then pyGTFSHandler's older locations (the package folder, the working directory and its
+    parents, `~/.pygtfshandler/api_keys.json`)."""
+    return _keys.candidate_paths(
+        env_vars=[CONFIG_FILE_ENV_VAR],
+        files=[PACKAGE_KEYS_PATH, *(d / "api_keys.json" for d in (Path.cwd(), *Path.cwd().parents)), DEFAULT_CONFIG_PATH],
+        standard_path=STANDARD_PATH,
+    )
 
 
 def _load_api_keys_file() -> Dict[str, Any]:
-    """Load and merge every existing API keys file, in priority order.
-
-    Later (lower-priority) files fill in keys missing from earlier ones,
-    so a home-directory file and a per-project file can coexist.
+    """Every readable keys file merged, earlier files winning (see `geohierarchy.api_keys.load_keys`).
 
     Returns:
-        A dict mapping source name (e.g. "nap_es") to API key. Empty if
-        no config file exists or none could be parsed.
+        A dict mapping source name (e.g. "nap_es") to API key.
     """
-    merged: Dict[str, Any] = {}
-    for path in reversed(_candidate_config_paths()):
-        if not path.is_file():
-            continue
-        try:
-            with open(path, "r") as f:
-                data = json.load(f)
-            if isinstance(data, dict):
-                merged.update(data)
-        except (json.JSONDecodeError, OSError) as e:
-            logger.warning(f"Could not read API keys file '{path}': {e}")
-    return merged
+    return _keys.load_keys(_candidate_config_paths())
 
 
-def get_api_key(
-    source_name: str,
-    api_key: Optional[str] = None,
-    env_var: str = "",
-) -> Optional[str]:
-    """Resolve an API key for a downloader source.
-
-    Tries, in order: the explicitly passed `api_key`, the `env_var`
-    environment variable, and the `source_name` entry of the local API
-    keys file (see module docstring for its lookup locations).
+def get_api_key(source_name: str, api_key: Optional[str] = None, env_var: str = "") -> Optional[str]:
+    """Resolve an API key for a downloader source: the explicit `api_key`, the `env_var` environment variable, then the keys files.
 
     Args:
-        source_name: Key used to look up this source in the API keys
-            file (a downloader's `SOURCE_NAME`).
+        source_name: Key used to look up this source in the API keys file (a downloader's `SOURCE_NAME`).
         api_key: An explicitly provided API key, if any.
-        env_var: Name of the environment variable that may hold this
-            source's API key.
+        env_var: Name of the environment variable that may hold this source's API key.
 
     Returns:
         The resolved API key, or `None` if it couldn't be found anywhere.
     """
-    if api_key:
-        return api_key
-
-    if env_var:
-        from_env = os.getenv(env_var)
-        if from_env:
-            return from_env
-
-    if source_name:
-        from_file = _load_api_keys_file().get(source_name)
-        if from_file:
-            return str(from_file)
-
-    return None
+    if not source_name:
+        return api_key or (_keys.os.getenv(env_var) if env_var else None) or None
+    return _keys.resolve_api_key(source_name, env_var or None, api_key, paths=_candidate_config_paths())

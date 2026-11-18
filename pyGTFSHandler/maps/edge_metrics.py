@@ -110,6 +110,11 @@ def compute_edge_and_stop_metrics(day: pl.DataFrame, stops_df: pl.DataFrame, fee
       - "stop_routes_metrics": {stop_id: {route_id: {speed, headway}}}
     Speed is in km/h, headway in minutes. Any value that can't be computed
     (not enough data) is left out / null.
+
+    Args:
+        day: Stop times of one service day.
+        stops_df: Stops with ``stop_id``, ``stop_lat``, ``stop_lon``.
+        feed: The loaded feed.
     """
     edge_trips = _edge_trip_rows(day)
     if edge_trips.height == 0:

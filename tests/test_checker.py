@@ -8,6 +8,7 @@ report rather than crash on unhelpfully or silently ignore.
 
 from __future__ import annotations
 
+import polars as pl
 import pytest
 
 from pyGTFSHandler.feed import Feed
@@ -81,8 +82,10 @@ def test_duplicate_stop_id_in_stops_file(tmp_path):
         "S1,A duplicate,41.0,-4.7\n"
         "S2,B,40.01,-3.71\n"
     )
-    with pytest.raises(Exception):
-        Feed(directory)
+    # same id twice in one file under the same parent station: the first row is kept, the duplicate dropped (never both)
+    stops = Feed(directory).stops.lf.collect()
+    s1 = stops.filter(pl.col("stop_id") == "S1")
+    assert s1.height == 1 and s1["stop_lat"][0] == 40.0
 
 
 def test_out_of_range_route_type(tmp_path):

@@ -9,6 +9,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 
 dependencies = [
+    "geohierarchy @ git+https://github.com/CityScope/geohierarchy.git",
     "geopandas>=1.1.1",
     "geopy>=2.4.1",
     "numpy>=1.26.0",
@@ -26,7 +27,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# GPU is OPTIONAL: nothing here is installed by default and every code path falls back to the CPU when CuPy / a CUDA device is missing (TRANSITLOS_DEVICE=cpu forces it).
+gpu = ["cupy-cuda12x>=13.0"]
+# RAPIDS (cuDF / cuGraph) is big and pins its own dependency versions: install it in a SEPARATE environment, e.g.
+#   python -m venv .venv-rapids && .venv-rapids/bin/pip install cudf-cu12 cugraph-cu12 --extra-index-url=https://pypi.nvidia.com
+# and point TRANSITLOS_RAPIDS_PYTHON at that environment's python; the pipeline calls it in a subprocess only when it exists.
+rapids = ["cudf-cu12", "cugraph-cu12"]
 geocoding = ["geopy>=2.4.1"]
+osm = ["osmium>=4.0"]   # osm_extract: read route relations / stations from a downloaded .osm.pbf
 plot = [
     "matplotlib>=3.8",
     "contextily>=1.6.0",
@@ -68,3 +76,16 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["pyGTFSHandler*"]
+
+[tool.setuptools.package-data]
+pyGTFSHandler = ["maps/static/*.css", "maps/static/*.js", "downloaders/usa/revised_feeds.csv", "downloaders/usa/replace_ntd_ids.json"]
+
+# the optional `rapids` extra (cuDF / cuGraph) is published on NVIDIA's own index only
+[[tool.uv.index]]
+name = "nvidia"
+url = "https://pypi.nvidia.com"
+explicit = true
+
+[tool.uv.sources]
+cudf-cu12 = { index = "nvidia" }
+cugraph-cu12 = { index = "nvidia" }

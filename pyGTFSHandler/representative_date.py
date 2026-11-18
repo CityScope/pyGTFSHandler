@@ -20,6 +20,7 @@ from typing import Optional
 
 import numpy as np
 import polars as pl
+from datetime import date as date_cls
 
 
 def select_representative_date(
@@ -198,6 +199,25 @@ def select_representative_date(
     else:
         valid_dates = set(per_date["date"].to_list())
 
+    # 2026-11-13: a typical day is EITHER a holiday OR a normal day, never a mix. A date on which `calendar_dates.txt` changes the regular
+    # `calendar.txt` service (a feed's own holidays, e.g. 25 December running the Sunday service on top of the Monday-Saturday one, special
+    # events, strikes) is not a typical day: excluded unless off-days were asked for. Feeds whose whole schedule is in calendar_dates.txt
+    # (no calendar.txt rows) are left to the public-holiday lookup above; if every date has exceptions nothing is excluded.
+    if date_type is not None and not wants_off_days and getattr(calendar, "exceptions_lf", None) is not None and getattr(calendar, "lf", None) is not None:
+        try:
+            has_regular = calendar.lf.select(pl.len()).collect().item() > 0
+            if has_regular:
+                exc_dates = set(calendar.exceptions_lf.select("date").unique().collect()["date"].to_list())
+                # calendar_dates dates are kept as days since 1970-01-01 (Int32); dates / datetimes are accepted too
+                exc_dates = {(date_cls(1970, 1, 1) + timedelta(days=int(d))) if isinstance(d, (int, np.integer)) else (d.date() if hasattr(d, "date") and not isinstance(d, date_cls) else d)
+                             for d in exc_dates}
+                regular = {d for d in valid_dates if (d.date() if hasattr(d, "date") and not isinstance(d, date_cls) else d) not in exc_dates}
+                if regular:
+                    valid_dates = regular
+        except Exception as exc:  # noqa: BLE001
+            import warnings
+            warnings.warn(f"representative date: calendar_dates exception filter skipped ({exc})")
+
     if not valid_dates:
         # Nothing matches the date_type at all in this window -- fall back
         # to treating every day as valid rather than returning None, so a
@@ -226,30 +246,26 @@ def select_representative_date(
         .unique()  # dedupe exact duplicate/erroneous same-time entries
     )
 
-    service_dates = (
-        per_date.lazy()
-        .select(["date", "service_ids"])
-        .explode("service_ids")
-        .rename({"service_ids": "service_id"})
-        .with_columns(pl.col("service_id").cast(pl.Utf8))
-        .drop_nulls("service_id")
-    )
-
-    # --- 3. Per (date, parent_station) distinct-departure-time count -----
-    per_station_daily = (
-        service_dates.join(visits, on="service_id", how="inner")
-        .select(["date", "parent_station", "departure_time"])
-        .unique()
-        .group_by(["date", "parent_station"])
-        .agg(pl.len().alias("n_visits"))
-    )
-
-    # --- 4. Per-day median across parent stations -------------------------
-    daily_scores = (
-        per_station_daily.group_by("date")
-        .agg(pl.median("n_visits").alias("day_score"))
-        .collect()
-    )
+    # --- 3/4. Per-day median over parent stations of the distinct-departure-time count ---------
+    # Memory: the naive join (every candidate date x every visit of its services, then unique) is days x visits rows -- 18 GB for a feed with 22k
+    # trips over 121 days. A day's score only depends on WHICH services run that day, and most days share the same set (weekdays of one
+    # calendar), so each distinct service set is scored once, on its own, from the deduplicated (service, station, departure) visits.
+    visits_df = visits.collect()
+    by_set: dict[tuple, list] = {}
+    for d, sids in zip(per_date["date"].to_list(), per_date["service_ids"].to_list()):
+        key = tuple(sorted({str(s) for s in (sids or []) if s is not None}))
+        by_set.setdefault(key, []).append(d)
+    score_of_set: dict[tuple, float] = {}
+    for key in by_set:
+        if not key:
+            continue
+        sub = visits_df.filter(pl.col("service_id").is_in(list(key)))
+        if sub.is_empty():
+            continue
+        per_station = sub.select(["parent_station", "departure_time"]).unique().group_by("parent_station").agg(pl.len().alias("n_visits"))
+        score_of_set[key] = float(per_station["n_visits"].median())
+    rows = [(d, score_of_set[key]) for key, ds in by_set.items() if key in score_of_set for d in ds]
+    daily_scores = pl.DataFrame({"date": [r[0] for r in rows], "day_score": [r[1] for r in rows]}) if rows else pl.DataFrame({"date": [], "day_score": []})
 
     if daily_scores.is_empty():
         # No service anywhere in the window -- best-effort fallback.

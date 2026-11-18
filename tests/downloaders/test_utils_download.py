@@ -94,7 +94,7 @@ def test_download_feeds_passes_custom_headers(tmp_path):
         download_feeds([_feed()], str(tmp_path), unzip=False, headers={"ApiKey": "secret"})
 
     _, kwargs = mock_get.call_args
-    assert kwargs["headers"] == {"ApiKey": "secret"}
+    assert kwargs["headers"]["ApiKey"] == "secret"   # the caller's headers are sent (with the default browser User-Agent)
 
 
 def test_download_feeds_unzips_and_removes_zip(tmp_path):

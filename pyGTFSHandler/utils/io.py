@@ -67,6 +67,15 @@ FILE_PAIRS = [
 # ------------------------------
 
 def detect_csv_format(sample_text: str, max_lines: int = 1) -> Dict[str, Any]:
+    """Guess the delimiter and quoting of a CSV from its first lines.
+
+    Args:
+        sample_text: The start of the file.
+        max_lines: Lines looked at.
+
+    Returns:
+        ``{"delimiter", "quotechar", "doublequote"}``.
+    """
     lines = sample_text.strip().splitlines()[:max_lines]
     sample = "\n".join(lines)
     try:
@@ -117,6 +126,19 @@ def search_file(path, file):
 # ------------------------------
 
 def try_parse_line(line: str, config: Dict[str, Any], expected_cols: int|None = None, header:list|None=None, schema:dict|None=None, mandatory_columns:list=[]) -> Tuple[List[str]|None, str|None, str|None, bool]:
+    """Parse one CSV line, repairing the usual errors (stray quotes, missing or extra columns) and saying what was done.
+
+    Args:
+        line: The raw line.
+        config: Format from :func:`detect_csv_format`.
+        expected_cols: Number of columns expected.
+        header: Column names.
+        schema: ``{column: type}`` used to check values.
+        mandatory_columns: Columns that must not be empty.
+
+    Returns:
+        ``(parsed values or None, error text, fix text, excluded flag)``.
+    """
     line = line.strip()
     parsed = None
     error = ""
@@ -254,6 +276,19 @@ def try_parse_line(line: str, config: Dict[str, Any], expected_cols: int|None = 
 
 def validate_and_load_csv(path: str, header: bool = True, csv_text=None):
     # Get schema info
+    """Read a GTFS text file line by line, repairing or dropping bad lines, and report what was changed.
+
+    Args:
+        path: The file.
+        header: The file has a header row.
+        csv_text: The text, if already read.
+
+    Returns:
+        ``(parsed table, table of the errors found and fixes made)``, or None when the file cannot be found.
+
+    Raises:
+        Exception: If the file does not exist.
+    """
     schema_dict, mandatory_cols = get_df_schema_dict(path)
 
     # Read CSV text if not provided
@@ -356,6 +391,17 @@ def validate_and_load_csv(path: str, header: bool = True, csv_text=None):
 
 
 def unzip(file,output_path=None, delete:bool=False, overwrite:bool=True):
+    """Extract a zip next to itself (or into ``output_path``).
+
+    Args:
+        file: The zip file.
+        output_path: Folder that receives the extracted folder.
+        delete: Delete the zip afterwards.
+        overwrite: Replace an existing extracted folder.
+
+    Returns:
+        The extracted folder.
+    """
     if os.path.isfile(file):
         # Extract the ZIP
         extraction_folder, ext = os.path.splitext(file)
@@ -383,6 +429,22 @@ def unzip(file,output_path=None, delete:bool=False, overwrite:bool=True):
     
 
 def preprocess_gtfs(path,output_folder, mandatory_files = MANDATORY_FILES, file_preferences = PREFERENTIAL_FILES, file_pairs = FILE_PAIRS):
+    """Check and repair a GTFS feed (zip or folder) into ``output_folder``: mandatory files, preferred alternatives, and
+    line-level fixes.
+
+    Args:
+        path: Feed zip or folder.
+        output_folder: Folder for the cleaned feed.
+        mandatory_files: Files (or groups of alternatives) that must exist.
+        file_preferences: Preferred file among alternatives.
+        file_pairs: Files that only make sense together.
+
+    Returns:
+        Path of the cleaned feed folder.
+
+    Raises:
+        Exception: If the path does not exist or a mandatory file is missing.
+    """
     log = ""
     delete_path = None
     if os.path.isfile(path):
@@ -701,11 +763,29 @@ def _has_balanced_quotes(path: str, quote_char: str = '"', chunk_size: int = 1 <
     single linear pass, not proportional to loading the parsed CSV.
     """
     needle = quote_char.encode("utf-8")
+    # A quote that is NOT next to a delimiter / line end / another quote is a literal quote inside an unquoted field (such as Hebrew
+    # gershayim `ת"א`): real quoting only ever puts quotes at field boundaries or doubles them. Even when those stray quotes come in
+    # an even number (Beersheba's trips.txt has 14,908) polars would still mis-parse the file, so quote handling must be disabled.
+    stray = re.compile(rb"(?<![,\r\n" + re.escape(needle) + rb"])" + re.escape(needle) + rb"(?![,\r\n" + re.escape(needle) + rb"])")
     count = 0
+    carry = b"\n"  # the start of the file counts as a line start (a quote there is a field-opening quote)
+    first = True
     try:
         with open(path, "rb") as f:
             while chunk := f.read(chunk_size):
+                if first and chunk.startswith(b"\xef\xbb\xbf"):  # UTF-8 BOM
+                    chunk = chunk[3:]
+                first = False
                 count += chunk.count(needle)
+                buf = carry + chunk
+                final = len(chunk) < chunk_size
+                if needle in buf:
+                    # skip index 0 (carried context byte); a quote on the buffer's last byte has no following byte yet,
+                    # so it is judged in the next iteration (when it is the carried context)
+                    for m in stray.finditer(buf, 1):
+                        if final or m.start() < len(buf) - 1:
+                            return False
+                carry = buf[-2:]
     except OSError:
         return True
     return count % 2 == 0
@@ -719,7 +799,19 @@ def read_csv_lazy(
     mandatory_cols: List[str] = MANDATORY_COLS,
     id_cols: List[str] = ID_COLS
 ) -> Optional[pl.LazyFrame]:
-    """Lazily read a CSV (GTFS) file into a Polars LazyFrame."""
+    """Lazily read a CSV (GTFS) file into a Polars LazyFrame.
+
+    Args:
+        path: The file.
+        schema_overrides: ``{column: polars type}``.
+        file_id: Number added as ``file_id`` (feeds loaded together).
+        check_files: Validate and repair the file first.
+        mandatory_cols: Columns that must exist.
+        id_cols: Id columns read as text.
+
+    Returns:
+        A LazyFrame, or None when the file is missing.
+    """
     if not path or not os.path.isfile(path):
         return None
 
@@ -892,6 +984,14 @@ def compute_collision_registry(
     Returns `{}` (no suffixing anywhere) for the common single-directory
     case, and also when `min_file_id > 0` (the caller is reserving file-id
     space for feeds it can't see yet -- see `read_csv_list`).
+
+    Args:
+        gtfs_dir: Feed folders loaded together.
+        min_file_id: ``file_id`` of the first folder.
+        check_files: Validate the files first.
+
+    Returns:
+        ``{namespace: DataFrame of colliding ids}``.
     """
     if len(gtfs_dir) <= 1 or min_file_id > 0:
         return {}

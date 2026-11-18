@@ -220,6 +220,19 @@ class Stops:
             pl.col("stop_lat").is_between(-90, 90) & pl.col("stop_lon").is_between(-180, 180)
         )
 
+        lf = self._resolve_duplicate_ids(lf)
+
+        return lf
+
+    def _resolve_duplicate_ids(self, lf: pl.LazyFrame) -> pl.LazyFrame:
+        """Resolve `stop_id`s repeated within one source file (sets `self.conflicting_stop_ids`).
+
+        Args:
+            lf: Stops read from `stops.txt` (with `file_id` and `parent_station`).
+
+        Returns:
+            The stops with one row per (`file_id`, `stop_id`).
+        """
         # A duplicate `stop_id` *within a single source file* is a genuine
         # data error (the same file can't mean two different physical stops
         # by the same id). Duplicates *across* different loaded feeds are a
@@ -256,7 +269,6 @@ class Stops:
             if same_parent.height:
                 lf = lf.sort("_row_order").unique(subset=["file_id", "stop_id"], keep="first", maintain_order=True)
         lf = lf.drop("_row_order")
-
         return lf
 
     def filter_by_aoi(
@@ -467,6 +479,57 @@ class Stops:
         return indexed.select("idx", "stop_id").with_columns(
             pl.Series("cluster", [labels[i] for i in indexed["idx"].to_list()])
         ).select("stop_id", "cluster")
+
+    def merge_close_stops(self, distance: float, stop_times=None) -> dict:
+        """Gives every group of stops closer than `distance` meters (transitive) one `stop_id`: the smallest id of the group.
+
+        Rewrites `stop_id` (and `parent_station` values that name a merged stop) in `self.lf` / `self.gdf`, keeping one row per merged
+        stop, and in `stop_times.lf` when given. Returns the `{old stop_id: new stop_id}` map of the stops that changed.
+
+        Args:
+            distance: Merge distance in metres.
+            stop_times: Optional stop times model to rewrite too.
+        """
+        coords = (
+            self.lf.select(["stop_id", "stop_lat", "stop_lon"])
+            .filter(pl.col("stop_id").is_not_null() & pl.col("stop_lat").is_not_null() & pl.col("stop_lon").is_not_null())
+            .unique("stop_id")
+            .sort("stop_id")
+            .collect()
+        )
+        if coords.height < 2:
+            return {}
+        labelled = self._cluster_by_distance(coords, distance)
+        canon = labelled.group_by("cluster").agg(pl.col("stop_id").min().alias("new_stop_id"))
+        mapping = labelled.join(canon, on="cluster").filter(pl.col("stop_id") != pl.col("new_stop_id")).select("stop_id", "new_stop_id")
+        if mapping.is_empty():
+            return {}
+        m = dict(zip(mapping["stop_id"].to_list(), mapping["new_stop_id"].to_list()))
+        mlf = mapping.lazy()
+
+        def remap(lf, col):
+            return (
+                lf.join(mlf.rename({"stop_id": "_old", "new_stop_id": "_new"}), left_on=col, right_on="_old", how="left")
+                .with_columns(pl.coalesce([pl.col("_new"), pl.col(col)]).alias(col))
+                .drop("_new")
+            )
+
+        names = self.lf.collect_schema().names()
+        lf = remap(self.lf, "stop_id")
+        if "parent_station" in names:
+            lf = remap(lf, "parent_station")
+        self.lf = lf.unique("stop_id", keep="first", maintain_order=True)
+        if self.gdf is not None and len(self.gdf) and "stop_id" in self.gdf.columns:
+            gdf = self.gdf.copy()
+            gdf["stop_id"] = gdf["stop_id"].map(lambda v: m.get(v, v))
+            if "parent_station" in gdf.columns:
+                gdf["parent_station"] = gdf["parent_station"].map(lambda v: m.get(v, v))
+            self.gdf = gdf.drop_duplicates("stop_id", keep="first").reset_index(drop=True)
+        if stop_times is not None:
+            stop_times.lf = remap(stop_times.lf, "stop_id")
+        if getattr(self, "stop_ids", None) is not None:
+            self.stop_ids = list(dict.fromkeys(m.get(i, i) for i in self.stop_ids))
+        return m
 
     def group_stops(self, distance: float):
         """
@@ -711,6 +774,8 @@ class Stops:
         )
         stops = stops.filter(pl.col("stop_id").is_not_null() & (pl.col("stop_id") != ""))
         stops = stops.filter(pl.col("stop_lat").is_not_null() & pl.col("stop_lon").is_not_null())
-        
+        known = list(getattr(self, "conflicting_stop_ids", None) or [])
+        stops = self._resolve_duplicate_ids(stops)   # the same rule as the first read
+        self.conflicting_stop_ids = sorted(set(known) | set(self.conflicting_stop_ids))
         self.lf = stops
         return None

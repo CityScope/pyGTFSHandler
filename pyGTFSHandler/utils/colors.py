@@ -51,7 +51,14 @@ COLORBLIND_SAFE_PALETTE = [
 def route_id_to_color(route_id: str) -> str:
     """Hashes `route_id` to a deterministic, varied hex color (no leading
     `#`), by picking a hue around the color wheel and a fixed
-    saturation/lightness so results stay readable as marker/badge fills."""
+    saturation/lightness so results stay readable as marker/badge fills.
+
+    Args:
+        route_id: Any route id.
+
+    Returns:
+        Hex colour without ``#``.
+    """
     digest = hashlib.md5(str(route_id).encode("utf-8")).hexdigest()
     hue = (int(digest[:8], 16) % 360) / 360.0
     r, g, b = colorsys.hls_to_rgb(hue, _LIGHTNESS, _SATURATION)
@@ -60,7 +67,14 @@ def route_id_to_color(route_id: str) -> str:
 
 def relative_luminance(hex_color: str) -> float:
     """WCAG-style perceived-luminance approximation (0-255 scale) for a hex
-    color string (with or without leading `#`)."""
+    color string (with or without leading `#`).
+
+    Args:
+        hex_color: Hex colour, with or without ``#``.
+
+    Returns:
+        Luminance from 0 to 255 (255 for an invalid colour).
+    """
     hex_color = hex_color.lstrip("#")
     if len(hex_color) != 6:
         return 255.0
@@ -72,5 +86,12 @@ def relative_luminance(hex_color: str) -> float:
 
 def contrasting_text_color(hex_color: str) -> str:
     """Returns `"000000"` or `"ffffff"`, whichever contrasts better against
-    `hex_color` as a background, using WCAG-ish relative luminance."""
+    `hex_color` as a background, using WCAG-ish relative luminance.
+
+    Args:
+        hex_color: Background hex colour.
+
+    Returns:
+        ``"000000"`` or ``"ffffff"``.
+    """
     return "000000" if relative_luminance(hex_color) > 150 else "ffffff"

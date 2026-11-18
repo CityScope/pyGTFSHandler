@@ -168,12 +168,13 @@ class Calendar:
                     .select("service_ids")
                     .rename({"service_ids": "service_id"})
                     .explode("service_id")
-                    .unique()
+                    .drop_nulls("service_id")   # a day without any service explodes to null; `unique()` order is random, so a null used to
+                    .unique()                   # land first at random and wipe every service id ("No trips found in time range")
+                    .sort("service_id")
                 )
                 self.service_ids = service_ids_df["service_id"].to_list()
 
-            if (len(self.service_ids) > 0) and (self.service_ids[0] is None):
-                self.service_ids = []
+            self.service_ids = [s for s in self.service_ids if s is not None]
 
             if self.lf is not None:
                 self.lf = self.lf.join(
@@ -751,6 +752,15 @@ class Calendar:
         Split out so date_type filters that only need `weekend` (e.g. a
         plain `"weekend"` request) never trigger the network-dependent
         holiday lookup.
+
+        Args:
+            data: Table with a ``weekday`` column (and dates).
+            lon: Longitude of the feed (for the holiday country).
+            lat: Latitude of the feed.
+            needs_holiday: Also add the ``holiday`` column.
+
+        Returns:
+            The table with ``weekend`` (and ``holiday``).
         """
         # If LazyFrame, collect to DataFrame
         if isinstance(data, pl.LazyFrame):

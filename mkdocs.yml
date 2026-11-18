@@ -3,9 +3,6 @@ site_description: Handle GTFS files fast in python
 repo_url: https://github.com/CityScope/pyGTFSHandler
 repo_name: pyGTFSHandler
 
-not_in_nav: |
-  HOSTING.md
-
 theme:
   name: material
   palette:
@@ -51,6 +48,7 @@ nav:
       - Downloaders:
           - Base: api/downloaders/base.md
           - Mobility Database: api/downloaders/mobility_database.md
+          - Mobility Database catalog (no key): api/downloaders/mobility_database_catalog.md
           - TransitLand: api/downloaders/transitland.md
           - Spain (NAP): api/downloaders/spain.md
       - Maps:
@@ -59,12 +57,41 @@ nav:
           - Route Map: api/maps/route_map.md
           - Style: api/maps/style.md
       - Utils: api/utils.md
+      - Other modules:
+          - cache: api/more/cache.md
+          - downloaders.usa: api/more/downloaders/usa.md
+          - downloaders.usa.brt: api/more/downloaders/usa/brt.md
+          - downloaders.usa.ntd: api/more/downloaders/usa/ntd.md
+          - downloaders.usa.us_feeds: api/more/downloaders/usa/us_feeds.md
+          - downloaders.utils: api/more/downloaders/utils.md
+          - downloaders.utils.aoi: api/more/downloaders/utils/aoi.md
+          - downloaders.utils.config: api/more/downloaders/utils/config.md
+          - downloaders.utils.coverage_check: api/more/downloaders/utils/coverage_check.md
+          - downloaders.utils.dates: api/more/downloaders/utils/dates.md
+          - downloaders.utils.download: api/more/downloaders/utils/download.md
+          - downloaders.utils.fleet_frequency: api/more/downloaders/utils/fleet_frequency.md
+          - downloaders.utils.historic: api/more/downloaders/utils/historic.md
+          - downloaders.utils.http: api/more/downloaders/utils/http.md
+          - downloaders.utils.models: api/more/downloaders/utils/models.md
+          - downloaders.utils.naming: api/more/downloaders/utils/naming.md
+          - downloaders.utils.osm_extract: api/more/downloaders/utils/osm_extract.md
+          - plots: api/more/plots.md
+          - plots.example_notebooks: api/more/plots/example_notebooks.md
+          - representative_date: api/more/representative_date.md
+          - utils.basemap: api/more/utils/basemap.md
+          - utils.feed_dedupe: api/more/utils/feed_dedupe.md
+          - utils.io: api/more/utils/io.md
+          - utils.plot_helpers: api/more/utils/plot_helpers.md
+          - utils.processing_helpers: api/more/utils/processing_helpers.md
+          - utils.stack_gtfs: api/more/utils/stack_gtfs.md
+          - utils.trip_dedupe: api/more/utils/trip_dedupe.md
   - Methodology:
       - Overview: methodology/index.md
       - Calendar Handling: methodology/calendar.md
       - Frequency Expansion: methodology/frequencies.md
       - Direction & Headway: methodology/direction-headway.md
       - Edges & Filtering: methodology/edges-filtering.md
+      - GTFS for a New Area (agent guide): methodology/new_area_gtfs_agent_guide.md
   - Examples:
       - Overview: examples/index.md
       - Quickstart: examples/quickstart.ipynb
@@ -97,6 +124,7 @@ plugins:
         python:
           paths: ["."]
           options:
+            preload_modules: [geohierarchy]   # functions re-exported from geohierarchy (a dependency) are documented from it
             docstring_style: google
             show_source: true
             show_root_heading: true

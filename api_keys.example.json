@@ -1,0 +1,6 @@
+{
+  "mobility_database": "Mobility Database refresh token (https://mobilitydatabase.org, account, then 'refresh token'); env MOBILITY_DATABASE_REFRESH_TOKEN",
+  "transitland": "Transitland API key (https://www.transit.land, account, API key); env TRANSITLAND_API_KEY",
+  "nap_es": "Spain NAP API key (https://nap.transportes.gob.es, register); env NAP_API_KEY",
+  "ntd": "optional Socrata app token (https://data.transportation.gov); env SOCRATA_APP_TOKEN"
+}

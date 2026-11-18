@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+"""The ``stop_times.txt`` table: arrival and departure times of every trip at every stop, with times in seconds."""
 import polars as pl
 from pathlib import Path
 from typing import Union, List, Tuple, Optional, Dict

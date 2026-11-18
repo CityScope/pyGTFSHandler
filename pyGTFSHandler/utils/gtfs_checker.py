@@ -50,6 +50,15 @@ import copy
 def parse_date(d):
     """
     Parse a date from various formats and return an int in YYYYMMDD format.
+
+    Args:
+        d: Date as text or int in one of the usual formats.
+
+    Returns:
+        The date as ``YYYYMMDD`` text.
+
+    Raises:
+        ValueError: If no format matches.
     """
     if isinstance(d, int):
         d = str(d)
@@ -81,6 +90,15 @@ def parse_time(t: str) -> str:
             4 digits (HHMM) -> HH:MM:00
             6 digits (HHMMSS) -> HH:MM:SS
       Supports hours up to 47.
+
+    Args:
+        t: Time text or int.
+
+    Returns:
+        ``HH:MM:SS``.
+
+    Raises:
+        ValueError: For an invalid time or hours over 47.
     """
     if isinstance(t, int):
         t = str(t)
@@ -237,6 +255,10 @@ def normalize_string(s: str, *, strict: bool = True) -> str:
 
     Returns:
         str: Normalized string
+
+    Args:
+        s: Text.
+        strict: Strict mode (see above).
     """
     if not isinstance(s, str):
         raise TypeError("Input must be a string.")
@@ -280,6 +302,9 @@ def normalize_df(lf: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame
 
     Returns:
         pl.LazyFrame | pl.DataFrame: The normalized LazyFrame or DataFrame.
+
+    Args:
+        lf: Input LazyFrame or DataFrame.
     """
     # Get the schema to avoid triggering expensive computation in lazy mode
     schema = lf.collect_schema()
@@ -444,6 +469,12 @@ def is_recognized_extended_route_type(route_type: int) -> bool:
     `models/routes.py` to distinguish "recognized extended code with no
     GTFS analog" (fine, just excluded from mode-based analysis) from
     "genuinely unrecognized value" (a real data error worth raising on).
+
+    Args:
+        route_type: GTFS or extended route type.
+
+    Returns:
+        True if documented.
     """
     if not isinstance(route_type, int):
         return False
@@ -463,6 +494,9 @@ def extended_to_standard_route_type(route_type: int) -> int | None:
         recognized extended category -- e.g. Air/Taxi/Misc -- with no
         closer standard-GTFS analog; use `is_recognized_extended_route_type`
         to tell these two cases apart).
+
+    Args:
+        route_type: GTFS or extended route type.
     """
 
     # --- If already a standard GTFS type, return unchanged ---

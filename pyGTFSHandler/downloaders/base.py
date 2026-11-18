@@ -68,6 +68,13 @@ class BaseGTFSDownloader(ABC):
 
         Returns:
             A list of `GTFSFeedMetadata` describing the matching feeds.
+
+        Args:
+            *args: Source-specific filters.
+            **kwargs: Source-specific filters.
+
+        Raises:
+            NotImplementedError: Always, in the base class.
         """
         raise NotImplementedError
 

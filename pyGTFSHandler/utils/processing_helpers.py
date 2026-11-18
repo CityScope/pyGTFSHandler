@@ -61,6 +61,16 @@ LEVEL_OF_SERVICES = [
 ]
 
 def most_frequent_row_range(values, bins=5):
+    """Indices of the most common level among the values (values under half the 90th percentile are ignored), binned into
+    ``bins`` levels.
+
+    Args:
+        values: Sequence of numbers (e.g. service per day).
+        bins: Number of levels.
+
+    Returns:
+        List of indices.
+    """
     values = np.asarray(values)
 
     # Thresholding
@@ -107,6 +117,19 @@ def most_frequent_row_range(values, bins=5):
     return indices_in_range.tolist()
 
 def most_frequent_row_index(values, bins=5):
+    """The most typical row: the middle row of the longest run of the most common level (see
+    :func:`most_frequent_row_range`).
+
+    Args:
+        values: Sequence, or table with ``date`` and ``service_intensity``.
+        bins: Number of levels.
+
+    Returns:
+        The row index, or None when no row qualifies.
+
+    Raises:
+        Exception: If a table has no ``date`` column.
+    """
     if isinstance(values,pl.LazyFrame):
         values = values.collect()
 
@@ -180,6 +203,17 @@ def most_frequent_row_index(values, bins=5):
         return max_idx
 
 def assign_service_quality_to_interval(interval, route_type, service_matrix=SERVICE_MATRIX):
+    """Service quality class for a headway, from the first row of ``service_matrix`` whose interval is at least that
+    headway.
+
+    Args:
+        interval: Headway in minutes.
+        route_type: Column of the matrix (mode).
+        service_matrix: Table of intervals and classes.
+
+    Returns:
+        The class, or None beyond the matrix.
+    """
     l = service_matrix.loc[service_matrix['interval'] >= interval, route_type]
     if len(l) > 0:
         return l.iloc[0]

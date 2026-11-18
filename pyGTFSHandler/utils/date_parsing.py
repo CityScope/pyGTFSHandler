@@ -32,14 +32,30 @@ EPOCH = date(1970, 1, 1)
 
 
 def datetime_to_days_since_epoch(dt: Union[datetime, date]) -> int:
-    """Convert datetime/date to number of days since 1970-01-01."""
+    """Convert datetime/date to number of days since 1970-01-01.
+
+    Args:
+        dt: A date or datetime.
+
+    Returns:
+        Days since 1970-01-01.
+    """
     if isinstance(dt, datetime):
         dt = dt.date()
     return (dt - EPOCH).days
 
 
 def get_holidays(year: int, country_code: str, subdivision_code: Optional[str] = None) -> pl.DataFrame:
-    """Fetch public holidays for a country and optional subdivision."""
+    """Fetch public holidays for a country and optional subdivision.
+
+    Args:
+        year: Year.
+        country_code: ISO 3166-1 alpha-2 code.
+        subdivision_code: Optional ISO 3166-2 code; only its holidays and national ones are kept.
+
+    Returns:
+        One row per holiday (empty when the service is unreachable).
+    """
     url = f"https://date.nager.at/api/v3/PublicHolidays/{year}/{country_code}"
 
     empty_df = pl.DataFrame(schema={

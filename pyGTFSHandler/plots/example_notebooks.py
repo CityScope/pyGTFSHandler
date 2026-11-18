@@ -16,7 +16,14 @@ from ..utils.colors import CB_BLACK, CB_BLUE, CB_PURPLE, CB_SKY, CB_VERMILLION, 
 
 
 def bearing_xy(deg):
-    """Unit-circle `(x, y)` for a compass bearing (degrees from north)."""
+    """Unit-circle `(x, y)` for a compass bearing (degrees from north).
+
+    Args:
+        deg: Bearing in degrees from north.
+
+    Returns:
+        ``(x, y)`` on the unit circle.
+    """
     rad = math.radians(deg)
     return math.sin(rad), math.cos(rad)
 
@@ -24,7 +31,16 @@ def bearing_xy(deg):
 def compute_headway(departures, start, end):
     """The library's own headway formula, reproduced standalone for the
     notebooks' worked examples -- see `analysis/stops.py`'s
-    `get_headway_at_stops` for the real, integrated implementation."""
+    `get_headway_at_stops` for the real, integrated implementation.
+
+    Args:
+        departures: Departure times (seconds).
+        start: Window start (seconds).
+        end: Window end (seconds).
+
+    Returns:
+        Headway in seconds.
+    """
     d = np.sort(np.asarray(departures, dtype=float))
     g0 = (d[0] - start) + (end - d[-1])
     gaps = np.diff(d)
@@ -44,6 +60,17 @@ def plot_network(ax, stop_coords, branches, title, lower_labels=frozenset(), leg
     that traverse the exact same physical segment (e.g. a shape and its
     exact reverse) draw exactly on top of one another, and only the
     topmost color is ever visible.
+
+    Args:
+        ax: Matplotlib axes.
+        stop_coords: ``{stop_id: (x, y)}``.
+        branches: ``[(stop path, colour, label or None), ...]``.
+        title: Panel title.
+        lower_labels: Stops labelled below their dot.
+        legend: Draw a legend.
+        alpha: Line opacity.
+        linewidth: Line width.
+        lane_offset: Sideways offset between branches sharing a segment.
     """
     n = len(branches)
     for branch_idx, (path, color, label) in enumerate(branches):
@@ -95,7 +122,18 @@ def plot_network(ax, stop_coords, branches, title, lower_labels=frozenset(), leg
 
 
 def plot_headway_bar(ax, labels, values, colors, title, ylabel="headway (min)", ylim=None, fmt="{:.1f}"):
-    """A simple annotated bar chart -- one bar per (label, value, color)."""
+    """A simple annotated bar chart -- one bar per (label, value, color).
+
+    Args:
+        ax: Matplotlib axes.
+        labels: Bar labels.
+        values: Bar values.
+        colors: Bar colours.
+        title: Panel title.
+        ylabel: Y axis label.
+        ylim: Optional ``(min, max)`` of the y axis.
+        fmt: Format of the value labels.
+    """
     bars = ax.bar(labels, values, color=colors, width=0.55)
     for b, v in zip(bars, values):
         ax.annotate(fmt.format(v), (b.get_x() + b.get_width() / 2, v), textcoords="offset points", xytext=(0, 4), ha="center", fontweight="bold", fontsize=9)
@@ -114,6 +152,13 @@ def plot_bearing_correction(fig, ax, bearings_by_shape, shape_colors, reconcile_
     correction's effect (or lack of one) is visible directly, rather than
     split across two separate circles. `bearings_by_shape`: `{shape_id:
     (fwd, bwd)}`.
+
+    Args:
+        fig: Matplotlib figure.
+        ax: Matplotlib axes.
+        bearings_by_shape: ``{shape_id: (forward, backward)}`` in degrees.
+        shape_colors: ``{shape_id: colour}``.
+        reconcile_fn: Function forcing a pair 180 degrees apart.
     """
     circle = plt.Circle((0, 0), 1, fill=False, color="lightgray", linewidth=1)
     ax.add_patch(circle)
@@ -146,6 +191,13 @@ def plot_widest_gap_circle(ax, corrected_by_shape, split, shape_colors, bin_colo
     """One compass circle: every shape's corrected `(fwd, bwd)` pair as
     arrows, the widest-gap `split` boundary as a dashed diameter, and the
     two resulting half-circles shaded by bin.
+
+    Args:
+        ax: Matplotlib axes.
+        corrected_by_shape: ``{shape_id: (forward, backward)}`` after correction.
+        split: Split angle in degrees.
+        shape_colors: ``{shape_id: colour}``.
+        bin_color: ``{bin: colour}`` of the two half circles.
     """
     bin_color = bin_color or {0: CB_SKY, 1: CB_VERMILLION}
     circle = plt.Circle((0, 0), 1, fill=False, color="lightgray", linewidth=1)
@@ -190,6 +242,13 @@ def plot_widest_gap_compass(ax, bearings_by_shape, title, split_fn, bins_fn):
     `bearings_by_shape`: `{shape_id: [angle_degrees, ...]}`.
     `split_fn`/`bins_fn`: the widest-gap split/bin functions to apply
     (`models.shapes._split_angle` / `_widest_gap_split`).
+
+    Args:
+        ax: Matplotlib axes.
+        bearings_by_shape: ``{shape_id: [degrees, ...]}``.
+        title: Panel title.
+        split_fn: Function returning the split angle of a list of bearings.
+        bins_fn: Function returning the bin of each bearing.
     """
     bins = bins_fn(bearings_by_shape)
     split = split_fn(bearings_by_shape)
@@ -247,6 +306,19 @@ def plot_sector_split(ax, bearings_by_label, colors_by_label, split, n_divisions
     `direction_ids`: optional `{label: id}` (e.g. each shape's resulting
     `direction_id`/sector) -- when given, printed as a line of text below
     the circle (and below the legend, if both are shown).
+
+    Args:
+        ax: Matplotlib axes.
+        bearings_by_label: ``{label: bearing}`` in degrees.
+        colors_by_label: ``{label: colour}``.
+        split: Split angle in degrees.
+        n_divisions: Number of direction bins (2 x sectors).
+        title: Panel title.
+        show_labels: Write the labels at the arrow tips.
+        arrow_scale: Arrow length.
+        legend: Draw a legend.
+        direction_ids: Optional ``{label: direction id}`` shown in the legend.
+        legend_colors: Optional legend colours.
     """
     n_sectors = 2 * n_divisions
     boundary = split + (90 / n_divisions if n_divisions % 2 == 0 else 0)
@@ -310,6 +382,14 @@ def plot_split_line_network(ax, stop_coords, branches, split_by_stop, title, lin
     """The network (faint), with a dashed local direction-split line
     drawn through every stop that has one. `split_by_stop`: `{stop_id:
     split_angle_degrees_or_None}`.
+
+    Args:
+        ax: Matplotlib axes.
+        stop_coords: ``{stop_id: (x, y)}``.
+        branches: ``[(stop path, colour, label), ...]``.
+        split_by_stop: ``{stop_id: split angle or None}``.
+        title: Panel title.
+        line_half_len: Half length of each split line.
     """
     for path, color, _label in branches:
         xs = [stop_coords[s][0] for s in path]
@@ -342,6 +422,16 @@ def plot_mean_point_map(ax, stop_coords, branches, hub_id, mean_points, title, l
     label (the dots themselves still show) -- useful once the
     mean-point arrows/legend already carry enough labeling on their own
     and the stop text would just add clutter.
+
+    Args:
+        ax: Matplotlib axes.
+        stop_coords: ``{stop_id: (x, y)}``.
+        branches: ``[(stop path, colour, label), ...]``.
+        hub_id: The hub stop.
+        mean_points: ``[(label, colour, (lon, lat)), ...]``.
+        title: Panel title.
+        lower_labels: Stops labelled below their dot.
+        show_stop_labels: Label the non-hub stops.
     """
     for path, color, _label in branches:
         xs = [stop_coords[s][0] for s in path]
@@ -393,6 +483,11 @@ def plot_mean_point_map(ax, stop_coords, branches, hub_id, mean_points, title, l
 def plot_departure_timeline(ax, groups, title):
     """A compact horizontal timeline: one row of tick marks per `(label,
     color, departure_seconds, y_lo, y_hi)` in `groups`.
+
+    Args:
+        ax: Matplotlib axes.
+        groups: ``[(label, colour, departure seconds, y_lo, y_hi), ...]``.
+        title: Panel title.
     """
     y_labels, y_positions = [], []
     for label, color, departures, y_lo, y_hi in groups:

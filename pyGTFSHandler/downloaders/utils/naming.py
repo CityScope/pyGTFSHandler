@@ -9,36 +9,13 @@ such strings into filesystem-safe names, and `build_feed_filename` builds
 the actual on-disk file stem from a feed's id/name/provider.
 """
 
-import re
-import unicodedata
+import re  # noqa: F401
+
+from geohierarchy.naming import normalize_text, sanitize_filename  # noqa: F401  (one implementation, in geohierarchy)
 
 
-def normalize_text(text: str) -> str:
-    """Lowercase a string and strip diacritics/accents.
-
-    Args:
-        text: Input text.
-
-    Returns:
-        The lowercased, accent-stripped text.
-    """
-    text = str(text).lower().strip()
-    return "".join(
-        c for c in unicodedata.normalize("NFD", text) if unicodedata.category(c) != "Mn"
-    )
 
 
-def sanitize_filename(name: str) -> str:
-    """Replace characters unsafe for filenames with underscores.
-
-    Args:
-        name: Raw string to sanitize (e.g. a feed or provider name).
-
-    Returns:
-        A filesystem-safe string containing only letters, digits,
-        underscores, and hyphens.
-    """
-    return re.sub(r"[^a-zA-Z0-9_\-]", "_", normalize_text(name))
 
 
 def build_feed_filename(

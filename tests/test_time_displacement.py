@@ -108,3 +108,45 @@ def test_no_nan_distance_weight_across_many_closely_spaced_stops():
         result = time_displacement(_frame(rows), secs_disp=secs_disp).collect()
         nan_count = result["distance_weight"].is_nan().sum()
         assert nan_count == 0, f"secs_disp={secs_disp}: {nan_count} NaN distance_weight rows"
+
+
+# ---- distance="straight" (2026-11-17: speed on every map is the straight-line distance covered 15 min before / after the stop) ----
+def _u_trip():
+    # a U-shaped trip: north 1 km, east 1 km, south 1 km, 300 s per leg (shape distance 1 km per leg)
+    dlat = 1000.0 / 111195.0
+    dlon = dlat / math.cos(math.radians(40.0))
+    pts = [(40.0, 0.0), (40.0 + dlat, 0.0), (40.0 + dlat, dlon), (40.0, dlon)]
+    return [{"trip_id": "U", "shape_time_traveled": 300 * i, "shape_total_travel_time": 900, "shape_dist_traveled": 1000.0 * i,
+             "stop_lat": la, "stop_lon": lo} for i, (la, lo) in enumerate(pts)]
+
+
+def test_straight_line_shorter_than_shape_on_a_winding_trip():
+    shape = time_displacement(_frame(_u_trip()), secs_disp=900).collect()
+    straight = time_displacement(_frame(_u_trip()), secs_disp=900, distance="straight").collect()
+    s0 = shape.filter(pl.col("shape_time_traveled") == 0)["distance_weight"][0]
+    l0 = straight.filter(pl.col("shape_time_traveled") == 0)["distance_weight"][0]
+    assert s0 == pytest.approx(3000.0)
+    assert l0 == pytest.approx(1000.0, rel=2e-3)   # the trip ends 1 km east of where it started
+    assert "lat_lb" not in straight.columns and "_lat" not in straight.columns
+
+
+def test_straight_line_interpolates_between_stops():
+    # 150 s after the first stop: half-way up the first leg, 500 m away in a straight line
+    r = time_displacement(_frame(_u_trip()), secs_disp=150, distance="straight").collect()
+    assert r.filter(pl.col("shape_time_traveled") == 0)["distance_weight"][0] == pytest.approx(500.0, rel=2e-3)
+    # 450 s after the first stop: half-way along the top leg, sqrt(1^2 + 0.5^2) km away
+    r = time_displacement(_frame(_u_trip()), secs_disp=450, distance="straight").collect()
+    assert r.filter(pl.col("shape_time_traveled") == 0)["distance_weight"][0] == pytest.approx(1000.0 * math.sqrt(1.25), rel=2e-3)
+
+
+def test_straight_line_backward_and_clamped():
+    r = time_displacement(_frame(_u_trip()), secs_disp=-900, distance="straight").collect()
+    last = r.filter(pl.col("shape_time_traveled") == 900)
+    assert last["distance_weight"][0] == pytest.approx(1000.0, rel=2e-3) and last["time_weight"][0] == 900
+    first = r.filter(pl.col("shape_time_traveled") == 0)   # nothing before the first stop: 0 distance, 0 time
+    assert first["distance_weight"][0] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_unknown_distance_method():
+    with pytest.raises(ValueError):
+        time_displacement(_frame(_u_trip()), secs_disp=60, distance="crow")

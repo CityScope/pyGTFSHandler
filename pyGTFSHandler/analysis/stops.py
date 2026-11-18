@@ -527,49 +527,33 @@ class FeedAnalysisMixin:
         Headway is computed using the harmonic mean of inter-departure headways.
         Data may be aggregated by route or by directional clusters.
 
-        Parameters
-        ----------
-        date : datetime | date
-            Date for filtering service.
-        start_time : datetime | time, default time.min
-            Start of the analysis window.
-        end_time : datetime | time, default time.max
-            End of the analysis window.
-        route_types : list[int] | int | str | None
-            Filter by GTFS route types.
-        by : str, {"route_id", "shape_direction"}
-            Determines how services are grouped before headway computation.
-        at : str, {"parent_station", "stop_id"}
-            Spatial unit for the headway calculation.
-        how : {"all", "best", "mean"}
-            Post-aggregation method:
-            - "all": return all route/direction combinations  
-            - "best": pick the service with smallest headway  
-            - "add": harmonic mean of all service headways together (route headways are added together)
-        n_divisions : int, default 1
-            Number of directional bins when using `shape_direction`.
-        mix_directions : bool, default False
-            For how 'mean' mix outbound and inbound directions of same route as different routes
-        direction_method : {"both", "forward", "backward"}, default "both"
-            Only used when `by="shape_direction"`: how the forward/backward
-            bearing pair at each stop is reconciled before clustering.
-            "both" splits the correction evenly between forward and
-            backward (the default); "forward" trusts the forward bearing
-            as-is; "backward" trusts the backward bearing as-is and
-            replaces forward with its antipode. See
-            `models.shapes._reconcile_fwd_bwd` for the equivalent used by
-            `direction_id` assignment.
+        Args:
+            date (datetime | date): Date for filtering service.
+            start_time (datetime | time, default time.min): Start of the analysis window.
+            end_time (datetime | time, default time.max): End of the analysis window.
+            route_types (list[int] | int | str | None): Filter by GTFS route types.
+            by (str, {"route_id", "shape_direction"}): Determines how services are grouped before headway computation.
+            at (str, {"parent_station", "stop_id"}): Spatial unit for the headway calculation.
+            how ({"all", "best", "mean"}): Post-aggregation method:
+                - "all": return all route/direction combinations
+                - "best": pick the service with smallest headway
+                - "add": harmonic mean of all service headways together (route headways are added together)
+            n_divisions (int, default 1): Number of directional bins when using `shape_direction`.
+            mix_directions (bool, default False): For how 'mean' mix outbound and inbound directions of same route as different routes
+            direction_method ({"both", "forward", "backward"}, default "both"): Only used when `by="shape_direction"`: how the forward/backward
+                bearing pair at each stop is reconciled before clustering.
+                "both" splits the correction evenly between forward and
+                backward (the default); "forward" trusts the forward bearing
+                as-is; "backward" trusts the backward bearing as-is and
+                replaces forward with its antipode. See
+                `models.shapes._reconcile_fwd_bwd` for the equivalent used by
+                `direction_id` assignment.
 
-        Returns
-        -------
-        pl.LazyFrame
-            A lazy frame containing headway metrics.
+        Returns:
+            pl.LazyFrame: A lazy frame containing headway metrics.
 
-        Raises
-        ------
-        ValueError
-            If unsupported combination of parameters is passed.
-        """
+        Raises:
+            ValueError: If unsupported combination of parameters is passed."""
 
         # --------------------
         # Base GTFS filtering
@@ -708,6 +692,21 @@ class FeedAnalysisMixin:
         numerically identical headway results.
 
         See `get_headway_at_stops` for parameter documentation.
+
+        Args:
+            date: Service date.
+            start_time: Start of the analysis window.
+            end_time: End of the analysis window.
+            route_types: Optional route type filter.
+            by: How services are grouped before the headway: ``"route_id"`` or ``"shape_direction"``.
+            at: Stop unit: ``"parent_station"`` or ``"stop_id"``.
+            how: ``"all"`` (every route / direction), ``"best"`` (smallest headway) or ``"add"`` (routes combined).
+            n_divisions: Number of direction bins with ``by="shape_direction"``.
+            mix_directions: Treat the two directions of a route as different routes.
+            direction_method: How forward / backward bearings are reconciled: ``"both"``, ``"forward"`` or ``"backward"``.
+
+        Returns:
+            A lazy frame with the headway per stop (and route / direction).
         """
         gtfs_lf = self.filter(
             date=date,
@@ -766,6 +765,59 @@ class FeedAnalysisMixin:
             delete_last_stop=False,
         )
 
+    def get_window_distances(
+            self,
+            date: datetime | date,
+            window_min: float = 15,
+            distance: str = "straight",
+            direction: str = "both",
+        ) -> pl.LazyFrame:
+        """Distance and time each trip covers in a window around each of its stops.
+
+        The trip's position `window_min` minutes after (and/or before) the
+        stop is interpolated between the stops that bracket that moment; the
+        window is cut at the trip's first and last stop. Every stop of every
+        trip running on `date` is used (no time-of-day or area filter), so
+        the window can reach stops outside the study area or time window.
+
+        Args:
+            date: Service date.
+            window_min: Minutes on each side of the stop (default 15).
+            distance: `"straight"` (default) -- straight-line distance from
+                the stop to the trip's position, so a winding line covers
+                less distance in the same time than a direct one; `"shape"`
+                -- distance along the shape.
+            direction: `"both"` (before + after the stop), `"forward"`
+                (after) or `"backward"` (before).
+
+        Returns:
+            pl.LazyFrame: one row per (`trip_id`, `stop_sequence`) with
+            `distance_weight` (metres) and `time_weight` (seconds).
+        """
+        if direction not in ("both", "forward", "backward"):
+            raise ValueError(f"direction must be 'both', 'forward' or 'backward', not {direction!r}")
+        lf = self.filter(date=date, in_aoi=False, frequencies=True, delete_last_stop=False).select(
+            "trip_id", "stop_id", "stop_sequence", "shape_time_traveled", "shape_dist_traveled", "shape_total_travel_time")
+        if distance == "straight":
+            lf = lf.join(self.stops.lf.select("stop_id", "stop_lat", "stop_lon").unique("stop_id"), on="stop_id", how="left")
+        lf = lf.unique(["trip_id", "stop_sequence"])
+        secs = int(round(window_min * 60))
+        signs = {"both": (1, -1), "forward": (1,), "backward": (-1,)}[direction]
+        out = None
+        for sign in signs:
+            side = time_parsing.time_displacement(lf, secs_disp=sign * secs, distance=distance).select(
+                "trip_id", "stop_sequence",
+                pl.col("distance_weight").fill_null(0).alias(f"_d{sign}"),
+                pl.col("time_weight").fill_null(0).alias(f"_t{sign}"))
+            out = side if out is None else out.join(side, on=["trip_id", "stop_sequence"], how="full", coalesce=True)
+        d_cols = [f"_d{sign}" for sign in signs]
+        t_cols = [f"_t{sign}" for sign in signs]
+        return out.select(
+            "trip_id", "stop_sequence",
+            pl.sum_horizontal([pl.col(c).fill_null(0) for c in d_cols]).alias("distance_weight"),
+            pl.sum_horizontal([pl.col(c).fill_null(0) for c in t_cols]).alias("time_weight"),
+        )
+
     def get_speed_at_stops(
             self,
             date: datetime | date,
@@ -776,13 +828,13 @@ class FeedAnalysisMixin:
             at: str = "parent_station",
             how: str = "mean",
             direction: str = "both",
-            time_step: int = 15
+            window_min: float = 15,
+            distance: str = "straight",
         ) -> pl.DataFrame:
-        """Computes average travel speed of trips passing through each stop.
+        """Computes the travel speed of the trips passing through each stop.
 
-        Filters the feed to `date`/`start_time`/`end_time`/`route_types`,
-        derives per-trip speed from consecutive stop distances/times, and
-        aggregates it per stop.
+        Each trip's speed at a stop is measured over a window around it
+        (`get_window_distances`), then aggregated per stop.
 
         Args:
             date: Service date to evaluate.
@@ -793,16 +845,16 @@ class FeedAnalysisMixin:
                 `"route_id"` or `"shape_direction"`).
             at: Which stop identity column to report (e.g.
                 `"parent_station"` vs raw `"stop_id"`).
-            how: Aggregation strategy across trips at a stop (`"mean"`,
-                `"max"`, ...).
-            direction: Which travel direction(s) to include (`"both"`,
-                `"forward"`, `"backward"`).
-            time_step: Bucket size in minutes used for intermediate
-                time-binning of speed samples.
+            how: Aggregation across trips at a stop (`"mean"`: total
+                distance / total time, `"max"`, `"min"`).
+            direction: `"both"`, `"forward"` or `"backward"` window.
+            window_min: Minutes on each side of the stop (default 15).
+            distance: `"straight"` (default) or `"shape"`; see
+                `get_window_distances`.
 
         Returns:
             pl.DataFrame: One row per stop (grouped as requested), with a
-            `speed` column.
+            `speed` column (km/h).
         """
         gtfs_lf = self.filter(
             date=date,
@@ -814,42 +866,8 @@ class FeedAnalysisMixin:
             delete_last_stop=False
         )
         gtfs_lf = gtfs_lf.filter(pl.col(at).is_not_null())
-
-        if direction == "both":
-            forward = time_parsing.time_displacement(gtfs_lf,secs_disp=time_step*60)
-            forward = forward.rename({'time_weight':'time_weight_f','distance_weight':'distance_weight_f'})
-            forward = forward.with_columns(
-                pl.col("time_weight_f").fill_null(0),
-                pl.col("distance_weight_f").fill_null(0),
-            )
-            backward = time_parsing.time_displacement(gtfs_lf,secs_disp=-time_step*60)
-            backward = backward.rename({'time_weight':'time_weight_b','distance_weight':'distance_weight_b'})
-            backward = backward.with_columns(
-                pl.col("time_weight_b").fill_null(0),
-                pl.col("distance_weight_b").fill_null(0),
-            )
-            gtfs_lf = gtfs_lf.join(forward.select(['trip_id','stop_id','time_weight_f','distance_weight_f']),on=['trip_id','stop_id'],how='left')
-            gtfs_lf = gtfs_lf.join(backward.select(['trip_id','stop_id','time_weight_b','distance_weight_b']),on=['trip_id','stop_id'],how='left')
-            gtfs_lf = gtfs_lf.with_columns(
-                (pl.col("time_weight_f") + pl.col("time_weight_b")).alias("time_weight"),
-                (pl.col("distance_weight_f") + pl.col("distance_weight_b")).alias("distance_weight"),
-            )
-        elif direction == "forward":
-            forward = time_parsing.time_displacement(gtfs_lf,secs_disp=time_step*60)
-            forward = forward.with_columns(
-                pl.col("time_weight").fill_null(0),
-                pl.col("distance_weight").fill_null(0),
-            )
-            gtfs_lf = gtfs_lf.join(forward.select(['trip_id','stop_id','time_weight','distance_weight']),on=['trip_id','stop_id'],how='left')
-        elif direction == "backward":
-            backward = time_parsing.time_displacement(gtfs_lf,secs_disp=-time_step*60)
-            backward = backward.with_columns(
-                pl.col("time_weight").fill_null(0),
-                pl.col("distance_weight").fill_null(0),
-            )
-            gtfs_lf = gtfs_lf.join(backward.select(['trip_id','stop_id','time_weight','distance_weight']),on=['trip_id','stop_id'],how='left')
-        else:
-            raise Exception(f"Direction {direction} not  implemented. Only 'both', 'forward' and 'backward' are valid.")
+        gtfs_lf = gtfs_lf.join(self.get_window_distances(date, window_min, distance, direction),
+                               on=["trip_id", "stop_sequence"], how="left")
 
         gtfs_lf = gtfs_lf.with_columns(
                 (

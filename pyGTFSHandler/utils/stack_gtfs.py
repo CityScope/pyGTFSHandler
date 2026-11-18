@@ -24,6 +24,15 @@ import shutil
 
 
 def stop_ids_in_aoi(df, aoi=None):
+    """Ids of the stops inside the bounding box of ``aoi``.
+
+    Args:
+        df: Stops LazyFrame.
+        aoi: Area of interest.
+
+    Returns:
+        List of stop ids.
+    """
     aoi = aoi.to_crs(4326)
     minx, miny, maxx, maxy = aoi.total_bounds
     stop_ids = (
@@ -42,6 +51,17 @@ def stop_ids_in_aoi(df, aoi=None):
 
 
 def load_stack(filename, paths, stop_ids=[], rename_service_ids=None):
+    """Read one GTFS file from several versions of a feed into one table, with the version date of each row.
+
+    Args:
+        filename: GTFS file name, e.g. ``trips.txt``.
+        paths: Version folders (``..._start_date_<date>``).
+        stop_ids: Optional stop ids to keep.
+        rename_service_ids: Optional table mapping old to new service ids.
+
+    Returns:
+        LazyFrame with ``file_id`` and ``file_date``.
+    """
     id_cols = ["trip_id", "service_id", "route_id", "stop_id", "shape_id"]
     schema_dict, _ = gtfs_checker.get_df_schema_dict(filename)
     df = io.read_csv_list(
@@ -88,6 +108,16 @@ def load_stack(filename, paths, stop_ids=[], rename_service_ids=None):
 
 
 def rank_column(df, column, sequence_column):
+    """Give identical objects across versions one id: rows equal in every other column get the smallest original id.
+
+    Args:
+        df: Stacked table.
+        column: Id column.
+        sequence_column: Column ordering rows within an object (e.g. ``stop_sequence``).
+
+    Returns:
+        The table with ``new_<column>``.
+    """
     new_column = f"new_{column}"
     rank_columns = list(
         set(df.collect_schema().names()) - {column, "file_id", "gtfs_name", "file_date"}
@@ -105,6 +135,14 @@ def rank_column(df, column, sequence_column):
 
 
 def reorganize_service_ids(trips):
+    """One new service id per distinct set of service ids a trip runs under across versions.
+
+    Args:
+        trips: Stacked trips.
+
+    Returns:
+        Mapping table to the new ``service_<n>`` ids.
+    """
     df = (
         trips.group_by("trip_id")
         .agg(pl.col("service_id").unique().sort())  # trips -> service_id list
@@ -127,6 +165,13 @@ def reorganize_service_ids(trips):
 
 
 def historic_stack(paths, new_path, aoi=None):
+    """Merge several dated versions of one feed into a single feed in ``new_path`` (ids unified, services renamed).
+
+    Args:
+        paths: Version folders.
+        new_path: Output folder (replaced).
+        aoi: Optional area: only its stops are kept.
+    """
     paths = [Path(p) for p in paths]
     new_path = Path(new_path)
     if new_path.exists():

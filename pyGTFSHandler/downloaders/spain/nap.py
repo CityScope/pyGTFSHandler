@@ -221,8 +221,12 @@ class NAPDownloader(BaseGTFSDownloader):
             logger.error(f"Error fetching file types: {response.status_code}")
             return None
 
-        for f in response.json():
+        types = response.json()
+        for f in types:
             if normalize_text(f["nombre"]) == file_type:
+                return f["tipoFicheroId"]
+        for f in types:   # NAP renamed "GTFS" to "GTFS-ZIP" (2026): a name that starts with the requested one
+            if normalize_text(f["nombre"]).startswith(file_type):
                 return f["tipoFicheroId"]
 
         logger.warning(f"File type '{file_type}' not found.")
@@ -298,12 +302,12 @@ class NAPDownloader(BaseGTFSDownloader):
         """
         start_date, end_date = input_date(start_date, end_date)
 
-        organization = organization if isinstance(organization, list) else [organization]
-        region_type = region_type if isinstance(region_type, list) else [region_type]
-        region = region if isinstance(region, list) else [region]
-        transport_type = transport_type if isinstance(transport_type, list) else [transport_type]
+        organization = list(organization) if isinstance(organization, (list, tuple)) else [organization]
+        region_type = list(region_type) if isinstance(region_type, (list, tuple)) else [region_type]
+        region = list(region) if isinstance(region, (list, tuple)) else [region]
+        transport_type = list(transport_type) if isinstance(transport_type, (list, tuple)) else [transport_type]
         file_description = (
-            file_description if isinstance(file_description, list) else [file_description]
+            list(file_description) if isinstance(file_description, (list, tuple)) else [file_description]
         )
 
         organization_ids = [
@@ -426,6 +430,17 @@ class NAPDownloader(BaseGTFSDownloader):
 
         Returns:
             A list of `GTFSFeedMetadata`, one per matching file.
+
+        Args:
+            region: Region name(s) or NAP region id(s).
+            transport_type: Transport mode name(s) or NAP id(s).
+            organization: Organization name(s) or NAP id(s).
+            file_type: File format name or NAP id (default ``"GTFS"``).
+            region_type: Region category the ``region`` values are resolved against.
+            start_date: With ``end_date``: only files valid over this range (``"today"``, a date, or ``"%d-%m-%Y"``).
+            end_date: End of the validity range.
+            file_description: Substring(s) to match in the dataset name / description.
+            keep: With dates and several matching files per dataset: ``"newest"``, ``"oldest"`` or ``"all"``.
         """
         datasets = self.find_datasets(
             region=region,

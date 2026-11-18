@@ -219,6 +219,8 @@ class Feed(FeedFilteringMixin, FeedAnalysisMixin, FeedEdgeAnalysisMixin):
         check_files:bool=True,
         min_file_id: int = 0,
         load_shapes: bool = True,
+        same_stop_distance: float = 3.0,
+        dedupe_trips: bool = True,
     ):
         """Loads, filters and integrates one or more GTFS directories into a `Feed`.
 
@@ -253,6 +255,22 @@ class Feed(FeedFilteringMixin, FeedAnalysisMixin, FeedEdgeAnalysisMixin):
             min_file_id: Starting index used to tag rows with which source
                 `gtfs_dirs` entry they came from (`file_id` column); relevant
                 mainly when merging feeds with `concat_feeds`.
+            dedupe_trips: If `True` (default), trips that publish the same
+                service twice are removed once a SERVICE DAY is selected: at
+                load when `start_date == end_date`, otherwise when
+                `dedupe_trips_for_day(day)` is called (the scoring does).
+                Only trips running that day are compared, so service ids need
+                no checking (see `utils.trip_dedupe`): same parent-station
+                sequence, a scheduled trip inside a frequency window deleted,
+                overlapping frequency windows joined into one, repeated
+                scheduled trips collapsed.
+            same_stop_distance: Stops closer than this many meters (3 by
+                default; transitive) are the SAME stop: they all get one
+                `stop_id` (the smallest of the group) in `stops`,
+                `stop_times` and `parent_station`. This merges the copies of
+                one stop that several feeds of the same operator carry
+                (`<id>_file_0`, `<id>_file_4`, ...) and the platform records
+                of one pole. `0` disables it.
             load_shapes: If `True` (default), read real `shapes.txt`
                 geometry where available; if `False`, always use
                 straight-line stop-to-stop shapes (faster, see
@@ -281,6 +299,15 @@ class Feed(FeedFilteringMixin, FeedAnalysisMixin, FeedEdgeAnalysisMixin):
             min_file_id=min_file_id
         )
 
+        if same_stop_distance and same_stop_distance > 0:
+            self.stops.merge_close_stops(same_stop_distance, self.stop_times)
+
+        self.trip_dedupe_report = {}
+        self._dedupe_on_day_selection = dedupe_trips
+        if dedupe_trips and start_date is not None and end_date is not None and \
+                (start_date.date() if isinstance(start_date, datetime) else start_date) == (end_date.date() if isinstance(end_date, datetime) else end_date):
+            self._dedupe_trips_for_day(start_date, rebuild=False)   # one service day selected at load
+
         self.shapes, self.trip_shape_ids_lf = self.load_shapes(
             self.stops, self.stop_times, self.trips, self.gtfs_dir, use_real_shapes=load_shapes,
             collision_registry=self.collision_registry, aoi=aoi,
@@ -295,6 +322,50 @@ class Feed(FeedFilteringMixin, FeedAnalysisMixin, FeedEdgeAnalysisMixin):
             self.trips,
             self.trip_shape_ids_lf
         )
+
+    def dedupe_trips_for_day(self, day: datetime | date) -> dict:
+        """Removes the trips that publish the same service twice among the trips running on `day` (see `utils.trip_dedupe`).
+
+        Meant to be called once a service day has been selected (the scoring functions do): every trip considered runs that day, so
+        service ids are not compared. Idempotent; returns the report (counts of removed trips / joined frequency windows).
+
+        Args:
+            day: The service day.
+
+        Returns:
+            The report (counts of removed trips and joined frequency windows).
+        """
+        self._dedupe_trips_for_day(day, rebuild=True)
+        return self.trip_dedupe_report
+
+    def _dedupe_trips_for_day(self, day, rebuild: bool) -> None:
+        from .utils.trip_dedupe import dedupe_trips as _dedupe
+
+        if isinstance(day, datetime):
+            day = day.date()
+        if getattr(self, "_deduped_day", None) == day:
+            return
+        services = self.calendar.get_services_in_date(day)
+        if not services:
+            return
+        on_day = self.trips.lf.filter(pl.col("service_id").is_in(list(services)))
+        ids = on_day.select("trip_id").collect()["trip_id"].to_list()
+        keep_other = self.trips.lf.filter(~pl.col("trip_id").is_in(ids))
+        t, s, f, rep = _dedupe(
+            on_day, self.stop_times.lf.filter(pl.col("trip_id").is_in(ids)), self.stops.lf,
+            None if self.stop_times.frequencies is None else self.stop_times.frequencies.filter(pl.col("trip_id").is_in(ids)),
+            self.calendar.lf, self.calendar.exceptions_lf, single_day=True, routes=self.routes.lf,
+        )
+        gone = set(ids) - set(t.select("trip_id").collect()["trip_id"].to_list())
+        other_f = None if self.stop_times.frequencies is None else self.stop_times.frequencies.filter(~pl.col("trip_id").is_in(ids))
+        self.trips.lf = pl.concat([keep_other, t])
+        self.stop_times.lf = pl.concat([self.stop_times.lf.filter(~pl.col("trip_id").is_in(ids)), s])
+        if f is not None:
+            self.stop_times.frequencies = pl.concat([other_f, f]) if other_f is not None else f
+        self.trip_dedupe_report = rep
+        self._deduped_day = day
+        if rebuild and gone:
+            self.lf = self.build_lf(self.calendar, self.routes, self.shapes, self.stop_times, self.stops, self.trips, self.trip_shape_ids_lf)
 
     def get_representative_date(
         self,

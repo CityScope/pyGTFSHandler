@@ -185,3 +185,27 @@ class TestTwoDayOffset:
         # 50:10:00 == 180600s -> day_offset 2, time_of_day 180600 - 2*86400 = 7800s = 02:10:00
         row = _row_for_stop(two_day_offset_feed.lf, "S3")
         assert row["time_of_day"] == 2 * 3600 + 10 * 60
+
+
+def test_a_day_without_service_in_the_range_never_wipes_the_services(tmp_path):
+    """Regression: a range containing a day with no active service (here the Saturday) exploded to a null service id; the unordered
+    `unique()` put the null first at random and the whole range lost its services ("No trips found")."""
+    from datetime import date
+
+    from pyGTFSHandler.feed import Feed
+
+    from .gtfs_builder import minimal_agency, write_gtfs
+
+    d = write_gtfs(tmp_path / "gap", {
+        "agency.txt": minimal_agency(),
+        "calendar.txt": [{"service_id": "WK", "monday": 1, "tuesday": 1, "wednesday": 1, "thursday": 1, "friday": 1, "saturday": 0, "sunday": 0,
+                          "start_date": "20240101", "end_date": "20241231"}],
+        "routes.txt": [{"route_id": "R1", "route_short_name": "1", "route_long_name": "L", "route_type": 3}],
+        "stops.txt": [{"stop_id": "S1", "stop_name": "A", "stop_lat": 40.0, "stop_lon": -3.7}, {"stop_id": "S2", "stop_name": "B", "stop_lat": 40.01, "stop_lon": -3.71}],
+        "trips.txt": [{"route_id": "R1", "service_id": "WK", "trip_id": "t1"}],
+        "stop_times.txt": [{"trip_id": "t1", "arrival_time": "08:00:00", "departure_time": "08:00:00", "stop_id": "S1", "stop_sequence": 1},
+                           {"trip_id": "t1", "arrival_time": "08:10:00", "departure_time": "08:10:00", "stop_id": "S2", "stop_sequence": 2}],
+    })
+    for _ in range(25):   # the failure was random
+        f = Feed(d, start_date=date(2024, 11, 4), end_date=date(2024, 11, 10))
+        assert f.calendar.service_ids == ["WK"]

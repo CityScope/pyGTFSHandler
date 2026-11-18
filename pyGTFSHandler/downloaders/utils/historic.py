@@ -208,7 +208,11 @@ def zip_stitched_feed(
 
 
 def cleanup_version_paths(path_stack: List[str]) -> None:
-    """Remove downloaded/extracted intermediate version files and folders."""
+    """Remove downloaded/extracted intermediate version files and folders.
+
+    Args:
+        path_stack: Paths (without ``.zip``) of the versions to remove.
+    """
     for f in path_stack:
         if os.path.isfile(f + ".zip"):
             os.remove(f + ".zip")

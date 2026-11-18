@@ -98,3 +98,25 @@ uv run mkdocs serve   # live-reloading dev server at http://127.0.0.1:8000
 ## License
 
 [GNU General Public License v3.0](LICENSE)
+
+## Use as a library
+
+pyGTFSHandler never writes into the current working directory. Its small on-disk cache (reverse-geocoding results)
+lives in `pyGTFSHandler.cache.get_cache_dir(namespace, cache_dir=None)`: explicit argument, else
+`$PYGTFSHANDLER_CACHE_DIR/<namespace>`, else `<tempdir>/pygtfshandler-cache/<namespace>`. Downloaders take explicit
+output folders; API keys come from arguments, environment variables or the file named by `PYGTFSHANDLER_API_KEYS_FILE`.
+
+```python
+import os
+os.environ["PYGTFSHANDLER_CACHE_DIR"] = "/data/my_project/cache/gtfs"
+from pyGTFSHandler import Feed
+```
+
+## Large files
+
+A pre-commit hook (`tools/check_large_files.py`, installed with `python3 tools/check_large_files.py --install`) refuses a commit with a file over 10 MB once: run the same commit again to keep it. Files over 50 MB are never committed.
+
+## Local files
+
+This repository is public. API keys (`api_keys.json`, `.env`), notes about a particular machine or its processes (hosting, uploads,
+local paths) and upload scripts are never committed: keep notes as `*.local.md` or under `local/`, which `.gitignore` excludes.

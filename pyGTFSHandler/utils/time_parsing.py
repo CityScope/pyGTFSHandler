@@ -26,13 +26,21 @@ Why this module exists and how it's organized:
 from datetime import datetime, time
 from typing import Union
 
+import math
 import polars as pl
 
 SECS_PER_DAY: int = 86400
 
 
 def time_to_seconds(t: Union[datetime, time]) -> int:
-    """Convert datetime/time object to seconds since midnight."""
+    """Convert datetime/time object to seconds since midnight.
+
+    Args:
+        t: A time or datetime.
+
+    Returns:
+        Seconds since midnight.
+    """
     if isinstance(t, datetime):
         t = t.time()
     return t.hour * 3600 + t.minute * 60 + t.second
@@ -78,7 +86,27 @@ def normalize_time_expr(col: str) -> pl.Expr:
     return result
 
 
-def time_displacement(gtfs_lf,secs_disp):
+def time_displacement(gtfs_lf, secs_disp, distance: str = "shape"):
+    """Distance a trip covers between each stop and the moment ``secs_disp`` seconds later (or earlier, if negative).
+
+    For every stop-time row the trip's position at ``shape_time_traveled + secs_disp`` is interpolated between the two stops of the trip
+    that bracket that moment (clamped to the trip's start and end).
+
+    Args:
+        gtfs_lf: Feed-style LazyFrame with ``trip_id``, ``shape_time_traveled``, ``shape_dist_traveled`` and ``shape_total_travel_time``;
+            with ``distance="straight"`` also ``stop_lat`` and ``stop_lon``.
+        secs_disp: Time shift in seconds (positive: later, negative: earlier).
+        distance: ``"shape"`` -- distance along the shape (``shape_dist_traveled``); ``"straight"`` -- straight-line (great-circle) distance
+            from the stop to the interpolated position, so a winding line covers less distance in the same time than a direct one.
+
+    Returns:
+        The frame with ``time_weight`` (seconds) and ``distance_weight`` (metres) added.
+    """
+    if distance not in ("shape", "straight"):
+        raise ValueError(f"distance must be 'shape' or 'straight', not {distance!r}")
+    straight = distance == "straight"
+    xy_lb = [pl.col("stop_lat").alias("lat_lb"), pl.col("stop_lon").alias("lon_lb")] if straight else []
+    xy_ub = [pl.col("stop_lat").alias("lat_ub"), pl.col("stop_lon").alias("lon_ub")] if straight else []
     gtfs_lf = gtfs_lf.with_columns(
         (pl.col("shape_time_traveled") + secs_disp).alias("target_time")
     )
@@ -111,6 +139,7 @@ def time_displacement(gtfs_lf,secs_disp):
             "trip_id",
             pl.col("shape_time_traveled").alias("t_lb"),
             pl.col("shape_dist_traveled").alias("d_lb"),
+            *xy_lb,
         ]),
         left_on="target_time",
         right_on="t_lb",
@@ -124,6 +153,7 @@ def time_displacement(gtfs_lf,secs_disp):
             "trip_id",
             pl.col("shape_time_traveled").alias("t_ub"),
             pl.col("shape_dist_traveled").alias("d_ub"),
+            *xy_ub,
         ]),
         left_on="target_time",
         right_on="t_ub",
@@ -237,6 +267,28 @@ def time_displacement(gtfs_lf,secs_disp):
         .alias("_interpolated_dist")
     )
 
+    if straight:
+        own0 = pl.col("target_time") == 0
+        own1 = pl.col("target_time") == pl.col("shape_total_travel_time")
+        gtfs_lf = gtfs_lf.with_columns(
+            pl.when(own0).then(pl.col("stop_lat")).otherwise(pl.col("lat_ub")).alias("lat_ub"),
+            pl.when(own0).then(pl.col("stop_lon")).otherwise(pl.col("lon_ub")).alias("lon_ub"),
+            pl.when(own1).then(pl.col("stop_lat")).otherwise(pl.col("lat_lb")).alias("lat_lb"),
+            pl.when(own1).then(pl.col("stop_lon")).otherwise(pl.col("lon_lb")).alias("lon_lb"),
+        )
+        frac = ((pl.col("target_time") - pl.col("t_lb")) / (pl.col("t_ub") - pl.col("t_lb")))
+        pos = lambda lb, ub: (  # noqa: E731
+            pl.when(pl.col("t_lb").is_null() & pl.col("t_ub").is_null()).then(pl.lit(None))
+            .when(pl.col("t_lb").is_null()).then(pl.col(ub))
+            .when(pl.col("t_ub").is_null() | (pl.col("t_lb") == pl.col("t_ub"))).then(pl.col(lb))
+            .otherwise(pl.col(lb) + (pl.col(ub) - pl.col(lb)) * frac)
+        )
+        gtfs_lf = gtfs_lf.with_columns(pos("lat_lb", "lat_ub").alias("_lat"), pos("lon_lb", "lon_ub").alias("_lon"))
+        r = math.pi / 180.0
+        a = ((pl.col("_lat") - pl.col("stop_lat")) * r / 2).sin() ** 2 + (pl.col("stop_lat") * r).cos() * (pl.col("_lat") * r).cos() * (
+            (pl.col("_lon") - pl.col("stop_lon")) * r / 2).sin() ** 2
+        gtfs_lf = gtfs_lf.with_columns((2 * 6371008.8 * a.sqrt().clip(upper_bound=1.0).arcsin()).alias("_straight_dist"))
+
     gtfs_lf = gtfs_lf.with_columns(
         # Calculate "time" -- always known (target_time is derived from this
         # row's own shape_time_traveled +/- secs_disp), so this never needed
@@ -247,8 +299,8 @@ def time_displacement(gtfs_lf,secs_disp):
         # window found a match at all (should not happen in practice, since
         # a trip's own row is always a candidate match for itself; handled
         # defensively regardless).
-        (pl.col("_interpolated_dist") - pl.col("shape_dist_traveled")).abs().alias("distance_weight"),
-    ).drop("_interpolated_dist")#.drop(["d_lb","d_ub","t_lb","t_ub", "target_time"])
+        (pl.col("_straight_dist") if straight else (pl.col("_interpolated_dist") - pl.col("shape_dist_traveled")).abs()).alias("distance_weight"),
+    ).drop(["_interpolated_dist"] + (["_lat", "_lon", "_straight_dist", "lat_lb", "lon_lb", "lat_ub", "lon_ub"] if straight else []))#.drop(["d_lb","d_ub","t_lb","t_ub", "target_time"])
 
     gtfs_lf = gtfs_lf.with_columns(
         pl.when(

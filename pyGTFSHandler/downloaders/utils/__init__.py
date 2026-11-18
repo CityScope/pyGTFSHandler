@@ -26,6 +26,11 @@ re-implementing the same low level plumbing, the pieces that are common to
 - `download`: the shared "download a list of `GTFSFeedMetadata` into a
   folder, optionally unzip, optionally skip/overwrite existing files" loop
   used by every downloader's `download_feeds()` implementation.
+- `fleet_frequency`: build frequencies from a fleet (vehicles in service, round trip, headway, splitting one fleet among lines, rescaling
+  generic headways to a fleet total), write `frequencies.txt`, and give lines their own phase (`stagger_feed`).
+  See `docs/methodology/new_area_gtfs_agent_guide.md, section 8`.
+- `coverage_check`: the automatic check for missing routes / frequencies (flagged routes, OSM lines and stations absent from the feeds,
+  underserved clusters). See `docs/methodology/new_area_gtfs_agent_guide.md, section 7`.
 
 Subclasses of `pyGTFSHandler.downloaders.base.BaseGTFSDownloader` should
 prefer these helpers over re-implementing equivalent logic, so behaviour

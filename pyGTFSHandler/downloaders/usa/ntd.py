@@ -110,6 +110,8 @@ class NTDDownloader(BaseGTFSDownloader):
     """
 
     BASE_URL = "https://data.transportation.gov/api/v3/views/2u7n-ub22/query.json"
+    #: SODA2 endpoint of the same dataset: answers without an app token (the v3 one refuses those with 403 since 2026-11).
+    RESOURCE_URL = "https://data.transportation.gov/resource/2u7n-ub22.json"
     API_KEY_ENV_VAR = "SOCRATA_APP_TOKEN"
     SOURCE_NAME = "ntd"
 
@@ -128,9 +130,10 @@ class NTDDownloader(BaseGTFSDownloader):
             Raw NTD row dictionaries for this page (possibly fewer than
             `PAGE_SIZE` if this is the last page).
         """
-        params = {"pageNumber": page_number, "pageSize": self.PAGE_SIZE}
-        if self.api_key:
-            params["$$app_token"] = self.api_key
+        if not self.api_key:   # no token: the SODA2 endpoint, paged with $limit / $offset
+            params = {"$limit": self.PAGE_SIZE, "$offset": (page_number - 1) * self.PAGE_SIZE, "$order": ":id"}
+            return request_json("GET", self.RESOURCE_URL, params=params)
+        params = {"pageNumber": page_number, "pageSize": self.PAGE_SIZE, "$$app_token": self.api_key}
         return request_json("GET", self.BASE_URL, params=params)
 
     def _fetch_all_rows(self) -> List[Dict[str, object]]:

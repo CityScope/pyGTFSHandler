@@ -62,6 +62,17 @@ def robust_get(url: str, timeout: int = 60, headers: Optional[Dict[str, str]] = 
     broken certificate chains, retries once without certificate verification.
     Raises `requests.RequestException` only after all of that failed. The caller
     must close/`with` the returned response.
+
+    Args:
+        url: URL to fetch.
+        timeout: Timeout in seconds per attempt.
+        headers: Extra request headers.
+
+    Returns:
+        The streamed response.
+
+    Raises:
+        requests.RequestException: When every attempt failed.
     """
     import time
 

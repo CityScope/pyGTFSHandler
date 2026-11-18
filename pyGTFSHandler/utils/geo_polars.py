@@ -195,7 +195,15 @@ def filter_by_id_column(lf: Optional[pl.LazyFrame], column: str, ids: list | Non
 
 
 def mean_angle(column: str, over: Optional[List[str]] = None) -> pl.Expr:
-    """Compute the mean angle in degrees of a column of angles."""
+    """Compute the mean angle in degrees of a column of angles.
+
+    Args:
+        column: Column of angles in degrees.
+        over: Optional grouping columns.
+
+    Returns:
+        Expression of the circular mean, 0-360 degrees.
+    """
     if over is None:
         mean_cos = pl.col(column).radians().cos().mean()
         mean_sin = pl.col(column).radians().sin().mean()
@@ -210,6 +218,13 @@ def max_separation_angle(df: pl.DataFrame, column: str) -> pl.Series:
     """
     Compute the maximum separation angle in a list column of angles (degrees).
     Returns a Series of maximum separation angles.
+
+    Args:
+        df: Table with a list column of angles.
+        column: The list column (degrees).
+
+    Returns:
+        Series of angles in degrees.
     """
     df = (
         df.with_columns(pl.col(column).list.concat(pl.col(column) + 180).alias(column))
