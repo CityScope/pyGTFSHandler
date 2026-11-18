@@ -88,3 +88,13 @@ def test_standard_keys_file_is_read(tmp_path, monkeypatch):
     other.write_text(json.dumps({"nap_es": "from-env-file"}))
     monkeypatch.setenv(config.SHARED_FILE_ENV_VAR, str(other))
     assert config.get_api_key("nap_es") == "from-env-file"
+
+
+def test_save_api_key_keeps_other_keys(tmp_path):
+    from pyGTFSHandler.downloaders.utils.config import _load_keys, save_api_key
+
+    f = tmp_path / "keys.json"
+    save_api_key("a", "1", f)
+    save_api_key("b", "2", f)
+    assert _load_keys([f]) == {"a": "1", "b": "2"}
+    assert oct(f.stat().st_mode)[-3:] == "600"

@@ -68,7 +68,7 @@ feeds = downloader.search_feeds(country_code="ES")
 downloader.download_feeds(feeds, download_folder="path/to/download")
 ```
 
-`TransitLandDownloader`, and Spain's `downloaders.spain.NAPDownloader` follow the same interface. API keys/secrets are resolved from an explicit `api_key` argument, an environment variable, or an `api_keys.json` file (never committed) — see `pyGTFSHandler/downloaders/utils/config.py`. See the [downloaders API reference](https://CityScope.github.io/pyGTFSHandler/api/downloaders/base/) for details, and [`IMPLEMENTING_A_DOWNLOADER.md`](IMPLEMENTING_A_DOWNLOADER.md) if you want to add support for a new GTFS source.
+`TransitLandDownloader`, and Spain's `downloaders.spain.NAPDownloader` follow the same interface. API keys/secrets are resolved from an explicit `api_key` argument, an environment variable, or an the keys file `~/.config/ptlos/api_keys.json` (never committed) — see `pyGTFSHandler/downloaders/utils/config.py`. See the [downloaders API reference](https://CityScope.github.io/pyGTFSHandler/api/downloaders/base/) for details, and [Adding a downloader](docs/contributing_downloader.md) to add a new GTFS source.
 
 ## Tests
 

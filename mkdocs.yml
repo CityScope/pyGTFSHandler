@@ -30,6 +30,7 @@ theme:
 nav:
   - Home: index.md
   - GTFS Format Reference: gtfs-format.md
+  - Adding a downloader: contributing_downloader.md
   - API Reference:
       - Overview: api/index.md
       - Feed: api/feed.md

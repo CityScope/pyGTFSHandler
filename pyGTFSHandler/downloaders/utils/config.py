@@ -22,14 +22,51 @@ gets `None` back, and raises its own `ValueError` if the source requires
 one.
 """
 
+import json
 import logging
+import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from geohierarchy import api_keys as _keys
-from geohierarchy.api_keys import SHARED_FILE_ENV_VAR, STANDARD_PATH  # noqa: F401  (the lookup itself lives in geohierarchy)
-
 logger = logging.getLogger(__name__)
+
+SHARED_FILE_ENV_VAR = "API_KEYS_FILE"
+STANDARD_PATH = Path.home() / ".config" / "ptlos" / "api_keys.json"
+
+
+def _load_keys(paths) -> Dict[str, Any]:
+    """Every readable keys file merged; a file earlier in ``paths`` wins (unreadable files are skipped with a warning)."""
+    merged: Dict[str, Any] = {}
+    for path in reversed([Path(p) for p in paths]):
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                merged.update(data)
+        except (OSError, ValueError) as exc:
+            logger.warning("Ignoring unreadable API keys file %s: %s", path, exc)
+    return merged
+
+
+def save_api_key(name: str, key: str, path: Optional[Path] = None) -> Path:
+    """Store ``key`` under ``name`` in the standard keys file (``~/.config/ptlos/api_keys.json``, permissions 600), keeping the other keys.
+
+    Args:
+        name: Key name.
+        key: The key.
+        path: Keys file; default ``STANDARD_PATH``.
+
+    Returns:
+        The keys file.
+    """
+    path = Path(path) if path else STANDARD_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    keys = _load_keys([path])
+    keys[name] = key
+    path.write_text(json.dumps(keys, indent=1))
+    path.chmod(0o600)
+    return path
 
 CONFIG_FILE_ENV_VAR = "PYGTFSHANDLER_API_KEYS_FILE"
 DEFAULT_CONFIG_PATH = Path.home() / ".pygtfshandler" / "api_keys.json"
@@ -37,23 +74,20 @@ PACKAGE_KEYS_PATH = Path(__file__).resolve().parents[3] / "api_keys.json"   # ol
 
 
 def _candidate_config_paths() -> list:
-    """Keys files, highest priority first: geohierarchy's standard order (`API_KEYS_FILE`, `PYGTFSHANDLER_API_KEYS_FILE`,
-    `~/.config/ptlos/api_keys.json`), then pyGTFSHandler's older locations (the package folder, the working directory and its
-    parents, `~/.pygtfshandler/api_keys.json`)."""
-    return _keys.candidate_paths(
-        env_vars=[CONFIG_FILE_ENV_VAR],
-        files=[PACKAGE_KEYS_PATH, *(d / "api_keys.json" for d in (Path.cwd(), *Path.cwd().parents)), DEFAULT_CONFIG_PATH],
-        standard_path=STANDARD_PATH,
-    )
+    """Keys files, highest priority first: `API_KEYS_FILE`, `PYGTFSHANDLER_API_KEYS_FILE`, `~/.config/ptlos/api_keys.json`,
+    then pyGTFSHandler's older locations (the package folder, the working directory and its parents,
+    `~/.pygtfshandler/api_keys.json`)."""
+    paths = [Path(v) for v in (os.getenv(SHARED_FILE_ENV_VAR), os.getenv(CONFIG_FILE_ENV_VAR)) if v]
+    return paths + [STANDARD_PATH, PACKAGE_KEYS_PATH, *(d / "api_keys.json" for d in (Path.cwd(), *Path.cwd().parents)), DEFAULT_CONFIG_PATH]
 
 
 def _load_api_keys_file() -> Dict[str, Any]:
-    """Every readable keys file merged, earlier files winning (see `geohierarchy.api_keys.load_keys`).
+    """Every readable keys file merged, earlier files winning.
 
     Returns:
         A dict mapping source name (e.g. "nap_es") to API key.
     """
-    return _keys.load_keys(_candidate_config_paths())
+    return _load_keys(_candidate_config_paths())
 
 
 def get_api_key(source_name: str, api_key: Optional[str] = None, env_var: str = "") -> Optional[str]:
@@ -67,6 +101,11 @@ def get_api_key(source_name: str, api_key: Optional[str] = None, env_var: str = 
     Returns:
         The resolved API key, or `None` if it couldn't be found anywhere.
     """
+    if api_key:
+        return api_key
+    if env_var and os.getenv(env_var):
+        return os.getenv(env_var)
     if not source_name:
-        return api_key or (_keys.os.getenv(env_var) if env_var else None) or None
-    return _keys.resolve_api_key(source_name, env_var or None, api_key, paths=_candidate_config_paths())
+        return None
+    value = _load_api_keys_file().get(source_name)
+    return str(value) if value else None
