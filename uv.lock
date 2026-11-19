@@ -1377,7 +1377,7 @@ wheels = [
 [[package]]
 name = "geohierarchy"
 version = "1.0.0"
-source = { git = "https://github.com/CityScope/geohierarchy.git#72d43be9a3c2a4cb40ce25ef07f82fcfb5e4f6db" }
+source = { git = "https://github.com/CityScope/geohierarchy.git#3929f4c564a188a4721089236ace52591cf093bb" }
 dependencies = [
     { name = "branca" },
     { name = "fiona" },
@@ -1387,15 +1387,18 @@ dependencies = [
     { name = "h3" },
     { name = "h3ronpy" },
     { name = "mapbox-vector-tile" },
+    { name = "matplotlib" },
     { name = "mercantile" },
     { name = "numpy" },
     { name = "pandas" },
     { name = "pmtiles" },
     { name = "polars" },
     { name = "pyarrow" },
+    { name = "pycountry" },
     { name = "pyproj" },
     { name = "rasterio", version = "1.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "rasterio", version = "1.5.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "requests" },
     { name = "scipy" },
     { name = "shapely" },
     { name = "tqdm" },

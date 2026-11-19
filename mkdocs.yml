@@ -1,5 +1,6 @@
 site_name: pyGTFSHandler
 site_description: Handle GTFS files fast in python
+site_url: https://cityscope.github.io/pyGTFSHandler/
 repo_url: https://github.com/CityScope/pyGTFSHandler
 repo_name: pyGTFSHandler
 
