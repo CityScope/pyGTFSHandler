@@ -91,8 +91,9 @@ def select_representative_date(
             now that trip-level data is loaded anyway.
         route_types: Optional route type filter, only applied if
             `routes_lf` is also given.
-        lon, lat: Location used to look up public holidays (Feed passes the centroid of all
+        lon: Longitude of the location used to look up public holidays (Feed passes the centroid of all
             stops). With no holiday/weekend `date_type`, holidays are excluded.
+        lat: Latitude of that location (see `lon`).
         max_candidate_weeks: If the window spans more ISO weeks than this,
             weeks are evenly subsampled (not the first N) before scoring,
             matching the old function's `max_candidates` intent of not

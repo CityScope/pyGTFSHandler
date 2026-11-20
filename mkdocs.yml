@@ -128,6 +128,8 @@ plugins:
           options:
             preload_modules: [geohierarchy]   # functions re-exported from geohierarchy (a dependency) are documented from it
             docstring_style: google
+            docstring_options:
+              warn_missing_types: false   # parameters are described in words; a type annotation is not required
             show_source: true
             show_root_heading: true
             show_root_full_path: false

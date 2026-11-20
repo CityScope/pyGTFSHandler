@@ -1205,9 +1205,12 @@ def trip_ids_touching_stops(
             expected to already carry any `_file_<n>` suffix consistent
             with `collision_registry`, same as every other id passed
             between these loaders.
-        check_files/min_file_id/collision_registry: Forwarded to
-            `read_csv_list`, exactly as `_read_stop_times` uses them, so
-            id suffixing is decided identically here and in the real read.
+        check_files: Forwarded to `read_csv_list`, exactly as `_read_stop_times` uses it, so id
+            suffixing is decided identically here and in the real read.
+        min_file_id: Forwarded to `read_csv_list`, exactly as `_read_stop_times` uses it, so id
+            suffixing is decided identically here and in the real read.
+        collision_registry: Forwarded to `read_csv_list`, exactly as `_read_stop_times` uses it, so id
+            suffixing is decided identically here and in the real read.
 
     Returns:
         List of distinct `trip_id` values (plain Python list, since
@@ -1273,8 +1276,11 @@ def service_and_route_ids_for_trips(
         gtfs_dir: List of GTFS directory paths (already resolved).
         trip_ids: In-scope trip ids (already AOI-filtered, e.g. the output
             of `trip_ids_touching_stops`), used verbatim as the filter set.
-        check_files/min_file_id/collision_registry: Forwarded to
-            `read_csv_list`, exactly as `_read_trips` uses them, so id
+        check_files: Forwarded to `read_csv_list`, exactly as `_read_trips` uses it, so id
+            suffixing is decided identically here and in the real read.
+        min_file_id: Forwarded to `read_csv_list`, exactly as `_read_trips` uses it, so id
+            suffixing is decided identically here and in the real read.
+        collision_registry: Forwarded to `read_csv_list`, exactly as `_read_trips` uses it, so id
             suffixing is decided identically here and in the real read.
 
     Returns:
