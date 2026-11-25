@@ -705,7 +705,7 @@ class Feed(FeedFilteringMixin, FeedAnalysisMixin, FeedEdgeAnalysisMixin):
             collision_registry=collision_registry,
         )
 
-        if stop_times.lf.select(pl.count()).collect().item() == 0:
+        if stop_times.lf.select(pl.len()).collect().item() == 0:
             raise Exception(error_msg)
 
         trips.lf = stop_times.trips_lf

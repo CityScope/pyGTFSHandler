@@ -475,7 +475,7 @@ class StopTimes(FrequenciesMixin):
         stop_times = (
             stop_times.sort("trip_id", "stop_sequence", "original_idx")
             .with_columns(
-                (pl.arange(0, pl.count()).over("trip_id")).alias("stop_sequence")
+                (pl.arange(0, pl.len()).over("trip_id")).alias("stop_sequence")
             )
             .drop("original_idx")
         )

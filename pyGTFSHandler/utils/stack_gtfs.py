@@ -151,7 +151,7 @@ def reorganize_service_ids(trips):
     )
 
     # Get number of services
-    n_services = df.select(pl.count()).collect().item()
+    n_services = df.select(pl.len()).collect().item()
 
     df = df.with_columns(
         (pl.lit("service_") + pl.arange(1, n_services + 1).cast(pl.Utf8)).alias(
