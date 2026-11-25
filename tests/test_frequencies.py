@@ -145,3 +145,31 @@ def test_frequency_window_shorter_than_headway_does_not_crash(tmp_path):
     # window is shorter than the 1800s headway -> at least the first instance
     # must still be generated, and loading must not raise.
     assert feed.lf.select("trip_id").unique().collect().height >= 1
+
+
+def test_one_departure_windows_kept(tmp_path):
+    """A timetable written as consecutive windows one headway wide (one departure each, e.g. Guadalajara's Mi Transporte feed): every window
+    must keep its departure, and none may fall back to the template's own time."""
+    windows = [("06:00:00", "06:10:00", 600), ("06:10:00", "06:15:00", 300), ("06:15:00", "06:20:00", 300), ("06:20:00", "06:30:00", 600)]
+    directory = write_gtfs(
+        tmp_path / "one_departure_windows",
+        {
+            "agency.txt": minimal_agency(),
+            "calendar.txt": _calendar(),
+            "routes.txt": _routes(),
+            "stops.txt": _stops(),
+            "trips.txt": [{"route_id": "R1", "service_id": "SVC", "trip_id": "TPL"}],
+            "stop_times.txt": [
+                {"trip_id": "TPL", "arrival_time": "05:00:00", "departure_time": "05:00:00", "stop_id": "S1", "stop_sequence": 1},
+                {"trip_id": "TPL", "arrival_time": "05:05:00", "departure_time": "05:05:00", "stop_id": "S2", "stop_sequence": 2},
+                {"trip_id": "TPL", "arrival_time": "05:10:00", "departure_time": "05:10:00", "stop_id": "S3", "stop_sequence": 3},
+            ],
+            "frequencies.txt": [{"trip_id": "TPL", "start_time": a, "end_time": b, "headway_secs": h, "exact_times": 0} for a, b, h in windows],
+        },
+    )
+    feed = Feed(directory)
+    f = feed.stop_times.frequencies.collect()
+    assert f.height == len(windows)
+    assert int(f["n_trips"].sum()) == len(windows)
+    timed = feed.lf.filter(pl.col("start_time").is_null()).collect()
+    assert timed.height == 0

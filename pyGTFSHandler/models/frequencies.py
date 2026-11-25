@@ -627,9 +627,9 @@ class FrequenciesMixin:
                 ]
             )
             .drop("new_end_time")
-            .filter(
-                (pl.col("start_time") + pl.col("headway_secs")) < pl.col("end_time")
-            )
+            # a window runs a departure at its start whenever start < end: a window one headway wide (one departure, how some feeds
+            # write a timetable) must stay, or its trip copy is left as a plain timed trip at the template's time
+            .filter(pl.col("start_time") < pl.col("end_time"))
         )
 
         return stop_times, frequencies
