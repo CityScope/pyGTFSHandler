@@ -35,6 +35,7 @@ published GTFS static ZIP.
 """
 
 import logging
+import time
 import os
 import shutil
 from datetime import datetime
@@ -212,10 +213,13 @@ class TransitLandDownloader(BaseGTFSDownloader):
             results.extend(feeds)
 
             if limit is not None and len(results) >= limit:
+                logger.warning(f"Transitland search stopped at its limit of {limit} feeds: more may exist (use limit=None to read every page).")
                 return results[:limit]
 
             url = (data.get("meta") or {}).get("next")
             page_params = {}  # the "next" URL already embeds all query params
+            if url is not None:
+                time.sleep(0.5)   # a page every half second: a long catalog never becomes a burst of requests
 
         return results
 

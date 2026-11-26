@@ -75,6 +75,13 @@ _TRANSPORT_TYPE_ALIASES = {
 }
 
 
+def _nap_time(value, default: datetime) -> datetime:
+    """A NAP timestamp: ``2026-01-31T10:20:30`` with or without fractional seconds (NAP writes both); `default` when it is missing."""
+    if value in (None, "", "None"):
+        return default
+    return datetime.fromisoformat(str(value).split(".")[0])
+
+
 def _resolve_alias(value: Union[int, str], aliases: Dict[str, set]) -> str:
     """Resolve a user-supplied id/name/alias to a canonical NAP category name.
 
@@ -313,21 +320,32 @@ class NAPDownloader(BaseGTFSDownloader):
         organization_ids = [
             self.get_organization_id(o) if isinstance(o, str) else o for o in organization
         ]
-        region_ids = [
-            self.get_region_id(r, rt) if isinstance(r, str) else r
-            for r in region
-            for rt in region_type
-        ]
+        # NAP region ids are numbered per category (province 20, community 20 and municipality 20 are different places): resolve each name within
+        # its own category, send each category's ids in its own field, and keep only the datasets that list one of exactly those (id, category) regions
+        wanted: Dict[str, List[int]] = {}
+        for r in region:
+            for rt in region_type:
+                if isinstance(r, str):
+                    rid = self.get_region_id(r, rt)
+                    cat = _resolve_alias(rt, _REGION_TYPE_ALIASES)
+                else:
+                    rid, cat = r, _resolve_alias(region_type[0], _REGION_TYPE_ALIASES)
+                if rid is not None:
+                    wanted.setdefault(cat, [])
+                    if rid not in wanted[cat]:
+                        wanted[cat].append(rid)
+        if region and not wanted:
+            return []   # none of the regions asked for exists in NAP: no region filter would return everything
         transport_type_ids = [
             self.get_transport_type_id(t) if isinstance(t, str) else t for t in transport_type
         ]
         file_type_id = self.get_file_type_id(file_type) if isinstance(file_type, str) else file_type
 
         payload = {
-            "provincias": region_ids,
-            "comunidades": region_ids,
-            "areasurbanas": region_ids,
-            "municipios": region_ids,
+            "provincias": wanted.get("Provincia", []),
+            "comunidades": wanted.get("ComunidadAutonoma", []),
+            "areasurbanas": wanted.get("AreaUrbana", []),
+            "municipios": wanted.get("Municipio", []),
             "tipotransportes": transport_type_ids,
             "tipoficheros": [file_type_id],
             "organizaciones": organization_ids,
@@ -345,6 +363,9 @@ class NAPDownloader(BaseGTFSDownloader):
         if result.get("filesNum", 0) <= 0:
             return []
         datasets = result["conjuntosDatoDto"]
+        if wanted:   # exact (category, id) match: the dataset lists at least one of the regions asked for
+            keep_pairs = {(cat, i) for cat, ids in wanted.items() for i in ids}
+            datasets = [d for d in datasets if any((x.get("tipoNombre"), x.get("regionId")) in keep_pairs for x in d.get("regiones", []))]
 
         if start_date is not None:
             datasets = self._filter_by_dates(datasets, start_date, end_date, keep=keep)
@@ -387,12 +408,12 @@ class NAPDownloader(BaseGTFSDownloader):
             matching = []
             best_upload_date = None
             for file_info in dataset["ficherosDto"]:
-                file_start = datetime.strptime(file_info["fechaDesde"], "%Y-%m-%dT%H:%M:%S")
-                file_end = datetime.strptime(file_info["fechaHasta"], "%Y-%m-%dT%H:%M:%S")
+                file_start = _nap_time(file_info.get("fechaDesde"), datetime.min)   # no validity start: not known to be invalid
+                file_end = _nap_time(file_info.get("fechaHasta"), datetime.max)
                 if not (file_start <= start_date and file_end >= end_date):
                     continue
 
-                upload_date = datetime.strptime(file_info["fechaActualizacion"], "%Y-%m-%dT%H:%M:%S")
+                upload_date = _nap_time(file_info.get("fechaActualizacion"), datetime.min)
                 if keep == "all":
                     matching.append(file_info)
                 elif best_upload_date is None:
