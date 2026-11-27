@@ -132,6 +132,7 @@ class NAPDownloader(BaseGTFSDownloader):
                 f"{self.API_KEY_ENV_VAR})."
             )
         self.headers = {"ApiKey": self.api_key, "accept": "application/json"}
+        self._region_cache: Optional[List[Dict[str, Any]]] = None   # the NAP region list (thousands of rows): fetched once per client
 
     def _get(self, path: str) -> requests.Response:
         """Issue an authenticated GET request against the NAP API.
@@ -142,7 +143,30 @@ class NAPDownloader(BaseGTFSDownloader):
         Returns:
             The raw `requests.Response`.
         """
-        return requests.get(f"{self.BASE_URL}{path}", headers=self.headers)
+        return requests.get(f"{self.BASE_URL}{path}", headers=self.headers, timeout=60)
+
+    def _regions(self) -> List[Dict[str, Any]]:
+        """Every NAP region (province, community, urban area, municipality), fetched ONCE per client and kept: a search resolves many names, and asking
+        the service for the whole list each time makes it refuse the calls. Rate limits and server errors are retried after a growing pause."""
+        if self._region_cache is not None:
+            return self._region_cache
+        import time
+
+        for attempt in range(5):
+            try:
+                response = self._get("/Region")
+            except requests.RequestException as exc:
+                logger.warning(f"NAP regions: request failed ({exc}); retrying")
+            else:
+                if response.status_code == 200:
+                    self._region_cache = response.json()
+                    return self._region_cache
+                logger.warning(f"NAP regions: HTTP {response.status_code} {response.text[:120]!r}; retrying")
+                if response.status_code not in (429, 500, 502, 503, 504):
+                    break
+            time.sleep(2.0 * (2 ** attempt))
+        logger.error("NAP regions could not be fetched")
+        return []
 
     # -------------------------------------------------------------------
     # Name -> id resolution (the NAP API only filters by numeric id)
@@ -165,22 +189,25 @@ class NAPDownloader(BaseGTFSDownloader):
         region_type = _resolve_alias(region_type, _REGION_TYPE_ALIASES)
         name = normalize_text(name)
 
-        response = self._get("/Region")
-        if response.status_code != 200:
-            logger.error(f"Error fetching regions: {response.status_code} - {response.text}")
-            return None
-
-        regions = [
-            r for r in response.json() if normalize_text(r.get("tipoNombre")) == normalize_text(region_type)
-        ]
+        all_regions = self._regions()
+        regions = [r for r in all_regions if normalize_text(r.get("tipoNombre")) == normalize_text(region_type)]
         if not regions:
             logger.warning(f"No regions found of type '{region_type}'.")
             return None
 
-        region_names = [normalize_text(r["nombre"]) for r in regions]
-        match = process.extractOne(name, region_names, scorer=fuzz.token_sort_ratio)
+        # NAP writes bilingual names whole ("Donostia/San Sebastián"): the query is compared with the whole name and with each part of it, and
+        # the query's own parts likewise; the best score wins, and a poor match is no match
+        flat = [(part, i) for i, r in enumerate(regions) for part in dict.fromkeys(
+            [normalize_text(r["nombre"]), *[normalize_text(p) for p in r["nombre"].split("/") if p.strip()]])]
+        flat_names = [p for p, _ in flat]
+        best = None
+        for candidate in dict.fromkeys([name, *[p.strip() for p in name.split("/") if p.strip()]]):
+            m = process.extractOne(candidate, flat_names, scorer=fuzz.token_sort_ratio)
+            if m and (best is None or m[1] > best[1]):
+                best = (m[0], m[1], flat[m[2]][1])
+        match = best if best and best[1] >= 85 else None
         if not match:
-            logger.warning(f"No close match found for {region_type} '{name}'.")
+            logger.debug(f"No close match found for {region_type} '{name}'.")
             return None
 
         _, _, index = match
@@ -475,6 +502,10 @@ class NAPDownloader(BaseGTFSDownloader):
             keep=keep,
         )
 
+        return self.datasets_to_feeds(datasets)
+
+    def datasets_to_feeds(self, datasets: List[Dict[str, Any]]) -> List[GTFSFeedMetadata]:
+        """One `GTFSFeedMetadata` per downloadable file of each dataset."""
         feeds: List[GTFSFeedMetadata] = []
         for dataset in datasets:
             main_name = dataset.get("nombre", "")
@@ -492,6 +523,22 @@ class NAPDownloader(BaseGTFSDownloader):
                     )
                 )
         return feeds
+
+    @staticmethod
+    def current_file(dataset: Dict[str, Any], on: Optional[datetime] = None) -> Dict[str, Any]:
+        """The dataset with only its current file: among the files valid on `on` (default now) the most recently updated; when none is valid, the one
+        whose validity ended last. The result's `raw`-visible flag is `expired_on` (an ISO date) in the file dict when that file is out of date."""
+        on = on or datetime.now()
+        files = list(dataset.get("ficherosDto", []))
+        if not files:
+            return dataset
+        valid = [f for f in files if _nap_time(f.get("fechaDesde"), datetime.min) <= on <= _nap_time(f.get("fechaHasta"), datetime.max)]
+        if valid:
+            best = max(valid, key=lambda f: _nap_time(f.get("fechaActualizacion"), datetime.min))
+        else:
+            best = dict(max(files, key=lambda f: _nap_time(f.get("fechaHasta"), datetime.min)))
+            best["expired_on"] = str(best.get("fechaHasta", ""))[:10]
+        return {**dataset, "ficherosDto": [best]}
 
     def download_feeds(
         self,

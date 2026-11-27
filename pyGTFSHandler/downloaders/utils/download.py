@@ -113,6 +113,8 @@ def download_feeds(
     unzip: bool = True,
     request_timeout: int = 60,
     headers: Optional[Dict[str, str]] = None,
+    max_workers: int = 6,
+    per_host: int = 2,
 ) -> List[str]:
     """Download a list of GTFS feeds to a folder.
 
@@ -134,6 +136,8 @@ def download_feeds(
         headers: Optional HTTP headers sent with every download request,
             for sources (e.g. Spain's NAP) whose download links require
             authentication.
+        max_workers: Feeds downloaded at the same time (different servers in parallel).
+        per_host: At most this many at once from the same server (a server that sees a burst blocks the address).
 
     Returns:
         Absolute paths to the downloaded feeds (ZIP files, or extracted
@@ -141,19 +145,33 @@ def download_feeds(
         (skipped feeds are simply absent).
     """
     os.makedirs(download_folder, exist_ok=True)
-    zip_paths: List[str] = []
     logged_overwrite = False
     logged_skip = False
 
-    for feed in tqdm(feeds, desc="Downloading feeds"):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from urllib.parse import urlparse
+
+    denied: List[str] = []
+    host_slots: Dict[str, threading.Semaphore] = {}   # at most `per_host` downloads at once from one server: faster, never a burst
+    slots_lock = threading.Lock()
+
+    def _slot(url: str) -> threading.Semaphore:
+        host = urlparse(url).netloc
+        with slots_lock:
+            return host_slots.setdefault(host, threading.Semaphore(per_host))
+
+    def _one(feed: GTFSFeedMetadata) -> Optional[str]:
+        """Download one feed (or find it already on disk); the path of its ZIP / folder, None when skipped or failed."""
+        nonlocal logged_overwrite, logged_skip
         if not feed.download_url:
             logger.warning(f"Feed '{feed.id}' has no download URL. Skipping.")
-            continue
+            return None
 
         filename = build_feed_filename(feed.id, feed.name or "", feed.provider or "")
         if not filename:
             logger.warning(f"Skipping feed with no usable id/name/provider: {feed}")
-            continue
+            return None
 
         zip_path = os.path.join(download_folder, f"{filename}.zip")
         folder_path = os.path.join(download_folder, filename)
@@ -169,21 +187,32 @@ def download_feeds(
                 if not logged_skip:
                     logger.info("Skipping all already downloaded feeds.")
                     logged_skip = True
-                existing = folder_path if os.path.isdir(folder_path) else zip_path
-                zip_paths.append(os.path.abspath(existing))
-                continue
+                return os.path.abspath(folder_path if os.path.isdir(folder_path) else zip_path)
 
-        try:
-            with robust_get(feed.download_url, timeout=request_timeout, headers=headers) as r:
-                with open(zip_path, "wb") as f:
-                    for chunk in r.iter_content(chunk_size=8192):
-                        f.write(chunk)
-            zip_paths.append(os.path.abspath(zip_path))
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error downloading feed '{filename}': {e}")
-            if os.path.exists(zip_path):
-                os.remove(zip_path)
-            continue
+        with _slot(feed.download_url):
+            try:
+                with robust_get(feed.download_url, timeout=request_timeout, headers=headers) as r:
+                    with open(zip_path, "wb") as f:
+                        for chunk in r.iter_content(chunk_size=1 << 16):
+                            f.write(chunk)
+                return os.path.abspath(zip_path)
+            except requests.exceptions.RequestException as e:
+                status = getattr(getattr(e, "response", None), "status_code", None)
+                if status in (401, 403):   # access refused (a login, a key or a licence is needed): reported once for all feeds below
+                    denied.append(filename)
+                else:
+                    logger.error(f"Error downloading feed '{filename}': {e}")
+                if os.path.exists(zip_path):
+                    os.remove(zip_path)
+                return None
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        results = list(tqdm(pool.map(_one, feeds), total=len(feeds), desc="Downloading feeds"))   # pool.map keeps the order of `feeds`
+    zip_paths: List[str] = [p for p in results if p]
+    if denied:
+        logger.warning(f"{len(denied)} feeds were not downloaded: the server refused access (HTTP 401/403: the file needs a login or key, or its licence "
+                       f"does not allow copies; the same feed is often available from another source): {', '.join(sorted(denied)[:8])}"
+                       + (" ..." if len(denied) > 8 else ""))
 
     logger.info(f"Successfully downloaded {len(zip_paths)} feeds.")
 
